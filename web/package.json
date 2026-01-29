@@ -1,0 +1,40 @@
+{
+  "name": "edgewatch-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@tanstack/react-query": "^5.90.0",
+    "@tanstack/react-table": "^8.21.0",
+    "@tanstack/react-router": "^1.157.0",
+    "@tanstack/react-router-devtools": "^1.157.0",
+    "@tanstack/react-virtual": "^3.13.0",
+    "@tanstack/react-pacer": "^0.19.0",
+    "@tanstack/react-ranger": "^0.0.5",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.5.4",
+    "@tanstack/react-form": "^0.41.4"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8",
+    "tailwindcss": "^3.4.13",
+    "postcss": "^8.4.47",
+    "autoprefixer": "^10.4.20",
+    "@tanstack/react-devtools": "^0.9.0",
+    "@tanstack/react-query-devtools": "^5.91.0",
+    "@tanstack/react-pacer-devtools": "^0.5.0"
+  }
+}

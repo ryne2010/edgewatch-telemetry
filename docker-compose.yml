@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: edgewatch
+      POSTGRES_USER: edgewatch
+      POSTGRES_PASSWORD: edgewatch
+    ports:
+      - "5435:5432"
+    volumes:
+      - edgewatch_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edgewatch -d edgewatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "8082:8082"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  edgewatch_pgdata:

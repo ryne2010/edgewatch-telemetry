@@ -1,0 +1,37 @@
+[project]
+name = "edgewatch-telemetry"
+version = "0.2.0"
+description = "Local-first edge telemetry platform: device ingestion, buffering, status, alerts, and a small dashboard."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ryne Schroder" }]
+
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.30",
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.1",
+  "apscheduler>=3.10",
+  "passlib[bcrypt]>=1.7",
+  "python-dotenv>=1.0",
+  "requests>=2.31",
+]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "pytest>=8.0",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
