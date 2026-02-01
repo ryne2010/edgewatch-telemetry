@@ -1,5 +1,23 @@
 # EdgeWatch Telemetry (Local‑first) — Edge → API → Postgres → Alerts
 
+## Quickstart
+
+Local-first dev (recommended):
+
+```bash
+make doctor
+make up
+```
+
+Optional GCP demo deploy:
+
+```bash
+make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
+make auth          # only needed once per machine/user
+make doctor-gcp
+make deploy-gcp
+```
+
 EdgeWatch is a reference implementation of a **lightweight edge telemetry platform** for scenarios like:
 - well/pump monitoring (online/offline heartbeat, pressure thresholds)
 - remote equipment status
@@ -40,7 +58,7 @@ cp .env.example .env
 
 ### 3) Start the stack
 ```bash
-docker compose up --build
+make up
 ```
 
 Endpoints:
@@ -50,17 +68,7 @@ Endpoints:
 
 ### 4) Create a demo device (admin)
 ```bash
-export ADMIN_API_KEY="dev-admin-key"
-curl -s -X POST "http://localhost:8082/api/v1/admin/devices" \
-  -H "X-Admin-Key: $ADMIN_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "device_id": "demo-well-001",
-    "display_name": "Demo Well 001",
-    "token": "dev-device-token-001",
-    "heartbeat_interval_s": 30,
-    "offline_after_s": 120
-  }' | jq .
+make demo-device
 ```
 
 ### 5) Run the simulator (pretends to be a Raspberry Pi / edge device)
@@ -68,25 +76,17 @@ curl -s -X POST "http://localhost:8082/api/v1/admin/devices" \
 In a new terminal:
 
 ```bash
-uv sync --dev
-
-cp agent/.env.example agent/.env
-
-export EDGEWATCH_API_URL="http://localhost:8082"
-export EDGEWATCH_DEVICE_ID="demo-well-001"
-export EDGEWATCH_DEVICE_TOKEN="dev-device-token-001"
-
-uv run python agent/simulator.py
+make simulate
 ```
 
 ### 6) Check device status
 ```bash
-curl -s "http://localhost:8082/api/v1/devices" | jq .
+make devices
 ```
 
 ### 7) View recent alerts
 ```bash
-curl -s "http://localhost:8082/api/v1/alerts?limit=25" | jq .
+make alerts
 ```
 
 ---
@@ -129,15 +129,19 @@ See `docs/security.md` for threat model notes and hardening recommendations.
 
 ---
 
-## Optional GCP deployment
+## Optional GCP deployment (Cloud Run demo)
 
-This repo is local-first, but maps cleanly to GCP:
-- Cloud Run (API + worker)
-- Cloud SQL for Postgres
-- Secret Manager for admin/device tokens
-- Cloud Monitoring / Logging
+This repo includes a working, team-ready Cloud Run demo deployment (Terraform + Cloud Build).
 
-See `docs/gcp-deploy.md` for a practical mapping and guardrails.
+```bash
+make deploy-gcp
+make db-secret
+make admin-secret
+```
+
+See:
+- `docs/DEPLOY_GCP.md`
+- `docs/TEAM_WORKFLOW.md`
 
 ---
 

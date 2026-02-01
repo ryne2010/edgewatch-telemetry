@@ -1,0 +1,56 @@
+name: terraform-drift-detection
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Environment workspace (dev|stage|prod)"
+        required: true
+        default: "dev"
+  schedule:
+    # Weekly drift check (Mondays 09:00 UTC)
+    - cron: "0 9 * * 1"
+
+jobs:
+  drift:
+    if: ${{ vars.GCP_WIF_PROVIDER != '' && vars.GCP_WIF_SERVICE_ACCOUNT != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      TF_DIR: infra/gcp/cloud_run_demo
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
+      TFSTATE_PREFIX: ${{ vars.TFSTATE_PREFIX }}
+      TF_VAR_project_id: ${{ vars.PROJECT_ID }}
+      TF_VAR_region: ${{ vars.REGION }}
+      TF_VAR_env: ${{ inputs.env || 'dev' }}
+      TF_VAR_service_name: "edgewatch-${{ inputs.env || 'dev' }}"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: Terraform init (remote state)
+        run: |
+          terraform -chdir=${TF_DIR} init -reconfigure \
+            -backend-config="bucket=${TFSTATE_BUCKET}" \
+            -backend-config="prefix=${TFSTATE_PREFIX}/${{ inputs.env || 'dev' }}"
+
+      - name: Terraform plan (detect drift)
+        run: |
+          set -euo pipefail
+          terraform -chdir=${TF_DIR} plan -detailed-exitcode -no-color
