@@ -77,6 +77,11 @@ export function AlertsPage() {
           <RangeSlider min={10} max={200} step={10} value={limit} onChange={setLimit} label="Limit" />
           {q.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
           {q.isError ? <div className="text-sm text-destructive">Error: {(q.error as Error).message}</div> : null}
+          {!q.isLoading && !q.isError && items.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              No alerts yet. Run the simulator and wait a couple minutes for a low-pressure or offline alert to trigger.
+            </div>
+          ) : null}
           <DataTable<AlertOut> data={items} columns={cols} />
         </CardContent>
       </Card>

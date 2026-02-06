@@ -79,6 +79,10 @@ In a new terminal:
 make simulate
 ```
 
+If you don’t run the simulator (or a real agent), the UI will show devices but no telemetry points.
+
+`make simulate` runs a 3-device demo fleet by default. Override with `SIMULATE_FLEET_SIZE=1 make simulate`.
+
 ### 6) Check device status
 ```bash
 make devices
@@ -95,6 +99,7 @@ make alerts
 
 - `POST /api/v1/ingest` — device telemetry ingestion (requires Bearer token)
 - `GET  /api/v1/devices` — list devices with computed status (online/offline)
+- `GET  /api/v1/devices/{device_id}` — device detail (computed status)
 - `GET  /api/v1/devices/{device_id}/telemetry` — raw telemetry points
 - `GET  /api/v1/devices/{device_id}/timeseries` — bucketed time series
 - `GET  /api/v1/alerts` — alerts
@@ -122,7 +127,7 @@ See `docs/architecture.md` for more detail.
 ## Security model (reference)
 
 - Each device authenticates using an **opaque token** (`Authorization: Bearer <token>`).
-- Server stores only a **bcrypt hash** of the token (never plaintext).
+- Server stores only a **PBKDF2 hash** of the token (never plaintext).
 - Admin operations require `X-Admin-Key`.
 
 See `docs/security.md` for threat model notes and hardening recommendations.
@@ -154,4 +159,3 @@ MIT — see `LICENSE`.
 - Vite + React
 - TanStack Router/Query/Table + Virtual + Pacer + Ranger
 - Tailwind + shadcn-style components (vendored in `web/src/portfolio-ui`)
-

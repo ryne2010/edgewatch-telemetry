@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,28 @@ from .routes.admin import router as admin_router
 
 
 logger = logging.getLogger("edgewatch")
+
+
+def _split_suffix_3digits(s: str) -> tuple[str, int] | None:
+    m = re.match(r"^(.*?)(\d{3})$", s)
+    if not m:
+        return None
+    return m.group(1), int(m.group(2))
+
+
+def _derive_nth(value: str, n: int) -> str:
+    """Derive a stable demo fleet value for index `n` (1-based).
+
+    If the value ends with 3 digits (e.g. `demo-well-001`), replace that suffix.
+    Otherwise append `-NNN` for n > 1.
+    """
+    if n == 1:
+        return value
+    split = _split_suffix_3digits(value)
+    if split:
+        prefix, _ = split
+        return f"{prefix}{n:03d}"
+    return f"{value}-{n:03d}"
 
 
 def create_app() -> FastAPI:
@@ -96,21 +119,37 @@ def _bootstrap_demo_device() -> None:
         return
 
     with db_session() as session:
-        existing = session.query(Device).filter(Device.device_id == settings.demo_device_id).one_or_none()
-        if existing:
-            return
+        fleet_size = max(1, settings.demo_fleet_size)
+        for n in range(1, fleet_size + 1):
+            device_id = _derive_nth(settings.demo_device_id, n)
+            display_name = _derive_nth(settings.demo_device_name, n)
+            token = _derive_nth(settings.demo_device_token, n)
+            desired_fp = token_fingerprint(token)
 
-        d = Device(
-            device_id=settings.demo_device_id,
-            display_name=settings.demo_device_name,
-            token_hash=hash_token(settings.demo_device_token),
-            token_fingerprint=token_fingerprint(settings.demo_device_token),
-            heartbeat_interval_s=30,
-            offline_after_s=120,
-            enabled=True,
-        )
-        session.add(d)
-        logger.info("Bootstrapped demo device '%s'", settings.demo_device_id)
+            existing = session.query(Device).filter(Device.device_id == device_id).one_or_none()
+            if existing:
+                if existing.display_name != display_name:
+                    existing.display_name = display_name
+                if existing.token_fingerprint != desired_fp:
+                    existing.token_fingerprint = desired_fp
+                existing.token_hash = hash_token(token)
+                existing.heartbeat_interval_s = 30
+                existing.offline_after_s = 120
+                existing.enabled = True
+            else:
+                session.add(
+                    Device(
+                        device_id=device_id,
+                        display_name=display_name,
+                        token_hash=hash_token(token),
+                        token_fingerprint=desired_fp,
+                        heartbeat_interval_s=30,
+                        offline_after_s=120,
+                        enabled=True,
+                    )
+                )
+
+        logger.info("Bootstrapped demo fleet (size=%s)", fleet_size)
 
 
 _scheduler: BackgroundScheduler | None = None

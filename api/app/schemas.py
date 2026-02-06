@@ -62,3 +62,8 @@ class AlertOut(BaseModel):
 class TimeseriesPointOut(BaseModel):
     bucket_ts: datetime
     value: float
+
+
+class TimeseriesMultiPointOut(BaseModel):
+    bucket_ts: datetime
+    values: Dict[str, Optional[float]]

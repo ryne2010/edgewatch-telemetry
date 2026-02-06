@@ -87,7 +87,15 @@ def main() -> None:
             try:
                 resp = post_points(api_url, token, [point])
                 if 200 <= resp.status_code < 300:
-                    print(f"[simulator] sent heartbeat ok (queue={buf.count()}) water={metrics.get('water_pressure_psi')}psi")
+                    print(
+                        "[simulator] sent heartbeat ok (queue=%s) water=%spsi oil=%spsi batt=%sv"
+                        % (
+                            buf.count(),
+                            metrics.get("water_pressure_psi"),
+                            metrics.get("oil_pressure_psi"),
+                            metrics.get("battery_v"),
+                        )
+                    )
                 else:
                     buf.enqueue(point["message_id"], point, point["ts"])
                     print(f"[simulator] send failed {resp.status_code} -> buffered (queue={buf.count()})")

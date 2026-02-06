@@ -24,7 +24,7 @@ class Device(Base):
     device_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(256), nullable=False)
 
-    # Device auth token: store only a bcrypt hash + a SHA-256 fingerprint for efficient lookup
+    # Device auth token: store only a PBKDF2 hash + a SHA-256 fingerprint for efficient lookup
     token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     token_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
 

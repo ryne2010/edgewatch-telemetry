@@ -24,6 +24,18 @@ export type TimeseriesPoint = {
   value: number
 }
 
+export type TimeseriesMultiPoint = {
+  bucket_ts: string
+  values: Record<string, number | null>
+}
+
+export type TelemetryPoint = {
+  message_id: string
+  device_id: string
+  ts: string
+  metrics: Record<string, unknown>
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: { 'Accept': 'application/json' } })
   if (!res.ok) {
@@ -38,8 +50,38 @@ export const api = {
   devices: () => getJSON<DeviceOut[]>('/api/v1/devices'),
   device: (device_id: string) => getJSON<DeviceOut>(`/api/v1/devices/${encodeURIComponent(device_id)}`),
   alerts: (limit: number = 50) => getJSON<AlertOut[]>(`/api/v1/alerts?limit=${limit}`),
-  timeseries: (device_id: string, metric: string, bucket: 'minute' | 'hour' = 'minute') =>
-    getJSON<TimeseriesPoint[]>(
-      `/api/v1/devices/${encodeURIComponent(device_id)}/timeseries?metric=${encodeURIComponent(metric)}&bucket=${bucket}`,
-    ),
+  timeseriesMulti: (
+    device_id: string,
+    metrics: string[],
+    bucket: 'minute' | 'hour' = 'minute',
+    opts?: { since?: string; until?: string; limit?: number },
+  ) => {
+    const params = new URLSearchParams()
+    for (const m of metrics) params.append('metrics', m)
+    params.set('bucket', bucket)
+    if (opts?.since) params.set('since', opts.since)
+    if (opts?.until) params.set('until', opts.until)
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    return getJSON<TimeseriesMultiPoint[]>(
+      `/api/v1/devices/${encodeURIComponent(device_id)}/timeseries_multi?${params.toString()}`,
+    )
+  },
+  timeseries: (
+    device_id: string,
+    metric: string,
+    bucket: 'minute' | 'hour' = 'minute',
+    opts?: { since?: string; until?: string; limit?: number },
+  ) => {
+    const params = new URLSearchParams()
+    params.set('metric', metric)
+    params.set('bucket', bucket)
+    if (opts?.since) params.set('since', opts.since)
+    if (opts?.until) params.set('until', opts.until)
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    return getJSON<TimeseriesPoint[]>(`/api/v1/devices/${encodeURIComponent(device_id)}/timeseries?${params.toString()}`)
+  },
+  latestTelemetry: (device_id: string) =>
+    getJSON<TelemetryPoint[]>(
+      `/api/v1/devices/${encodeURIComponent(device_id)}/telemetry?limit=1`,
+    ).then((rows) => rows[0] ?? null),
 }

@@ -22,6 +22,7 @@ COMPOSE ?= docker compose
 EDGEWATCH_API_URL ?= http://localhost:8082
 EDGEWATCH_DEVICE_ID ?= demo-well-001
 EDGEWATCH_DEVICE_TOKEN ?= dev-device-token-001
+SIMULATE_FLEET_SIZE ?= 3
 
 # -----------------------------
 # GCP deployment defaults
@@ -76,7 +77,7 @@ help:
 	@echo "  reset           Remove volumes and reset local data"
 	@echo "  logs            Tail local logs"
 	@echo "  demo-device     Create a demo device via admin API"
-	@echo "  simulate        Run the edge simulator (uv)"
+	@echo "  simulate        Run the edge simulator fleet (3 by default)"
 	@echo "  devices         List devices"
 	@echo "  alerts          List recent alerts"
 	@echo ""
@@ -312,10 +313,20 @@ demo-device:
 # Run the edge simulator (pretends to be an RPi).
 simulate: doctor
 	cp -n agent/.env.example agent/.env || true
-	EDGEWATCH_API_URL="$(EDGEWATCH_API_URL)" \
-	EDGEWATCH_DEVICE_ID="$(EDGEWATCH_DEVICE_ID)" \
-	EDGEWATCH_DEVICE_TOKEN="$(EDGEWATCH_DEVICE_TOKEN)" \
-	uv run python agent/simulator.py
+	@set -euo pipefail; \
+	trap 'kill 0' INT TERM EXIT; \
+	base_id="$(EDGEWATCH_DEVICE_ID)"; \
+	base_tok="$(EDGEWATCH_DEVICE_TOKEN)"; \
+	echo "Starting $(SIMULATE_FLEET_SIZE) simulators... (Ctrl-C to stop all)"; \
+	for n in $$(seq 1 "$(SIMULATE_FLEET_SIZE)"); do \
+	  if [[ "$$base_id" =~ ^(.*)([0-9]{3})$$ ]]; then id="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else id="$$base_id"; if [[ "$$n" -gt 1 ]]; then id="$$base_id-$$(printf "%03d" "$$n")"; fi; fi; \
+	  if [[ "$$base_tok" =~ ^(.*)([0-9]{3})$$ ]]; then tok="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else tok="$$base_tok"; if [[ "$$n" -gt 1 ]]; then tok="$$base_tok-$$(printf "%03d" "$$n")"; fi; fi; \
+	  buf="./edgewatch_buffer_$${id}.sqlite"; \
+	  echo "  - $$id (token suffix $$(printf "%03d" "$$n"))"; \
+	  EDGEWATCH_API_URL="$(EDGEWATCH_API_URL)" EDGEWATCH_DEVICE_ID="$$id" EDGEWATCH_DEVICE_TOKEN="$$tok" BUFFER_DB_PATH="$$buf" \
+	    uv run python agent/simulator.py & \
+	done; \
+	wait
 
 devices:
 	@curl -s "$(EDGEWATCH_API_URL)/api/v1/devices" | jq .
@@ -486,4 +497,3 @@ tf-policy: ## OPA/Conftest policy gate for Terraform (falls back to docker)
 	fi
 
 tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy ## Run all Terraform hygiene checks
-

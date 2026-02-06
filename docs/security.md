@@ -6,7 +6,7 @@ This repo demonstrates a pragmatic baseline for small fleets.
 
 - Device sends: `Authorization: Bearer <DEVICE_TOKEN>`
 - Server stores:
-  - `token_hash` (bcrypt)
+  - `token_hash` (PBKDF2 via passlib)
   - `token_fingerprint` (SHA-256 hex) for efficient lookup
 
 The server never stores the plaintext device token.

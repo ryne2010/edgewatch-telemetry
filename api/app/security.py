@@ -10,7 +10,9 @@ from .config import settings
 from .db import db_session
 from .models import Device
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# NOTE: Device tokens may exceed bcrypt's 72-byte input limit (e.g., long random strings or JWTs).
+# Use PBKDF2 instead to avoid truncation and backend/version issues with bcrypt wheels.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 def token_fingerprint(token: str) -> str:

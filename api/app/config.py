@@ -46,6 +46,7 @@ class Settings:
     cors_allow_origins: List[str]
 
     bootstrap_demo_device: bool
+    demo_fleet_size: int
     demo_device_id: str
     demo_device_name: str
     demo_device_token: str
@@ -64,6 +65,7 @@ def load_settings() -> Settings:
         default_water_pressure_low_psi=_get_float("DEFAULT_WATER_PRESSURE_LOW_PSI", 30.0),
         cors_allow_origins=_get_list("CORS_ALLOW_ORIGINS", ["*"]),
         bootstrap_demo_device=_get_bool("BOOTSTRAP_DEMO_DEVICE", False),
+        demo_fleet_size=_get_int("DEMO_FLEET_SIZE", 1),
         demo_device_id=os.getenv("DEMO_DEVICE_ID", "demo-well-001"),
         demo_device_name=os.getenv("DEMO_DEVICE_NAME", "Demo Well 001"),
         demo_device_token=os.getenv("DEMO_DEVICE_TOKEN", "dev-device-token-001"),

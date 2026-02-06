@@ -38,9 +38,12 @@ def ingest(req: IngestRequest, device: Device = Depends(require_device_auth)) ->
                     metrics=p.metrics,
                 )
                 .on_conflict_do_nothing(index_elements=["message_id"])
+                # Use RETURNING instead of `rowcount` to reliably detect whether the insert happened
+                # (some DB drivers/dialects may not provide an accurate rowcount for INSERTs).
+                .returning(TelemetryPoint.message_id)
             )
-            result = session.execute(stmt)
-            if result.rowcount == 1:
+            inserted = session.execute(stmt).first()
+            if inserted is not None:
                 accepted += 1
                 if newest_ts is None or ts > newest_ts:
                     newest_ts = ts
