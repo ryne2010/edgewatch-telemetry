@@ -63,5 +63,5 @@ def read_metrics(device_id: str) -> Dict[str, Any]:
         "oil_pressure_psi": round(oil_pressure, 1),
         "pump_on": bool(pump_on),
         "battery_v": round(battery_base + rng.uniform(-0.2, 0.2), 2),
-        "signal_rssi": int(-65 + (idx - 1) * -2 + rng.uniform(-5, 5)),
+        "signal_rssi_dbm": int(-65 + (idx - 1) * -2 + rng.uniform(-5, 5)),
     }

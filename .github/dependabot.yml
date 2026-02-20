@@ -1,0 +1,29 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Terraform root
+  - package-ecosystem: "terraform"
+    directory: "/infra/gcp/cloud_run_demo"
+    schedule:
+      interval: "weekly"
+
+  # Terraform modules
+  - package-ecosystem: "terraform"
+    directory: "/infra/gcp/modules"
+    schedule:
+      interval: "weekly"
+
+  # Node (workspace + UI)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"

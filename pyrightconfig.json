@@ -1,0 +1,15 @@
+{
+  "include": ["api", "agent", "tests"],
+  "exclude": [
+    "**/node_modules",
+    "**/dist",
+    "**/.venv",
+    "infra",
+    "web",
+    "docker"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false
+}

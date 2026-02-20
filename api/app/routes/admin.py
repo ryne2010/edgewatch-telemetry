@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from typing import List
+from datetime import datetime, timezone
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..db import db_session
-from ..models import Device
-from ..schemas import AdminDeviceCreate, AdminDeviceUpdate, DeviceOut
-from ..security import require_admin, hash_token, token_fingerprint
+from ..models import Device, IngestionBatch
+from ..schemas import AdminDeviceCreate, AdminDeviceUpdate, DeviceOut, IngestionBatchOut
+from ..security import hash_token, require_admin, token_fingerprint
 from ..services.monitor import compute_status
-from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -97,3 +97,41 @@ def list_devices_admin() -> List[DeviceOut]:
                 )
             )
         return out
+
+
+@router.get("/ingestions", dependencies=[Depends(require_admin)], response_model=List[IngestionBatchOut])
+def list_ingestions_admin(
+    device_id: Optional[str] = Query(default=None, description="Optional device_id filter"),
+    limit: int = Query(default=200, ge=1, le=2000),
+) -> List[IngestionBatchOut]:
+    """List recent ingestion batches.
+
+    This endpoint is designed for ops/debugging:
+    - contract version/hash visibility
+    - duplicate counts
+    - additive drift (unknown metric keys)
+    """
+
+    with db_session() as session:
+        q = session.query(IngestionBatch)
+        if device_id:
+            q = q.filter(IngestionBatch.device_id == device_id)
+        q = q.order_by(IngestionBatch.received_at.desc()).limit(limit)
+        rows = q.all()
+
+        return [
+            IngestionBatchOut(
+                id=r.id,
+                device_id=r.device_id,
+                received_at=r.received_at,
+                contract_version=r.contract_version,
+                contract_hash=r.contract_hash,
+                points_submitted=r.points_submitted,
+                points_accepted=r.points_accepted,
+                duplicates=r.duplicates,
+                client_ts_min=r.client_ts_min,
+                client_ts_max=r.client_ts_max,
+                unknown_metric_keys=list(r.unknown_metric_keys or []),
+            )
+            for r in rows
+        ]

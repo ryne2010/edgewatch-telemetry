@@ -1,22 +1,57 @@
+# -----------------------------------------------------------------------------
+# EdgeWatch Telemetry
+#
+# Keep the repo clean and reproducible.
+# - Commit lockfiles (uv.lock, pnpm-lock.yaml) when available
+# - Never commit generated caches, build outputs, or local secrets
+# -----------------------------------------------------------------------------
+
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 *.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+htmlcov/
+.dist/
 .venv/
+venv/
+
+# Local env / secrets
 .env
+.env.*
+!.env.example
+agent/.env
+agent/.env.*
+!agent/.env.example
 
-# Local buffers
-*.sqlite
-*.sqlite3
+# Edge agent runtime artifacts
+edgewatch_buffer.sqlite
+edgewatch_buffer.sqlite*
+edgewatch_policy_cache.json
+edgewatch_deadletter_*.jsonl
 
-# Docker volumes
-edgewatch_pgdata/
-
-# Frontend
+# Node
+node_modules/
+.pnpm-store/
 web/node_modules/
 web/dist/
-web/.tanstack/
 
-# OS
+# Build / packaging
+build/
+dist/
+*.log
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# macOS
 .DS_Store
+

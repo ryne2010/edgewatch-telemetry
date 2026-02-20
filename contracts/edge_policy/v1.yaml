@@ -1,0 +1,65 @@
+# EdgeWatch Edge Policy (v1)
+#
+# Purpose
+# - Provide a **single source of truth** for edge-device behavior that impacts:
+#   - alert timeliness vs battery/data usage
+#   - sampling and send cadence
+#   - local buffering limits
+#   - simple threshold/hysteresis rules used for device-side "state" and burst sending
+#
+# Notes
+# - This policy is served to devices via GET /api/v1/device-policy.
+# - Devices should cache the response using ETag + Cache-Control.
+# - The server also consumes some threshold values (e.g., water pressure low).
+
+version: v1
+
+# Devices may cache this policy for up to this many seconds.
+cache_max_age_s: 3600
+
+reporting:
+  # How often the agent reads sensors when the device is healthy (seconds).
+  sample_interval_s: 30
+
+  # How often the agent reads sensors while in a **critical** alert state (seconds).
+  # (Currently: low water pressure)
+  alert_sample_interval_s: 10
+
+  # Force a keepalive even if nothing changes (seconds).
+  # This can be set higher to reduce data usage; alert transitions still send immediately.
+  heartbeat_interval_s: 300
+
+  # While in a **critical** alert state, periodically send a full snapshot even if metrics are stable.
+  alert_report_interval_s: 60
+
+  # Batch / buffer tuning
+  max_points_per_batch: 50
+  buffer_max_points: 5000
+  buffer_max_age_s: 604800 # 7 days
+
+  # Network retry backoff (seconds)
+  backoff_initial_s: 5
+  backoff_max_s: 300
+
+# Metric-level delta thresholds.
+# If a metric changes by >= threshold (absolute), it's considered "worth sending".
+# Missing metrics are ignored; boolean and string metrics use equality.
+delta_thresholds:
+  water_pressure_psi: 1.0
+  oil_pressure_psi: 1.0
+  temperature_c: 0.5
+  battery_v: 0.05
+  signal_rssi_dbm: 2
+  flow_rate_gpm: 1.0
+
+# Simple thresholds used for device-side "state" and to trigger immediate send.
+# Hysteresis prevents flapping.
+alert_thresholds:
+  water_pressure_low_psi: 30.0
+  water_pressure_recover_psi: 32.0
+
+  battery_low_v: 11.8
+  battery_recover_v: 12.0
+
+  signal_low_rssi_dbm: -95
+  signal_recover_rssi_dbm: -90

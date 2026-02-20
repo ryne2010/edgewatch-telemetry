@@ -22,6 +22,7 @@ COMPOSE ?= docker compose
 EDGEWATCH_API_URL ?= http://localhost:8082
 EDGEWATCH_DEVICE_ID ?= demo-well-001
 EDGEWATCH_DEVICE_TOKEN ?= dev-device-token-001
+ADMIN_API_KEY ?= dev-admin-key
 SIMULATE_FLEET_SIZE ?= 3
 
 # -----------------------------
@@ -40,6 +41,14 @@ TAG          ?= latest
 
 TF_DIR ?= infra/gcp/cloud_run_demo
 
+# Optional Terraform var-file (profiles)
+TFVARS ?=
+ifeq ($(strip $(TFVARS)),)
+TFVARS_ARG :=
+else
+TFVARS_ARG := -var-file="$(TFVARS)"
+endif
+
 TF_STATE_BUCKET ?= $(PROJECT_ID)-tfstate
 TF_STATE_PREFIX ?= edgewatch/$(ENV)
 
@@ -49,6 +58,9 @@ GROUP_PREFIX ?= edgewatch
 
 # Observability as code
 ENABLE_OBSERVABILITY ?= true
+
+# Reproducibility: avoid environment-specific package indexes when generating lockfiles.
+UV_DEFAULT_INDEX ?= https://pypi.org/simple
 
 
 IMAGE := $(REGION)-docker.pkg.dev/$(PROJECT_ID)/$(AR_REPO)/$(IMAGE_NAME):$(TAG)
@@ -62,38 +74,70 @@ define require
 endef
 
 .PHONY: help init auth \
-	doctor doctor-gcp \
-	up down reset logs \
+	doctor doctor-dev doctor-gcp \
+	clean \
+	db-up db-down api-dev web-install web-dev \
+	up down reset logs db-migrate db-revision \
 	demo-device devices alerts simulate \
-	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp url-gcp verify-gcp logs-gcp destroy-gcp \
-	db-secret admin-secret lock
+	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp deploy-gcp-safe url-gcp verify-gcp verify-gcp-ready logs-gcp migrate-gcp offline-check-gcp destroy-gcp \
+	plan-gcp-demo apply-gcp-demo deploy-gcp-demo plan-gcp-prod apply-gcp-prod deploy-gcp-prod \
+	db-secret admin-secret lock hygiene
 
 help:
 	@echo "Local targets:"
 	@echo "  init             One-time setup for GCP deploys (persist gcloud project/region)"
 	@echo "  auth             Authenticate gcloud user + ADC (interactive)"
-	@echo "  up              Start local stack"
-	@echo "  down            Stop local stack"
-	@echo "  reset           Remove volumes and reset local data"
-	@echo "  logs            Tail local logs"
-	@echo "  demo-device     Create a demo device via admin API"
-	@echo "  simulate        Run the edge simulator fleet (3 by default)"
-	@echo "  devices         List devices"
-	@echo "  alerts          List recent alerts"
+	@echo "  doctor           Check local Docker prerequisites"
+	@echo "  doctor-dev       Check full local toolchain (uv/node/pnpm)"
+	@echo "  db-up            Start ONLY the local Postgres container (fast dev lane)"
+	@echo "  db-down          Stop ONLY the local Postgres container"
+	@echo "  api-dev          Run FastAPI on the host with hot reload (port 8080)"
+	@echo "  web-install      Install UI deps (pnpm workspace)"
+	@echo "  web-dev          Run UI dev server (Vite) on the host (port 5173)"
+	@echo "  up               Start local stack"
+	@echo "  down             Stop local stack"
+	@echo "  reset            Remove volumes and reset local data"
+	@echo "  logs             Tail local logs"
+	@echo "  db-migrate       Apply Alembic migrations (docker compose migrate)"
+	@echo "  db-revision      Create new Alembic revision (msg=...)"
+	@echo "  demo-device      Create a demo device via admin API"
+	@echo "  simulate         Run the edge simulator fleet (3 by default)"
+	@echo "  devices          List devices"
+	@echo "  alerts           List recent alerts"
 	@echo ""
 	@echo "GCP targets (optional):"
-	@echo "  deploy-gcp      Deploy to Cloud Run (remote state + Cloud Build)"
-	@echo "  plan-gcp        Terraform plan"
-	@echo "  apply-gcp       Terraform apply"
-	@echo "  url-gcp         Print service URL"
-	@echo "  verify-gcp      Hit /health"
-	@echo "  logs-gcp        Read Cloud Run logs"
-	@echo "  destroy-gcp     Terraform destroy (keeps tfstate bucket)"
-	@echo "  db-secret       Add DATABASE_URL secret version (stdin)"
-	@echo "  admin-secret    Add ADMIN_API_KEY secret version (stdin)"
+	@echo "  deploy-gcp       Deploy to Cloud Run (defaults to private IAM-only)"
+	@echo "  deploy-gcp-safe  Deploy + migrate + readiness verify"
+	@echo "  deploy-gcp-demo  Deploy the public demo profile (portfolio)"
+	@echo "  deploy-gcp-prod  Deploy the production profile (private IAM)"
+	@echo "  plan-gcp         Terraform plan"
+	@echo "  apply-gcp        Terraform apply"
+	@echo "  (tip) TFVARS=... Use a Terraform profile var-file (see infra/gcp/cloud_run_demo/profiles/)"
+	@echo "  url-gcp          Print service URL"
+	@echo "  verify-gcp       Hit /health"
+	@echo "  verify-gcp-ready Hit /readyz (DB + migrations)"
+	@echo "  logs-gcp         Read Cloud Run logs"
+	@echo "  migrate-gcp      Run DB migrations via Cloud Run Job"
+	@echo "  offline-check-gcp Manually run offline check via Cloud Run Job"
+	@echo "  destroy-gcp      Terraform destroy (keeps tfstate bucket)"
+	@echo "  db-secret        Add DATABASE_URL secret version (stdin)"
+	@echo "  admin-secret     Add ADMIN_API_KEY secret version (stdin)"
 	@echo ""
 	@echo "Reproducibility:"
-	@echo "  lock            Generate uv.lock + pnpm-lock.yaml"
+	@echo "  lock             Generate uv.lock + pnpm-lock.yaml"
+	@echo "  clean            Remove local runtime caches/artifacts (__pycache__, *.pyc, sqlite buffers, policy cache)"
+
+clean:
+	@set -euo pipefail; \
+	find . -name "__pycache__" -type d -prune -exec rm -rf {} +; \
+	find . -name "*.pyc" -type f -delete; \
+	rm -rf .pytest_cache .ruff_cache .pyright; \
+	rm -f edgewatch_buffer.sqlite edgewatch_buffer.sqlite3 agent/edgewatch_buffer.sqlite agent/edgewatch_buffer.sqlite3; \
+	rm -f ./edgewatch_policy_cache_*.json ./agent/edgewatch_policy_cache_*.json; \
+	find . -name ".DS_Store" -type f -delete; \
+	echo "Cleaned caches/artifacts."
+	@echo "  hygiene          Repo sanity checks (forbidden URLs, big files, etc.)"
+
 
 
 
@@ -173,9 +217,9 @@ auth:
 doctor:
 	@set -e; \
 	fail=0; \
-	echo "== Doctor: EdgeWatch (local) =="; \
+	echo "== Doctor: EdgeWatch (local/docker) =="; \
 	echo ""; \
-	echo "Required for local dev (Docker Compose lane):"; \
+	echo "Required:"; \
 	if command -v docker >/dev/null 2>&1; then \
 	  echo "  ✓ docker: $$(docker --version)"; \
 	  if docker info >/dev/null 2>&1; then \
@@ -194,6 +238,41 @@ doctor:
 	  echo "  ✗ docker not found (install Docker Desktop)"; \
 	  fail=1; \
 	fi; \
+	if command -v jq >/dev/null 2>&1; then \
+	  echo "  ✓ jq: $$(jq --version)"; \
+	else \
+	  echo "  ⚠ jq not found (optional; makes curl output pretty). Install: brew install jq"; \
+	fi; \
+	echo ""; \
+	echo "Recommended (for harness tasks + UI dev):"; \
+	if command -v uv >/dev/null 2>&1; then \
+	  echo "  ✓ uv: $$(uv --version)"; \
+	else \
+	  echo "  ⚠ uv not found. Install: https://docs.astral.sh/uv/"; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+	  echo "  ✓ node: $$(node -v)"; \
+	else \
+	  echo "  ⚠ node not found. Install: https://nodejs.org/"; \
+	fi; \
+	if command -v pnpm >/dev/null 2>&1; then \
+	  echo "  ✓ pnpm: $$(pnpm -v)"; \
+	else \
+	  echo "  ⚠ pnpm not found. Enable corepack: corepack enable"; \
+	fi; \
+	echo ""; \
+	if [ "$$fail" -ne 0 ]; then \
+	  echo "Doctor failed: fix missing items above, then re-run."; \
+	  exit $$fail; \
+	fi; \
+	echo "Doctor OK."
+
+# Full local dev doctor: verifies toolchain required for harness (uv + Node + pnpm).
+doctor-dev: doctor
+	@set -e; \
+	fail=0; \
+	echo "== Doctor: EdgeWatch (local/dev toolchain) =="; \
+	echo ""; \
 	if command -v uv >/dev/null 2>&1; then \
 	  echo "  ✓ uv: $$(uv --version)"; \
 	else \
@@ -212,22 +291,19 @@ doctor:
 	  echo "  ✗ pnpm not found. Enable corepack: corepack enable"; \
 	  fail=1; \
 	fi; \
-	if command -v jq >/dev/null 2>&1; then \
-	  echo "  ✓ jq: $$(jq --version)"; \
-	else \
-	  echo "  ⚠ jq not found (optional; makes curl output pretty). Install: brew install jq"; \
-	fi; \
 	echo ""; \
 	echo "Local simulator defaults (override with VAR=...):"; \
 	echo "  EDGEWATCH_API_URL=$(EDGEWATCH_API_URL)"; \
 	echo "  EDGEWATCH_DEVICE_ID=$(EDGEWATCH_DEVICE_ID)"; \
 	echo "  EDGEWATCH_DEVICE_TOKEN=$(EDGEWATCH_DEVICE_TOKEN)"; \
+	echo "  ADMIN_API_KEY=$(ADMIN_API_KEY)"; \
 	echo ""; \
 	if [ "$$fail" -ne 0 ]; then \
-	  echo "Doctor failed: fix missing items above, then re-run."; \
+	  echo "Doctor-dev failed: fix missing items above, then re-run."; \
 	  exit $$fail; \
 	fi; \
-	echo "Doctor OK."
+	echo "Doctor-dev OK."
+
 # Cloud lane doctor: verifies tools and config required to deploy the API to Cloud Run using Terraform + Cloud Build.
 doctor-gcp:
 	@set -e; \
@@ -302,16 +378,57 @@ reset:
 logs:
 	$(COMPOSE) logs -f --tail=200
 
+
+# Fast dev lane (host-run API/UI, Docker DB)
+db-up: doctor
+	$(COMPOSE) up -d db
+
+db-down:
+	$(COMPOSE) stop db
+
+api-dev: doctor-dev db-up
+	@echo "Starting API dev server (hot reload) on http://localhost:8080"; \
+	DATABASE_URL="postgresql+psycopg://edgewatch:edgewatch@localhost:5435/edgewatch" \
+	APP_ENV=dev AUTO_MIGRATE=1 ENABLE_SCHEDULER=1 LOG_FORMAT=text \
+	uv run --locked uvicorn api.app.main:app --reload --host 0.0.0.0 --port 8080
+
+web-install: doctor-dev
+	@echo "Installing UI deps (pnpm workspace)"; \
+	corepack enable; \
+	if [ -f pnpm-lock.yaml ]; then \
+	  pnpm install --frozen-lockfile; \
+	else \
+	  pnpm install --no-frozen-lockfile; \
+	fi
+
+web-dev: doctor-dev
+	@echo "Starting UI dev server on http://localhost:5173"; \
+	corepack enable; \
+	pnpm -C web dev --host 0.0.0.0 --port 5173
+
+
+# Apply DB migrations locally (uses the compose 'migrate' service).
+db-migrate: doctor
+	$(COMPOSE) run --rm migrate
+
+# Create a new migration revision. Usage: make db-revision msg="add_foo"
+db-revision: doctor-dev
+	@if [ -z "$(msg)" ]; then echo "msg is required. Example: make db-revision msg=add_devices"; exit 2; fi
+	uv run alembic revision -m "$(msg)" --autogenerate
+
 # Create a demo device using the admin API.
 # NOTE: default ADMIN_API_KEY comes from api/app/config.py and .env.example.
 demo-device:
-	@curl -s -X POST "$(EDGEWATCH_API_URL)/api/v1/admin/devices" \
-	  -H "X-Admin-Key: dev-admin-key" \
+	@set -euo pipefail; \
+	resp=$$(curl -fsS -X POST "$(EDGEWATCH_API_URL)/api/v1/admin/devices" \
+	  -H "X-Admin-Key: $(ADMIN_API_KEY)" \
 	  -H "Content-Type: application/json" \
-	  -d '{"device_id":"$(EDGEWATCH_DEVICE_ID)","display_name":"Demo Well 001","token":"$(EDGEWATCH_DEVICE_TOKEN)","heartbeat_interval_s":30,"offline_after_s":120}' | jq .
+	  -d '{"device_id":"$(EDGEWATCH_DEVICE_ID)","display_name":"Demo Well 001","token":"$(EDGEWATCH_DEVICE_TOKEN)","heartbeat_interval_s":300,"offline_after_s":900}'); \
+	if command -v jq >/dev/null 2>&1; then echo "$$resp" | jq .; else echo "$$resp"; fi
+
 
 # Run the edge simulator (pretends to be an RPi).
-simulate: doctor
+simulate: doctor-dev
 	cp -n agent/.env.example agent/.env || true
 	@set -euo pipefail; \
 	trap 'kill 0' INT TERM EXIT; \
@@ -329,10 +446,14 @@ simulate: doctor
 	wait
 
 devices:
-	@curl -s "$(EDGEWATCH_API_URL)/api/v1/devices" | jq .
+	@set -euo pipefail; \
+	resp=$$(curl -fsS "$(EDGEWATCH_API_URL)/api/v1/devices"); \
+	if command -v jq >/dev/null 2>&1; then echo "$$resp" | jq .; else echo "$$resp"; fi
 
 alerts:
-	@curl -s "$(EDGEWATCH_API_URL)/api/v1/alerts?limit=25" | jq .
+	@set -euo pipefail; \
+	resp=$$(curl -fsS "$(EDGEWATCH_API_URL)/api/v1/alerts?limit=25"); \
+	if command -v jq >/dev/null 2>&1; then echo "$$resp" | jq .; else echo "$$resp"; fi
 
 # -----------------------------
 # GCP deploy lane (Cloud Run)
@@ -356,6 +477,7 @@ tf-init-gcp: bootstrap-state-gcp
 
 infra-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) apply -auto-approve \
+		$(TFVARS_ARG) \
 		-var "project_id=$(PROJECT_ID)" \
 		-var "region=$(REGION)" \
 		-var "env=$(ENV)" \
@@ -372,6 +494,7 @@ infra-gcp: tf-init-gcp
 
 plan-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) plan \
+		$(TFVARS_ARG) \
 		-var "project_id=$(PROJECT_ID)" \
 		-var "region=$(REGION)" \
 		-var "env=$(ENV)" \
@@ -384,6 +507,7 @@ plan-gcp: tf-init-gcp
 
 apply-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) apply -auto-approve \
+		$(TFVARS_ARG) \
 		-var "project_id=$(PROJECT_ID)" \
 		-var "region=$(REGION)" \
 		-var "env=$(ENV)" \
@@ -407,19 +531,80 @@ build-gcp: doctor-gcp infra-gcp grant-cloudbuild-gcp
 
 deploy-gcp: build-gcp apply-gcp verify-gcp
 
+# Safe deploy sequence: deploy service, run migrations via Cloud Run Job, then verify readiness.
+deploy-gcp-safe: build-gcp apply-gcp migrate-gcp verify-gcp-ready
+
+# Opinionated shortcuts (Terraform profiles)
+plan-gcp-demo:
+	$(MAKE) plan-gcp ENV=dev TFVARS=infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars
+
+apply-gcp-demo:
+	$(MAKE) apply-gcp ENV=dev TFVARS=infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars
+
+deploy-gcp-demo:
+	$(MAKE) deploy-gcp-safe ENV=dev TFVARS=infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars
+
+plan-gcp-prod:
+	$(MAKE) plan-gcp ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_private_iam.tfvars
+
+apply-gcp-prod:
+	$(MAKE) apply-gcp ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_private_iam.tfvars
+
+deploy-gcp-prod:
+	$(MAKE) deploy-gcp-safe ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_private_iam.tfvars
+
 url-gcp: tf-init-gcp
 	@terraform -chdir=$(TF_DIR) output -raw service_url
 
-verify-gcp: tf-init-gcp
-	@URL=$$(terraform -chdir=$(TF_DIR) output -raw service_url); \
+verify-gcp: doctor-gcp tf-init-gcp
+	@set -euo pipefail; \
+	URL=$$(terraform -chdir=$(TF_DIR) output -raw service_url); \
 	echo "Service URL: $$URL"; \
-	curl -fsS "$$URL/health" >/dev/null && echo "OK: /health" || (echo "Health check failed"; exit 1)
+	token=$$(gcloud auth print-identity-token 2>/dev/null || true); \
+	if [ -n "$$token" ]; then \
+	  curl -fsS -H "Authorization: Bearer $$token" "$$URL/health" >/dev/null && echo "OK: /health"; \
+	else \
+	  if curl -fsS "$$URL/health" >/dev/null; then \
+	    echo "OK: /health"; \
+	  else \
+	    echo "Health check failed. If the service is private, ensure you have roles/run.invoker and run: make auth"; \
+	    exit 1; \
+	  fi; \
+	fi
+
+# Readiness check includes DB connectivity + migrations (alembic_version table exists).
+verify-gcp-ready: doctor-gcp tf-init-gcp
+	@set -euo pipefail; \
+	URL=$$(terraform -chdir=$(TF_DIR) output -raw service_url); \
+	echo "Service URL: $$URL"; \
+	token=$$(gcloud auth print-identity-token 2>/dev/null || true); \
+	if [ -n "$$token" ]; then \
+	  curl -fsS -H "Authorization: Bearer $$token" "$$URL/readyz" >/dev/null && echo "OK: /readyz"; \
+	else \
+	  if curl -fsS "$$URL/readyz" >/dev/null; then \
+	    echo "OK: /readyz"; \
+	  else \
+	    echo "Readiness check failed. If the service is private, ensure you have roles/run.invoker and run: make auth"; \
+	    exit 1; \
+	  fi; \
+	fi
 
 logs-gcp: doctor-gcp
 	gcloud run services logs read "$(SERVICE_NAME)" --region "$(REGION)" --limit 100
 
+
+# Run alembic migrations using the Cloud Run Job created by Terraform.
+# This is the recommended pattern for prod/stage rollouts.
+migrate-gcp: doctor-gcp
+	@gcloud run jobs execute "edgewatch-migrate-$(ENV)" --region "$(REGION)" --wait
+
+# Manually trigger the offline check job (useful for smoke tests).
+offline-check-gcp: doctor-gcp
+	@gcloud run jobs execute "edgewatch-offline-check-$(ENV)" --region "$(REGION)" --wait
+
 destroy-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) destroy -auto-approve \
+		$(TFVARS_ARG) \
 		-var "project_id=$(PROJECT_ID)" \
 		-var "region=$(REGION)" \
 		-var "env=$(ENV)" \
@@ -441,10 +626,13 @@ admin-secret: doctor-gcp
 	@gcloud secrets versions add edgewatch-admin-api-key --data-file=-
 
 # Lockfiles
-lock: doctor
-	@echo "Generating uv.lock (Python)"; uv lock
-	@echo "Generating pnpm-lock.yaml (web)"; cd web && pnpm install
+lock: doctor-dev
+	@echo "Generating uv.lock (Python)"; uv lock --default-index "$(UV_DEFAULT_INDEX)"
+	@echo "Generating pnpm-lock.yaml (workspace)"; pnpm install
 	@echo "Done. Commit uv.lock and pnpm-lock.yaml for team reproducibility."
+
+hygiene:
+	python scripts/repo_hygiene.py
 
 
 # -----------------------------------------------------------------------------
@@ -497,3 +685,43 @@ tf-policy: ## OPA/Conftest policy gate for Terraform (falls back to docker)
 	fi
 
 tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy ## Run all Terraform hygiene checks
+
+
+# -----------------------------------------------------------------------------
+# Harness / repo-quality gates (agent-friendly)
+#
+# These targets are intentionally separate from the local "doctor" target.
+# Use them for lint/test/typecheck in a consistent way (locally and in CI).
+# -----------------------------------------------------------------------------
+
+.PHONY: fmt lint typecheck test build harness harness-doctor
+
+fmt:
+	python scripts/harness.py fmt
+
+lint:
+	python scripts/harness.py lint
+
+typecheck:
+	python scripts/harness.py typecheck
+
+test:
+	python scripts/harness.py test
+
+build:
+	python scripts/harness.py build
+
+harness:
+	python scripts/harness.py all
+
+harness-doctor:
+	python scripts/harness.py doctor
+
+# -----------------------------------------------------------------------------
+# Distribution packaging
+# -----------------------------------------------------------------------------
+
+.PHONY: dist
+
+dist: clean ## Create a clean distribution zip under ./dist/
+	python scripts/package_dist.py

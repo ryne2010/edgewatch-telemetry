@@ -1,0 +1,49 @@
+# EdgeWatch Telemetry Contract (v1)
+#
+# This is a *lightweight* data contract for metric keys and expected types.
+#
+# Notes:
+# - Unknown keys are allowed by default (additive drift).
+# - Known keys must match the declared type (breaking drift is rejected).
+# - Use this file to align ingest payloads, UI charts, and downstream processing.
+
+version: v1
+
+metrics:
+  water_pressure_psi:
+    type: number
+    unit: psi
+    description: Water pressure at the sensor.
+
+  oil_pressure_psi:
+    type: number
+    unit: psi
+    description: Oil pressure at the sensor (when pump is on).
+
+  temperature_c:
+    type: number
+    unit: celsius
+    description: Ambient temperature near the device.
+
+  battery_v:
+    type: number
+    unit: volts
+    description: Battery voltage.
+
+  signal_rssi_dbm:
+    type: number
+    unit: dBm
+    description: Cellular/WiFi RSSI (dBm).
+
+  pump_on:
+    type: boolean
+    description: Whether the pump is currently running.
+
+  flow_rate_gpm:
+    type: number
+    unit: gpm
+    description: Flow rate (gallons per minute).
+
+  device_state:
+    type: string
+    description: Optional string state emitted by the device (e.g., OK/WARN/ERROR).

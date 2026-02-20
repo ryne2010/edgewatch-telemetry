@@ -1,67 +1,73 @@
-name: terraform-apply-gcp
+name: Terraform apply (GCP)
 
 on:
   workflow_dispatch:
     inputs:
       env:
-        description: "Environment workspace (dev|stage|prod)"
+        description: "Environment name (dev/prod/etc). Controls service_name prefix + tfstate prefix."
         required: true
         default: "dev"
+      tfvars:
+        description: "Optional Terraform var-file path (e.g., infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-apply-${{ github.event.inputs.env }}
+  cancel-in-progress: false
 
 jobs:
   apply:
-    # Skip entirely until you configure WIF secrets.
-    if: ${{ vars.GCP_WIF_PROVIDER != '' && vars.GCP_WIF_SERVICE_ACCOUNT != '' }}
     runs-on: ubuntu-latest
 
-    # GitHub Environments can enforce manual approvals per env (recommended).
-    environment: ${{ inputs.env }}
-
-    permissions:
-      contents: read
-      id-token: write
-
     env:
-      TF_DIR: infra/gcp/cloud_run_demo
-
-      # GitHub "Variables" (Repo Settings → Secrets and variables → Actions → Variables)
       PROJECT_ID: ${{ vars.PROJECT_ID }}
       REGION: ${{ vars.REGION }}
-      TFSTATE_BUCKET: ${{ vars.TFSTATE_BUCKET }}
-      TFSTATE_PREFIX: ${{ vars.TFSTATE_PREFIX }}
-      WORKSPACE_DOMAIN: ${{ vars.WORKSPACE_DOMAIN }}
-
-      # Terraform variables (TF_VAR_*)
-      TF_VAR_project_id: ${{ vars.PROJECT_ID }}
-      TF_VAR_region: ${{ vars.REGION }}
-      TF_VAR_env: ${{ inputs.env }}
-      TF_VAR_service_name: "edgewatch-${{ inputs.env }}"
+      # Optional overrides (if unset/empty, the workflow computes safe defaults)
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_PREFIX: ${{ vars.TF_STATE_PREFIX }}
+      AR_REPO: ${{ vars.AR_REPO }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Auth to Google Cloud (Workload Identity Federation)
+      - name: Authenticate to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
 
-      - name: Setup gcloud
+      - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ vars.PROJECT_ID }}
 
-      - name: Setup Terraform
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.6.6"
+          terraform_version: "1.14.5"
 
-      - name: Terraform init (remote state)
+      - name: Configure gcloud defaults
         run: |
-          terraform -chdir=${TF_DIR} init -reconfigure \
-            -backend-config="bucket=${TFSTATE_BUCKET}" \
-            -backend-config="prefix=${TFSTATE_PREFIX}/${{ inputs.env }}"
+          gcloud config set project "$PROJECT_ID"
+          gcloud config set run/region "$REGION"
 
       - name: Terraform apply
-        run: terraform -chdir=${TF_DIR} apply -auto-approve
+        env:
+          ENV: ${{ github.event.inputs.env }}
+          TFVARS: ${{ github.event.inputs.tfvars }}
+          TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          TF_STATE_BUCKET_EFFECTIVE="${TF_STATE_BUCKET:-${PROJECT_ID}-tfstate}"
+          TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-edgewatch/${ENV}}"
+          AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
+
+          make apply-gcp \
+            TF_STATE_BUCKET="$TF_STATE_BUCKET_EFFECTIVE" \
+            TF_STATE_PREFIX="$TF_STATE_PREFIX_EFFECTIVE" \
+            AR_REPO="$AR_REPO_EFFECTIVE"

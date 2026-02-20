@@ -4,7 +4,7 @@ This repo includes a scheduled GitHub Actions workflow:
 
 - `.github/workflows/terraform-drift.yml`
 
-It runs a `terraform plan -detailed-exitcode` on a schedule to detect **drift**
+It runs `terraform plan -detailed-exitcode` on a schedule to detect **drift**
 (resources changed outside of Terraform).
 
 ## Why it matters
@@ -22,11 +22,18 @@ Drift detection gives you:
 ## How to enable
 
 1) Configure Workload Identity Federation (WIF) for GitHub Actions (see `docs/WIF_GITHUB_ACTIONS.md`)
+
 2) Set GitHub Actions repo variables:
-   - `PROJECT_ID`
-   - `REGION`
-   - `TFSTATE_BUCKET`
-   - `TFSTATE_PREFIX`
+
+Required:
+- `PROJECT_ID`
+- `REGION`
+- `GCP_WIF_PROVIDER`
+- `GCP_WIF_SERVICE_ACCOUNT`
+
+Optional (override defaults):
+- `TF_STATE_BUCKET` (defaults to `${PROJECT_ID}-tfstate`)
+- `TF_STATE_PREFIX` (defaults to `edgewatch/<env>`)
 
 Then the scheduled workflow will run automatically.
 

@@ -1,5 +1,21 @@
 # Team workflow
 
+This doc standardizes the "happy path" for local development and the optional GCP demo lane.
+
+## Local development
+
+```bash
+make doctor
+make hygiene
+make up
+```
+
+If you update the schema:
+
+```bash
+make db-migrate
+```
+
 ## Onboarding (GCP deploy lane)
 
 Recommended first steps for a teammate deploying the Cloud Run demo:
@@ -8,7 +24,16 @@ Recommended first steps for a teammate deploying the Cloud Run demo:
 make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
 make auth          # only needed once per machine/user
 make doctor-gcp
-make deploy-gcp
+
+# one-time per project (or whenever secrets rotate)
+make db-secret
+make admin-secret
+
+# Public demo posture (dev)
+make deploy-gcp-demo
+
+# Or: production posture (private IAM)
+# make deploy-gcp-prod
 ```
 
 Notes:
@@ -34,11 +59,21 @@ Terraform uses a GCS backend. The Makefile creates the bucket automatically:
 make bootstrap-state-gcp
 ```
 
+## Scheduled jobs (Cloud Scheduler -> Cloud Run Jobs)
+
+The Terraform demo stack can create:
+- Cloud Run Job: `edgewatch-offline-check-<env>`
+- Cloud Scheduler cron trigger
+
+This avoids duplicated offline checks when Cloud Run scales.
+
+---
+
 ## Team IAM (Google Groups)
 
 This repo can optionally apply a Google Groups IAM starter pack from Terraform.
 
-Use: 
+Use:
 - `WORKSPACE_DOMAIN=yourdomain.com` to enable
 - `GROUP_PREFIX=edgewatch` to control group email names
 
@@ -53,6 +88,10 @@ Use Workload Identity Federation (no service account keys) and require plan outp
 Generate and commit:
 - `uv.lock`
 - `pnpm-lock.yaml`
+
+This repo ships a portable `uv.lock` (PyPI/pythonhosted URLs).
+
+If you change dependencies, regenerate lockfiles on your machine.
 
 ```bash
 make lock

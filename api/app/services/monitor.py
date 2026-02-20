@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from ..config import settings
+from ..edge_policy import load_edge_policy
 from ..models import Device, Alert
 
 
@@ -88,9 +89,26 @@ def _resolve_offline_alert_if_any(session: Session, device: Device, now: datetim
         )
 
 
-def ensure_water_pressure_alerts(session: Session, device_id: str, water_pressure_psi: float, now: datetime) -> None:
-    """Example threshold alert with stateful open/resolve behavior."""
-    threshold = settings.default_water_pressure_low_psi
+def ensure_water_pressure_alerts(
+    session: Session, device_id: str, water_pressure_psi: float, now: datetime
+) -> None:
+    """Example threshold alert with stateful open/resolve behavior.
+
+    We intentionally implement a small amount of hysteresis to prevent "flapping":
+    - Open when pressure < low
+    - Resolve only when pressure >= recover
+
+    Thresholds are sourced from the edge policy contract (contracts/edge_policy/*)
+    with an optional env override for quick experimentation.
+    """
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    low = (
+        settings.default_water_pressure_low_psi
+        if settings.default_water_pressure_low_psi is not None
+        else policy.alert_thresholds.water_pressure_low_psi
+    )
+    recover = policy.alert_thresholds.water_pressure_recover_psi
 
     open_alert = (
         session.query(Alert)
@@ -103,19 +121,19 @@ def ensure_water_pressure_alerts(session: Session, device_id: str, water_pressur
         .first()
     )
 
-    if water_pressure_psi < threshold:
+    if water_pressure_psi < low:
         if not open_alert:
             session.add(
                 Alert(
                     device_id=device_id,
                     alert_type="WATER_PRESSURE_LOW",
                     severity="warning",
-                    message=f"Water pressure low: {water_pressure_psi:.1f} psi (threshold: {threshold:.1f} psi).",
+                    message=f"Water pressure low: {water_pressure_psi:.1f} psi (threshold: {low:.1f} psi).",
                     created_at=now,
                 )
             )
     else:
-        if open_alert:
+        if open_alert and water_pressure_psi >= recover:
             open_alert.resolved_at = now
             session.add(
                 Alert(

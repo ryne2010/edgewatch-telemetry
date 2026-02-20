@@ -1,0 +1,8 @@
+name: "CodeQL config"
+
+# Reduce noise from generated and auxiliary directories.
+paths-ignore:
+  - "docs/**"
+  - "tests/**"
+  - "**/__pycache__/**"
+  - "**/*.pyc"

@@ -1,0 +1,39 @@
+repos:
+  - repo: local
+    hooks:
+      - id: repo-hygiene
+        name: repo hygiene (portability)
+        entry: python scripts/repo_hygiene.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --locked ruff format .
+        language: system
+        types: [python]
+
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --locked ruff check .
+        language: system
+        types: [python]
+
+      - id: pyright
+        name: pyright
+        entry: uv run --locked pyright
+        language: system
+        types: [python]
+
+      - id: pytest
+        name: pytest
+        entry: uv run --locked pytest
+        language: system
+        pass_filenames: false
+
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -recursive infra/gcp
+        language: system
+        files: ^infra/gcp/.*\.tf$

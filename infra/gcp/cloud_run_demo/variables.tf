@@ -37,10 +37,45 @@ variable "image" {
   description = "Container image URI."
 }
 
+# --- Public vs private posture ------------------------------------------------
+
+variable "allow_public_in_non_dev" {
+  type        = bool
+  description = <<EOT
+If true, you may set allow_unauthenticated=true in stage/prod.
+
+Guardrail:
+- For portfolio/demo apps it's common to run a public Cloud Run service.
+- For a production posture, default to private IAM-only invocations.
+
+This flag forces an explicit acknowledgment before making non-dev environments public.
+EOT
+  default     = false
+}
+
 variable "allow_unauthenticated" {
   type        = bool
   description = "Whether the Cloud Run service is public."
-  default     = true
+  default     = false
+
+  validation {
+    condition     = var.env == "dev" || var.allow_unauthenticated == false || var.allow_public_in_non_dev == true
+    error_message = "Refusing to make stage/prod public: set allow_public_in_non_dev=true to acknowledge the risk/cost posture."
+  }
+}
+
+variable "cors_allow_origins_csv" {
+  type        = string
+  description = <<EOT
+Optional comma-separated list of allowed origins for CORS.
+
+When null (default), the API applies safe in-app defaults:
+- dev: ["*"]
+- stage/prod: []
+
+Set this when you deploy a browser UI to a fixed domain.
+EOT
+  default     = null
 }
 
 variable "min_instances" {
@@ -53,6 +88,30 @@ variable "max_instances" {
   type        = number
   description = "Maximum Cloud Run instances (cost guardrail)."
   default     = 1
+}
+
+variable "service_cpu" {
+  type        = string
+  description = "Cloud Run service CPU limit (e.g., '1')."
+  default     = "1"
+}
+
+variable "service_memory" {
+  type        = string
+  description = "Cloud Run service memory limit (e.g., '512Mi')."
+  default     = "512Mi"
+}
+
+variable "job_cpu" {
+  type        = string
+  description = "Cloud Run Job CPU limit (e.g., '1')."
+  default     = "1"
+}
+
+variable "job_memory" {
+  type        = string
+  description = "Cloud Run Job memory limit (e.g., '512Mi')."
+  default     = "512Mi"
 }
 
 variable "enable_vpc_connector" {
@@ -127,4 +186,72 @@ variable "enable_slo" {
   type        = bool
   description = "Create a Service Monitoring Service + Availability SLO + burn-rate alert policy."
   default     = true
+}
+
+
+# --- Optional: production-safe scheduled jobs (Cloud Scheduler -> Cloud Run Jobs) ---
+
+variable "enable_scheduled_jobs" {
+  type        = bool
+  description = "If true, create a Cloud Run Job + Cloud Scheduler trigger for offline checks."
+  default     = true
+}
+
+variable "enable_migration_job" {
+  type        = bool
+  description = "If true, create a Cloud Run Job to run DB migrations on demand."
+  default     = true
+}
+
+variable "offline_job_schedule" {
+  type        = string
+  description = "Cron schedule for the offline check Cloud Scheduler job."
+  # Default to every 5 minutes to minimize background compute cost.
+  # If you need faster detection, set to "*/1 * * * *".
+  default     = "*/5 * * * *"
+}
+
+variable "scheduler_time_zone" {
+  type        = string
+  description = "Time zone for Cloud Scheduler."
+  default     = "Etc/UTC"
+}
+
+# --- Demo bootstrap controls ---
+
+variable "bootstrap_demo_device" {
+  type        = bool
+  description = "If true, the service bootstraps a demo device (or fleet) on startup."
+  default     = true
+
+  # Guardrail: demo bootstrap is great for `env=dev`, but it's a footgun for stage/prod.
+  # Force an explicit opt-out when switching environments.
+  validation {
+    condition     = var.env == "dev" || var.bootstrap_demo_device == false
+    error_message = "bootstrap_demo_device must be false when env is stage/prod (avoid shipping demo credentials)."
+  }
+}
+
+variable "demo_fleet_size" {
+  type        = number
+  description = "Number of demo devices to bootstrap when bootstrap_demo_device is true."
+  default     = 3
+}
+
+variable "demo_device_id" {
+  type        = string
+  description = "Base demo device id (supports 3-digit suffix derivation)."
+  default     = "demo-well-001"
+}
+
+variable "demo_device_name" {
+  type        = string
+  description = "Base demo device display name (supports 3-digit suffix derivation)."
+  default     = "Demo Well 001"
+}
+
+variable "demo_device_token" {
+  type        = string
+  description = "Base demo device token (supports 3-digit suffix derivation)."
+  default     = "dev-device-token-001"
 }

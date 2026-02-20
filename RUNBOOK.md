@@ -15,6 +15,12 @@ Tail logs:
 make logs
 ```
 
+Apply migrations:
+
+```bash
+make db-migrate
+```
+
 Create a demo device:
 
 ```bash
@@ -38,28 +44,36 @@ make alerts
 
 ## Cloud Run demo (optional)
 
-Deploy:
+### One-time / per-project
 
 ```bash
-make deploy-gcp
-```
+make init PROJECT_ID=YOUR_PROJECT REGION=us-central1
+make auth
+make doctor-gcp
 
-Add secret versions (required):
-
-```bash
 make db-secret
 make admin-secret
 ```
 
-Verify:
+### Deploy
 
 ```bash
-make verify-gcp
-make logs-gcp
+# Recommended safe deploy: deploy, run migrations job, then readiness verify
+make deploy-gcp-safe ENV=dev
 ```
 
-Rollback:
+Verify + logs:
 
 ```bash
-make deploy-gcp TAG=v2026-01-29-1
+make verify-gcp ENV=dev
+make verify-gcp-ready ENV=dev
+make logs-gcp ENV=dev
+```
+
+### Rollback
+
+Deploy a previous image tag:
+
+```bash
+make deploy-gcp ENV=dev TAG=v2026-01-29-1
 ```

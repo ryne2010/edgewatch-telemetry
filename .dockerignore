@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# GitHub
+.github
+
+# Python
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.pyright
+
+# Local env/secrets
+.env
+.env.*
+
+# Local data
+edgewatch_pgdata
+*.sqlite
+*.sqlite3
+
+# Frontend
+web/node_modules
+web/dist
+web/.tanstack
+
+# OS
+.DS_Store

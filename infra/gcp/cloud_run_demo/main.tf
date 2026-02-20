@@ -4,19 +4,52 @@ locals {
     env = var.env
   }
 
-  env_vars = {
-    APP_ENV   = var.env
-    LOG_LEVEL = "INFO"
+  # Base env vars (safe for Cloud Run)
+  base_env_vars = {
+    APP_ENV    = var.env
+    LOG_LEVEL  = "INFO"
+    LOG_FORMAT = "json"
 
-    # Demo bootstrap (optional)
-    BOOTSTRAP_DEMO_DEVICE = "true"
-    DEMO_DEVICE_ID        = "demo-well-001"
-    DEMO_DEVICE_NAME      = "Demo Well 001"
-    DEMO_DEVICE_TOKEN     = "demo-device-token-001"
+    # Production-safe: Cloud Run services should not rely on in-process schedulers.
+    #
+    # Why:
+    # - Cloud Run can scale to zero; background threads won't run when the instance is idle.
+    # - CPU is throttled when no requests are in-flight (unless you pay for always-on CPU).
+    #
+    # Pattern:
+    # - Keep ENABLE_SCHEDULER=false
+    # - Use Cloud Scheduler -> Cloud Run Jobs for offline checks (enable_scheduled_jobs).
+    ENABLE_SCHEDULER = "false"
 
-    # CORS for a demo UI
-    CORS_ALLOW_ORIGINS = "*"
+    # Migrations should be run as an explicit job (Cloud Run Job) instead of on every cold start.
+    AUTO_MIGRATE = "false"
+
+    # Telemetry contract (data quality + drift visibility)
+    TELEMETRY_CONTRACT_VERSION       = "v1"
+    TELEMETRY_CONTRACT_ENFORCE_TYPES = "true"
+
+    # Edge policy contract (device-side optimization)
+    EDGE_POLICY_VERSION = "v1"
+
+    # Demo bootstrap guardrails.
+    BOOTSTRAP_DEMO_DEVICE = var.bootstrap_demo_device ? "true" : "false"
   }
+
+  demo_env_vars = var.bootstrap_demo_device ? {
+    DEMO_FLEET_SIZE   = tostring(var.demo_fleet_size)
+    DEMO_DEVICE_ID    = var.demo_device_id
+    DEMO_DEVICE_NAME  = var.demo_device_name
+    DEMO_DEVICE_TOKEN = var.demo_device_token
+  } : {}
+
+  cors_env_vars = var.cors_allow_origins_csv == null ? {} : {
+    CORS_ALLOW_ORIGINS = var.cors_allow_origins_csv
+  }
+
+  # Only the *service* gets demo + CORS vars.
+  # Jobs should stay minimal and must not inherit demo tokens.
+  service_env_vars = merge(local.base_env_vars, local.demo_env_vars, local.cors_env_vars)
+  job_env_vars     = local.base_env_vars
 }
 
 module "core_services" {
@@ -109,13 +142,13 @@ module "cloud_run" {
   image                 = var.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
-  cpu           = "1"
-  memory        = "512Mi"
+  cpu           = var.service_cpu
+  memory        = var.service_memory
   min_instances = var.min_instances
   max_instances = var.max_instances
 
   allow_unauthenticated = var.allow_unauthenticated
-  env_vars              = local.env_vars
+  env_vars              = local.service_env_vars
   labels                = local.labels
 
   secret_env = {

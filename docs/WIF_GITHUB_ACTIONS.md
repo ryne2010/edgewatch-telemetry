@@ -1,57 +1,75 @@
-# Workload Identity Federation (WIF) for GitHub Actions
+# GitHub Actions + GCP Workload Identity Federation (WIF)
 
-This repo includes GitHub Actions workflows that can run Terraform **without** long-lived service account keys.
+This repo supports **passwordless deployments to GCP** from GitHub Actions using **Workload Identity Federation (WIF)**.
 
-Workflows:
-- `terraform-hygiene.yml` — fmt/validate/lint/sec/policy (no GCP auth required)
-- `terraform-apply-gcp.yml` — apply on demand (workflow_dispatch)
-- `terraform-drift.yml` — scheduled drift detection (plan -detailed-exitcode)
+Why WIF:
+- No long‑lived JSON keys in GitHub Secrets
+- Least privilege with a dedicated deploy service account
+- Easier rotation / incident response
 
----
+## Workflows in this repo
 
-## 1) Create WIF + CI service account (Repo 3)
+These live under `.github/workflows/`:
 
-In this portfolio, Repo 3 (`terraform-gcp-platform`) contains:
-- a reusable `modules/github_oidc/`
-- an example `examples/github_actions_wif/` to bootstrap WIF + a CI service account + a tfstate bucket
+- `ci.yml`
+  - Runs repo gates via `python scripts/harness.py all --strict`.
+  - Intended to be the default PR/merge gate.
 
-Follow:
-- `terraform-gcp-platform/docs/WIF_GITHUB_ACTIONS.md`
+- `terraform-hygiene.yml`
+  - Runs `make tf-check` (fmt/validate/tflint/tfsec/conftest) on Terraform changes.
 
----
+- `terraform-apply-gcp.yml`
+  - **Manual** (`workflow_dispatch`) Terraform apply for GCP.
+  - Use this when you want to apply infrastructure changes only.
 
-## 2) Configure GitHub Actions Variables
+- `deploy-gcp.yml`
+  - **Manual** (`workflow_dispatch`) safe deploy sequence.
+  - Runs `make deploy-gcp-safe` which:
+    1) builds & pushes an image
+    2) applies Terraform
+    3) runs migrations
+    4) verifies the service is live
 
-GitHub → Settings → Secrets and variables → Actions → **Variables**
+- `terraform-drift.yml`
+  - Scheduled drift detection.
+  - Runs `terraform plan -detailed-exitcode` and fails if drift is detected.
 
-Set:
+## Required GitHub repo variables
 
-### WIF variables
-- `GCP_WIF_PROVIDER`  
-  Example: `projects/123456789/locations/global/workloadIdentityPools/my-pool/providers/github`
+Set these as GitHub Actions **Repository Variables** (Settings → Secrets and variables → Actions → Variables):
 
-- `GCP_WIF_SERVICE_ACCOUNT`  
-  Example: `ci-terraform@my-project.iam.gserviceaccount.com`
+- `PROJECT_ID`
+- `REGION`
+- `GCP_WIF_PROVIDER` (Workload Identity Provider resource name)
+- `GCP_WIF_SERVICE_ACCOUNT` (service account email used by GitHub Actions)
 
-### Environment variables
-- `PROJECT_ID` (e.g., `my-sandbox-project`)
-- `REGION` (e.g., `us-central1`)
-- `TFSTATE_BUCKET` (e.g., `my-sandbox-tfstate`)
-- `TFSTATE_PREFIX` (e.g., `portfolio/edgewatch`)
-- `WORKSPACE_DOMAIN` (optional; enables Google Groups IAM)
+Optional (nice-to-have):
 
----
+- `TF_STATE_BUCKET` (defaults to `${PROJECT_ID}-tfstate` if unset)
+- `TF_STATE_PREFIX` (defaults to `edgewatch/<env>` if unset)
+- `AR_REPO` (Artifact Registry repo name; defaults to `edgewatch` if unset)
 
-## 3) Run an apply
+## One-time GCP setup (high level)
 
-Actions → **terraform-apply-gcp** → Run workflow → env: `dev`
+1. Create a Workload Identity Pool + Provider that trusts your GitHub org/repo.
+2. Create a deploy service account.
+3. Allow the provider principal to impersonate the service account.
+4. Grant the service account only the minimal roles required for:
+   - Cloud Run deploy
+   - Artifact Registry push
+   - (Optional) Cloud Build
+   - Terraform state bucket admin
 
-If you configure GitHub **Environments** (`dev`, `stage`, `prod`), you can require approvals for applies (recommended).
+The exact IAM roles depend on the posture you choose (demo vs prod).
 
----
+## Running a manual deploy
 
-## Security notes
+- From GitHub: Actions → **Deploy to GCP (Cloud Run)** → Run workflow
+- Choose `env` (e.g., `dev` or `prod`)
+- Optionally pass a Terraform profile `.tfvars` file
 
-- Do **not** use downloadable service account keys for CI.
-- Prefer WIF + short-lived tokens.
-- Keep the CI service account least-privilege, and separate state prefixes per env.
+## Notes
+
+- The Makefile defaults are designed for a **low-cost demo posture**. For production hardening,
+  follow `docs/PRODUCTION_POSTURE.md`.
+- Workflows compute safe defaults if optional variables are not set.

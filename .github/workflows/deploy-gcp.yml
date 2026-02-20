@@ -1,0 +1,73 @@
+name: Deploy to GCP (Cloud Run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Environment to deploy (dev/prod/etc)."
+        required: true
+        default: "dev"
+      tfvars:
+        description: "Optional Terraform var-file path (profile)."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-gcp-${{ github.event.inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      # Optional overrides (if unset/empty, the workflow computes safe defaults)
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_PREFIX: ${{ vars.TF_STATE_PREFIX }}
+      AR_REPO: ${{ vars.AR_REPO }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.5"
+
+      - name: Configure gcloud defaults
+        run: |
+          gcloud config set project "$PROJECT_ID"
+          gcloud config set run/region "$REGION"
+
+      - name: Build + deploy (safe sequence)
+        env:
+          ENV: ${{ github.event.inputs.env }}
+          TFVARS: ${{ github.event.inputs.tfvars }}
+          TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          TF_STATE_BUCKET_EFFECTIVE="${TF_STATE_BUCKET:-${PROJECT_ID}-tfstate}"
+          TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-edgewatch/${ENV}}"
+          AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
+
+          make deploy-gcp-safe \
+            TF_STATE_BUCKET="$TF_STATE_BUCKET_EFFECTIVE" \
+            TF_STATE_PREFIX="$TF_STATE_PREFIX_EFFECTIVE" \
+            AR_REPO="$AR_REPO_EFFECTIVE"

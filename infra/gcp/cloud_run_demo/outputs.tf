@@ -32,3 +32,27 @@ output "alert_policy_latency_p95_name" {
   description = "Alert policy resource name (if enabled)."
   value       = try(google_monitoring_alert_policy.cloudrun_latency_p95[0].name, null)
 }
+
+
+# --- Scheduled job outputs (optional) ---
+
+output "offline_check_job_name" {
+  description = "Cloud Run Job name for offline checks (if enabled)."
+  value       = try(module.offline_check_job[0].job_name, null)
+}
+
+output "offline_scheduler_job_name" {
+  description = "Cloud Scheduler job name for offline checks (if enabled)."
+  value       = try(google_cloud_scheduler_job.offline_check[0].name, null)
+}
+
+output "scheduler_service_account" {
+  description = "Service account used by Cloud Scheduler to run jobs (if enabled)."
+  value       = try(google_service_account.scheduler[0].email, null)
+}
+
+
+output "migration_job_name" {
+  description = "Cloud Run Job name for DB migrations (if enabled)."
+  value       = try(module.migrate_job[0].job_name, null)
+}
