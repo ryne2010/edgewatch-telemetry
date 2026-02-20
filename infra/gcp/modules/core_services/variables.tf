@@ -18,7 +18,10 @@ variable "services" {
     "cloudscheduler.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
-    "secretmanager.googleapis.com"
+    "secretmanager.googleapis.com",
+    "sqladmin.googleapis.com",
+    "storage.googleapis.com",
+    "bigquery.googleapis.com",
   ]
 }
 

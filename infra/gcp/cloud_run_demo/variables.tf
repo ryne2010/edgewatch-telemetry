@@ -102,6 +102,93 @@ variable "service_memory" {
   default     = "512Mi"
 }
 
+# --- Cloud SQL (managed PostgreSQL) ---
+
+variable "enable_cloud_sql" {
+  type        = bool
+  description = "Provision a Cloud SQL Postgres instance and manage DATABASE_URL secret from Terraform."
+  default     = true
+}
+
+variable "cloudsql_instance_name" {
+  type        = string
+  description = "Optional Cloud SQL instance name override. Null derives from service_name."
+  default     = null
+}
+
+variable "cloudsql_database_version" {
+  type        = string
+  description = "Cloud SQL Postgres major version."
+  default     = "POSTGRES_15"
+}
+
+variable "cloudsql_database_name" {
+  type        = string
+  description = "Application database name."
+  default     = "edgewatch"
+}
+
+variable "cloudsql_user_name" {
+  type        = string
+  description = "Application database user name."
+  default     = "edgewatch"
+}
+
+variable "cloudsql_user_password" {
+  type        = string
+  description = "Optional DB user password override. If null, Terraform derives a stable env-specific fallback."
+  default     = null
+  sensitive   = true
+}
+
+variable "cloudsql_tier" {
+  type        = string
+  description = "Cloud SQL machine tier. Keep shared-core for minimal cost."
+  default     = "db-f1-micro"
+}
+
+variable "cloudsql_disk_size_gb" {
+  type        = number
+  description = "Initial Cloud SQL disk size in GB."
+  default     = 10
+}
+
+variable "cloudsql_disk_type" {
+  type        = string
+  description = "Cloud SQL disk type."
+  default     = "PD_HDD"
+}
+
+variable "cloudsql_availability_type" {
+  type        = string
+  description = "ZONAL (cost-min) or REGIONAL (HA)."
+  default     = "ZONAL"
+}
+
+variable "cloudsql_backup_enabled" {
+  type        = bool
+  description = "Enable Cloud SQL backups."
+  default     = true
+}
+
+variable "cloudsql_backup_start_time" {
+  type        = string
+  description = "Backup start time in UTC (HH:MM)."
+  default     = "03:00"
+}
+
+variable "cloudsql_require_ssl" {
+  type        = bool
+  description = "Require SSL for direct IP DB connections."
+  default     = true
+}
+
+variable "cloudsql_deletion_protection" {
+  type        = bool
+  description = "Protect Cloud SQL instance from accidental deletion."
+  default     = false
+}
+
 variable "job_cpu" {
   type        = string
   description = "Cloud Run Job CPU limit (e.g., '1')."
@@ -208,13 +295,77 @@ variable "offline_job_schedule" {
   description = "Cron schedule for the offline check Cloud Scheduler job."
   # Default to every 5 minutes to minimize background compute cost.
   # If you need faster detection, set to "*/1 * * * *".
-  default     = "*/5 * * * *"
+  default = "*/5 * * * *"
 }
 
 variable "scheduler_time_zone" {
   type        = string
   description = "Time zone for Cloud Scheduler."
   default     = "Etc/UTC"
+}
+
+# --- Optional: event-driven ingest (Pub/Sub) ---
+
+variable "enable_pubsub_ingest" {
+  type        = bool
+  description = "If true, create Pub/Sub resources and set INGEST_PIPELINE_MODE=pubsub."
+  default     = false
+}
+
+variable "pubsub_topic_name" {
+  type        = string
+  description = "Pub/Sub topic name for raw telemetry batches."
+  default     = "edgewatch-telemetry-raw"
+}
+
+variable "pubsub_push_subscription_name" {
+  type        = string
+  description = "Push subscription name for telemetry worker delivery."
+  default     = "edgewatch-telemetry-worker"
+}
+
+# --- Optional: analytics export lane (GCS + BigQuery + Cloud Run Job) ---
+
+variable "enable_analytics_export" {
+  type        = bool
+  description = "If true, provision analytics export resources and scheduler."
+  default     = false
+}
+
+variable "analytics_export_schedule" {
+  type        = string
+  description = "Cron schedule for analytics export Cloud Scheduler job."
+  default     = "0 * * * *"
+}
+
+variable "analytics_export_bucket_name" {
+  type        = string
+  description = "Optional bucket name override for analytics staging files."
+  default     = null
+}
+
+variable "analytics_export_bucket_lifecycle_days" {
+  type        = number
+  description = "Delete staged export objects after N days."
+  default     = 14
+}
+
+variable "analytics_export_dataset" {
+  type        = string
+  description = "BigQuery dataset for telemetry exports."
+  default     = "edgewatch_analytics"
+}
+
+variable "analytics_export_table" {
+  type        = string
+  description = "BigQuery table for telemetry exports."
+  default     = "telemetry_points"
+}
+
+variable "analytics_export_gcs_prefix" {
+  type        = string
+  description = "GCS object prefix for staged export files."
+  default     = "telemetry"
 }
 
 # --- Demo bootstrap controls ---

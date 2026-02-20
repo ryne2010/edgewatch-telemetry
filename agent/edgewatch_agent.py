@@ -74,6 +74,12 @@ def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _as_float(v: Any) -> float | None:
+    if _is_number(v):
+        return float(v)
+    return None
+
+
 def _changed_keys(
     *,
     current: Mapping[str, Any],
@@ -108,9 +114,11 @@ def _changed_keys(
             continue
 
         # Numbers: absolute delta threshold.
-        if _is_number(cur) and _is_number(prev):
+        cur_f = _as_float(cur)
+        prev_f = _as_float(prev)
+        if cur_f is not None and prev_f is not None:
             thresh = float(thresholds.get(k, 0.0))
-            if abs(float(cur) - float(prev)) >= thresh:
+            if abs(cur_f - prev_f) >= thresh:
                 changed.append(k)
             continue
 
@@ -138,12 +146,11 @@ def _compute_alerts(metrics: Mapping[str, Any], prev_alerts: set[str], policy: D
     # Water pressure
     wp_key = "WATER_PRESSURE_LOW"
     wp_prev = wp_key in prev_alerts
-    wp = metrics.get("water_pressure_psi")
-    if not _is_number(wp):
+    wp_f = _as_float(metrics.get("water_pressure_psi"))
+    if wp_f is None:
         if wp_prev:
             alerts.add(wp_key)
     else:
-        wp_f = float(wp)
         low = policy.alert_thresholds.water_pressure_low_psi
         recover = policy.alert_thresholds.water_pressure_recover_psi
         if wp_prev:
@@ -156,12 +163,11 @@ def _compute_alerts(metrics: Mapping[str, Any], prev_alerts: set[str], policy: D
     # Battery
     batt_key = "BATTERY_LOW"
     batt_prev = batt_key in prev_alerts
-    batt = metrics.get("battery_v")
-    if not _is_number(batt):
+    b = _as_float(metrics.get("battery_v"))
+    if b is None:
         if batt_prev:
             alerts.add(batt_key)
     else:
-        b = float(batt)
         low = policy.alert_thresholds.battery_low_v
         recover = policy.alert_thresholds.battery_recover_v
         if batt_prev:
@@ -174,12 +180,11 @@ def _compute_alerts(metrics: Mapping[str, Any], prev_alerts: set[str], policy: D
     # Signal
     sig_key = "SIGNAL_LOW"
     sig_prev = sig_key in prev_alerts
-    rssi = metrics.get("signal_rssi_dbm")
-    if not _is_number(rssi):
+    r = _as_float(metrics.get("signal_rssi_dbm"))
+    if r is None:
         if sig_prev:
             alerts.add(sig_key)
     else:
-        r = float(rssi)
         low = policy.alert_thresholds.signal_low_rssi_dbm
         recover = policy.alert_thresholds.signal_recover_rssi_dbm
         if sig_prev:
@@ -423,7 +428,9 @@ def main() -> None:
         # Determine sampling interval for the next loop.
         # Only "critical" alerts (water pressure) force faster sampling by default.
         sample_s = (
-            policy.reporting.alert_sample_interval_s if critical_active else policy.reporting.sample_interval_s
+            policy.reporting.alert_sample_interval_s
+            if critical_active
+            else policy.reporting.sample_interval_s
         )
 
         send_reason: Optional[str] = None

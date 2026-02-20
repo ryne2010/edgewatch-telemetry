@@ -1,5 +1,7 @@
 # Task: Event-driven ingestion (Pub/Sub)
 
+✅ **Status: Implemented** (2026-02-20)
+
 ## Intent
 
 Add an **optional** event-driven ingestion lane that decouples device HTTP ingestion from database writes.

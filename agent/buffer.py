@@ -97,9 +97,7 @@ class SqliteBuffer:
                 return None
 
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT message_id, created_at FROM queue ORDER BY created_at ASC"
-            ).fetchall()
+            rows = conn.execute("SELECT message_id, created_at FROM queue ORDER BY created_at ASC").fetchall()
 
             # 1) Age-based pruning
             for message_id, created_at in rows:

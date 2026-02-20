@@ -20,6 +20,28 @@ branch_labels = None
 depends_on = None
 
 
+def _is_postgres() -> bool:
+    return op.get_bind().dialect.name == "postgresql"
+
+
+def _json_type():
+    if _is_postgres():
+        return postgresql.JSONB(astext_type=sa.Text())
+    return sa.JSON()
+
+
+def _json_object_default():
+    if _is_postgres():
+        return sa.text("'{}'::jsonb")
+    return sa.text("'{}'")
+
+
+def _now_default():
+    if _is_postgres():
+        return sa.text("now()")
+    return sa.text("CURRENT_TIMESTAMP")
+
+
 def upgrade() -> None:
     op.create_table(
         "devices",
@@ -35,7 +57,7 @@ def upgrade() -> None:
             "created_at",
             sa.DateTime(timezone=True),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=_now_default(),
         ),
     )
     op.create_index("ix_devices_token_fingerprint", "devices", ["token_fingerprint"], unique=False)
@@ -48,15 +70,15 @@ def upgrade() -> None:
         sa.Column("ts", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "metrics",
-            postgresql.JSONB(astext_type=sa.Text()),
+            _json_type(),
             nullable=False,
-            server_default=sa.text("'{}'::jsonb"),
+            server_default=_json_object_default(),
         ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=_now_default(),
         ),
         sa.UniqueConstraint("device_id", "message_id", name="uq_telemetry_device_message_id"),
     )
@@ -73,7 +95,7 @@ def upgrade() -> None:
             "created_at",
             sa.DateTime(timezone=True),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=_now_default(),
         ),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
     )

@@ -32,9 +32,10 @@ testrunner = "pytest"    # auto | pytest
 [commands]
 fmt = ""
 lint = ""
-test = ""
+# Keep unit tests hermetic on developer machines without libpq.
+test = "DATABASE_URL=sqlite+pysqlite:///:memory: uv run --locked pytest"
 typecheck = ""
-build = ""
+build = "pnpm -r --if-present build"
 
 # Optional: paths to help agents find important areas
 [paths]

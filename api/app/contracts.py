@@ -21,12 +21,25 @@ class MetricSpec:
 
 
 @dataclass(frozen=True)
+class TypeMismatch:
+    key: str
+    expected: MetricType
+    actual: str
+
+
+@dataclass(frozen=True)
 class TelemetryContract:
     version: str
     sha256: str
     metrics: dict[str, MetricSpec]
 
     def validate_metrics(self, metrics: Mapping[str, Any]) -> tuple[set[str], list[str]]:
+        unknown_keys, mismatches = self.validate_metrics_detailed(metrics)
+        return unknown_keys, [
+            f"metric '{m.key}' expected type '{m.expected}' but got '{m.actual}'" for m in mismatches
+        ]
+
+    def validate_metrics_detailed(self, metrics: Mapping[str, Any]) -> tuple[set[str], list[TypeMismatch]]:
         """Validate a metrics dict against the contract.
 
         Compatibility semantics:
@@ -35,11 +48,11 @@ class TelemetryContract:
 
         Returns:
         - unknown_keys: set[str]
-        - errors: list[str]
+        - mismatches: list[TypeMismatch]
         """
 
         unknown_keys: set[str] = set()
-        errors: list[str] = []
+        mismatches: list[TypeMismatch] = []
 
         for k, v in metrics.items():
             spec = self.metrics.get(k)
@@ -52,9 +65,9 @@ class TelemetryContract:
 
             ok = _value_matches_type(v, spec.type)
             if not ok:
-                errors.append(f"metric '{k}' expected type '{spec.type}' but got '{type(v).__name__}'")
+                mismatches.append(TypeMismatch(key=k, expected=spec.type, actual=type(v).__name__))
 
-        return unknown_keys, errors
+        return unknown_keys, mismatches
 
 
 def _value_matches_type(value: Any, expected: MetricType) -> bool:

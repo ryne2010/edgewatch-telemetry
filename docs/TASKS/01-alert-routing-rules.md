@@ -1,5 +1,7 @@
 # Task: Alert routing rules (quiet hours, dedupe, throttling)
 
+✅ **Status: Implemented** (2026-02-20)
+
 ## Intent
 
 Add configurable alert routing rules so that alerts are actionable and do not spam operators.

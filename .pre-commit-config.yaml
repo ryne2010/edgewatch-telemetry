@@ -10,25 +10,28 @@ repos:
 
       - id: ruff-format
         name: ruff format
-        entry: uv run --locked ruff format .
+        entry: "bash -lc 'UV_NO_SYNC=1 uv run --locked ruff format .'"
         language: system
         types: [python]
+        pass_filenames: false
 
       - id: ruff-check
         name: ruff check
-        entry: uv run --locked ruff check .
+        entry: "bash -lc 'UV_NO_SYNC=1 uv run --locked ruff check .'"
         language: system
         types: [python]
+        pass_filenames: false
 
       - id: pyright
         name: pyright
-        entry: uv run --locked pyright
+        entry: "bash -lc 'UV_NO_SYNC=1 uv run --locked pyright'"
         language: system
         types: [python]
+        pass_filenames: false
 
       - id: pytest
         name: pytest
-        entry: uv run --locked pytest
+        entry: "bash -lc 'DATABASE_URL=sqlite+pysqlite:///:memory: UV_NO_SYNC=1 uv run --locked pytest'"
         language: system
         pass_filenames: false
 

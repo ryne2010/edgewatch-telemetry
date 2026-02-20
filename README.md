@@ -21,8 +21,8 @@ Optional GCP demo deploy:
 make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
 make auth          # only needed once per machine/user
 make doctor-gcp
-make db-secret
 make admin-secret
+# make db-secret   # only if enable_cloud_sql=false and you provide external Postgres
 
 # Public portfolio demo (dev)
 make deploy-gcp-demo
@@ -52,10 +52,15 @@ It is designed to be:
 - **Local buffering on the device** (SQLite queue; flush on reconnect)
 - **Device policy** (ETag-cached config for energy/data optimization)
 - **Telemetry contracts** (type safety + drift visibility)
-- **Ingestion batches** (contract hash + duplicates + unknown metric keys per ingest)
+- **Ingestion batches** (contract hash + drift summary + source/pipeline metadata per ingest)
+- **Drift events + quarantine lane** (optional type-mismatch quarantine with auditable events)
 - **Alerts**
   - device offline / online
   - metric thresholds (example: water pressure low)
+  - routing rules (quiet hours, dedupe, throttling) + auditable notification events
+- **Replay tooling** (`python -m agent.replay`) for idempotent edge backfill by time range
+- **Optional Pub/Sub ingest mode** (`INGEST_PIPELINE_MODE=pubsub`) with worker push endpoint
+- **Optional BigQuery export lane** (Cloud Run Job + Scheduler + watermark-based exports)
 - **Time-series API**
   - raw points
   - server-side bucketing (minute/hour) for charts
@@ -145,6 +150,16 @@ make devices
 make alerts
 ```
 
+### 8) Replay buffered history (optional)
+
+```bash
+uv run python -m agent.replay \
+  --since 2026-01-01T00:00:00Z \
+  --until 2026-01-02T00:00:00Z \
+  --batch-size 100 \
+  --rate-limit-rps 2
+```
+
 ---
 
 ## API overview
@@ -159,10 +174,14 @@ make alerts
 - `GET  /api/v1/device-policy` — device policy (Bearer token; ETag cached)
 - `POST /api/v1/admin/devices` — register device (admin only)
 - `GET  /api/v1/admin/ingestions` — ingestion batch audit (admin only)
+- `GET  /api/v1/admin/drift-events` — drift event audit (admin only)
+- `GET  /api/v1/admin/notifications` — notification delivery decisions (admin only)
+- `GET  /api/v1/admin/exports` — analytics export batch audit (admin only)
 
 Infra endpoints:
 - `GET /health`
 - `GET /readyz` (includes DB + migration check)
+- `POST /api/v1/internal/pubsub/push` (internal worker endpoint for Pub/Sub push)
 
 ---
 

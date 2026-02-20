@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from .config import settings
 from .db import engine, db_session
@@ -24,6 +25,7 @@ from .routes.alerts import router as alerts_router
 from .routes.admin import router as admin_router
 from .routes.contracts import router as contracts_router
 from .routes.device_policy import router as device_policy_router
+from .routes.pubsub_worker import router as pubsub_worker_router
 from .observability import RequestContextMiddleware, configure_logging
 from .version import __version__
 
@@ -123,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(contracts_router)
     app.include_router(device_policy_router)
+    app.include_router(pubsub_worker_router)
 
     # --- Optional React UI ---
     # The backend serves a built UI from /web/dist when present.
@@ -181,38 +184,43 @@ def _bootstrap_demo_device() -> None:
     demo_heartbeat = int(pol.reporting.heartbeat_interval_s)
     demo_offline_after = max(3 * demo_heartbeat, 120)
 
-    with db_session() as session:
-        fleet_size = max(1, settings.demo_fleet_size)
-        for n in range(1, fleet_size + 1):
-            device_id = _derive_nth(settings.demo_device_id, n)
-            display_name = _derive_nth(settings.demo_device_name, n)
-            token = _derive_nth(settings.demo_device_token, n)
-            desired_fp = token_fingerprint(token)
+    try:
+        with db_session() as session:
+            fleet_size = max(1, settings.demo_fleet_size)
+            for n in range(1, fleet_size + 1):
+                device_id = _derive_nth(settings.demo_device_id, n)
+                display_name = _derive_nth(settings.demo_device_name, n)
+                token = _derive_nth(settings.demo_device_token, n)
+                desired_fp = token_fingerprint(token)
 
-            existing = session.query(Device).filter(Device.device_id == device_id).one_or_none()
-            if existing:
-                if existing.display_name != display_name:
-                    existing.display_name = display_name
-                if existing.token_fingerprint != desired_fp:
-                    existing.token_fingerprint = desired_fp
-                existing.token_hash = hash_token(token)
-                existing.heartbeat_interval_s = demo_heartbeat
-                existing.offline_after_s = demo_offline_after
-                existing.enabled = True
-            else:
-                session.add(
-                    Device(
-                        device_id=device_id,
-                        display_name=display_name,
-                        token_hash=hash_token(token),
-                        token_fingerprint=desired_fp,
-                        heartbeat_interval_s=demo_heartbeat,
-                        offline_after_s=demo_offline_after,
-                        enabled=True,
+                existing = session.query(Device).filter(Device.device_id == device_id).one_or_none()
+                if existing:
+                    if existing.display_name != display_name:
+                        existing.display_name = display_name
+                    if existing.token_fingerprint != desired_fp:
+                        existing.token_fingerprint = desired_fp
+                    existing.token_hash = hash_token(token)
+                    existing.heartbeat_interval_s = demo_heartbeat
+                    existing.offline_after_s = demo_offline_after
+                    existing.enabled = True
+                else:
+                    session.add(
+                        Device(
+                            device_id=device_id,
+                            display_name=display_name,
+                            token_hash=hash_token(token),
+                            token_fingerprint=desired_fp,
+                            heartbeat_interval_s=demo_heartbeat,
+                            offline_after_s=demo_offline_after,
+                            enabled=True,
+                        )
                     )
-                )
 
-        logger.info("Bootstrapped demo fleet (size=%s)", fleet_size)
+            logger.info("Bootstrapped demo fleet (size=%s)", fleet_size)
+    except SQLAlchemyError:
+        # Cloud deploy lane runs migrations out-of-band (AUTO_MIGRATE=false).
+        # If schema isn't ready yet, skip bootstrap so startup can succeed.
+        logger.warning("Skipping demo bootstrap; database schema not ready")
 
 
 _scheduler: BackgroundScheduler | None = None
@@ -220,9 +228,9 @@ _scheduler: BackgroundScheduler | None = None
 
 def _start_scheduler() -> None:
     global _scheduler
-    _scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler = BackgroundScheduler(timezone="UTC")
 
-    _scheduler.add_job(
+    scheduler.add_job(
         func=_offline_job,
         trigger="interval",
         seconds=settings.offline_check_interval_s,
@@ -232,7 +240,8 @@ def _start_scheduler() -> None:
         coalesce=True,
     )
 
-    _scheduler.start()
+    scheduler.start()
+    _scheduler = scheduler
     logger.info("Scheduler started (offline_check_interval_s=%s)", settings.offline_check_interval_s)
 
 

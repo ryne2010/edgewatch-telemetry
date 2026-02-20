@@ -3,6 +3,11 @@ output "service_uri" {
   description = "Cloud Run service URL."
 }
 
+output "service_url" {
+  value       = google_cloud_run_v2_service.service.uri
+  description = "Cloud Run service URL."
+}
+
 output "service_name" {
   value       = google_cloud_run_v2_service.service.name
   description = "Cloud Run service resource name."

@@ -79,3 +79,91 @@
 - [ ] Re-run `make tf-check` in CI/runner with stable Terraform registry/network access.
 - [ ] Optional hardening: add integration tests around pubsub worker persistence path with DB fixture.
 - [ ] Optional hardening: add end-to-end smoke script for analytics export job + admin export audit endpoint.
+
+## Follow-up Stabilization (2026-02-20)
+
+### Additional changes
+
+- Hardened Terraform local gates in `Makefile`:
+  - `grant-cloudbuild-gcp` now uses `--condition=None` for non-interactive IAM binding.
+  - `tf-policy` now evaluates only `*.tf` files (excludes `.terraform/*`) and pins `conftest --rego-version v0`.
+- Fixed Terraform output compatibility:
+  - `infra/gcp/cloud_run_demo/outputs.tf` now uses dashboard `.id` instead of unsupported `.name`.
+- Fixed log sink IAM failure:
+  - Removed invalid direct writer-member binding from `infra/gcp/cloud_run_demo/log_views.tf`.
+- Improved startup resilience:
+  - `api/app/main.py` skips demo bootstrap when schema is not yet ready (logs warning, no crash).
+- Added SQLite migration portability for Cloud Run job/dev lanes:
+  - Updated `migrations/versions/0001_initial.py`, `migrations/versions/0003_ingestion_batches.py`, `migrations/versions/0004_alerting_pipeline.py` to use dialect-aware JSON/defaults.
+  - Added SQLite-safe guard for FK alter in `0003` (SQLite cannot alter constraints post-create).
+  - Added regression test `tests/test_migrations_sqlite.py`.
+- Updated docs to clarify deploy prerequisites:
+  - `docs/DEPLOY_GCP.md`
+  - `infra/gcp/cloud_run_demo/README.md`
+  - Explicitly documents that `deploy-gcp-safe` needs shared DB (Cloud SQL/shared Postgres), not local SQLite file URLs.
+
+### Validation run (follow-up)
+
+- `python scripts/harness.py all --strict` ✅
+- `make tf-check` ✅
+- Local smoke equivalent ✅
+  - `make db-up`
+  - host API on `:8082`
+  - `make demo-device` with unique id/token
+  - bounded `make simulate` run
+  - verified telemetry rows inserted for smoke device
+- `make deploy-gcp-safe ENV=dev` ⚠️ partial
+  - Cloud Build: success
+  - Terraform apply: success
+  - `migrate-gcp`: success (execution `edgewatch-migrate-dev-dgjxx`)
+  - `verify-gcp-ready`: fails with `HTTP 503`, response `{"detail":"not ready: OperationalError"}`
+  - Root cause: current `edgewatch-database-url` secret points to SQLite (`sqlite+pysqlite`), which is not a shared backend for Cloud Run service + migration job.
+
+### Remaining operational follow-up
+
+- [ ] Set `edgewatch-database-url` to a shared Postgres backend (Cloud SQL or equivalent), then rerun:
+  - `make deploy-gcp-safe ENV=dev`
+
+## Cloud SQL Terraform Wiring (2026-02-20)
+
+### What changed
+
+- Added a new reusable module:
+  - `infra/gcp/modules/cloud_sql_postgres/`
+  - provisions Cloud SQL Postgres instance + app database + app user
+  - includes cost-min defaults and PostgreSQL log flags for tfsec compliance
+- Wired Cloud SQL into Cloud Run service and jobs:
+  - `infra/gcp/modules/cloud_run_service/main.tf`
+  - `infra/gcp/modules/cloud_run_job/main.tf`
+  - adds optional `/cloudsql` volume mount + `cloud_sql_instances` input
+- Added Cloud SQL config surface in root module:
+  - `infra/gcp/cloud_run_demo/variables.tf`
+  - `infra/gcp/cloud_run_demo/main.tf`
+  - `infra/gcp/cloud_run_demo/jobs.tf`
+  - auto-manages `edgewatch-database-url` secret version when `enable_cloud_sql=true`
+  - grants runtime SA `roles/cloudsql.client`
+- Enabled SQL Admin API by default:
+  - `infra/gcp/modules/core_services/variables.tf`
+- Added Cloud SQL outputs:
+  - `infra/gcp/cloud_run_demo/outputs.tf`
+- Updated docs + profiles:
+  - `docs/DEPLOY_GCP.md`
+  - `infra/gcp/cloud_run_demo/README.md`
+  - `infra/gcp/cloud_run_demo/profiles/README.md`
+  - `infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars`
+  - `infra/gcp/cloud_run_demo/profiles/prod_private_iam.tfvars`
+- Terraform check stability:
+  - `Makefile` `tf-validate` now uses `terraform init -backend=false` (no `-upgrade`) to avoid network-flaky inner-loop stalls.
+
+### Validation run
+
+- `make tf-check` ✅
+- `python scripts/harness.py all --strict` ✅
+- `make deploy-gcp-safe ENV=dev` ✅
+  - Cloud SQL instance created: `edgewatch-dev-pg`
+  - migration execution: `edgewatch-migrate-dev-9mwq7` (success)
+  - readiness: `OK: /readyz`
+
+### Remaining follow-up
+
+- [ ] For production, set an explicit strong DB password via `TF_VAR_cloudsql_user_password` instead of relying on the derived fallback.

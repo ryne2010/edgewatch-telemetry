@@ -87,32 +87,32 @@ locals {
   project_iam_bindings = (var.enable_project_iam && local.has_workspace) ? [
     # ---- Platform admins: full platform ownership (use carefully) ----
     { role = "roles/resourcemanager.projectIamAdmin", member = local.platform_admins_group },
-    { role = "roles/iam.serviceAccountAdmin",        member = local.platform_admins_group },
+    { role = "roles/iam.serviceAccountAdmin", member = local.platform_admins_group },
     { role = "roles/serviceusage.serviceUsageAdmin", member = local.platform_admins_group },
-    { role = "roles/run.admin",                      member = local.platform_admins_group },
-    { role = "roles/artifactregistry.admin",         member = local.platform_admins_group },
-    { role = "roles/secretmanager.admin",            member = local.platform_admins_group },
-    { role = "roles/monitoring.admin",               member = local.platform_admins_group },
-    { role = "roles/logging.admin",                  member = local.platform_admins_group },
+    { role = "roles/run.admin", member = local.platform_admins_group },
+    { role = "roles/artifactregistry.admin", member = local.platform_admins_group },
+    { role = "roles/secretmanager.admin", member = local.platform_admins_group },
+    { role = "roles/monitoring.admin", member = local.platform_admins_group },
+    { role = "roles/logging.admin", member = local.platform_admins_group },
 
     # ---- Engineers: build + ship + operate ----
-    { role = "roles/run.admin",              member = local.engineers_group },
+    { role = "roles/run.admin", member = local.engineers_group },
     { role = "roles/artifactregistry.writer", member = local.engineers_group },
     { role = "roles/secretmanager.secretAccessor", member = local.engineers_group },
-    { role = "roles/monitoring.viewer",      member = local.engineers_group },
-    { role = "roles/logging.viewer",         member = local.engineers_group },
+    { role = "roles/monitoring.viewer", member = local.engineers_group },
+    { role = "roles/logging.viewer", member = local.engineers_group },
 
     # ---- Engineers-min: deploy + troubleshoot without full admin ----
-    { role = "roles/run.developer",          member = local.engineers_min_group },
+    { role = "roles/run.developer", member = local.engineers_min_group },
     { role = "roles/artifactregistry.reader", member = local.engineers_min_group },
-    { role = "roles/monitoring.viewer",      member = local.engineers_min_group },
+    { role = "roles/monitoring.viewer", member = local.engineers_min_group },
 
     # ---- Auditors: read-only visibility ----
-    { role = "roles/monitoring.viewer",      member = local.auditors_group },
-    { role = "roles/logging.viewer",         member = local.auditors_group },
+    { role = "roles/monitoring.viewer", member = local.auditors_group },
+    { role = "roles/logging.viewer", member = local.auditors_group },
 
     # ---- Clients: read-only monitoring + log view (log view handled above) ----
-    { role = "roles/monitoring.viewer",      member = local.clients_observers_group },
+    { role = "roles/monitoring.viewer", member = local.clients_observers_group },
   ] : []
 }
 

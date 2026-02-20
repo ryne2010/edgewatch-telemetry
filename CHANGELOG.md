@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 This project follows the spirit of [Keep a Changelog](https://keepachangelog.com/) and uses
 semantic-ish versioning for portfolio iterations.
 
+## [0.5.0] - 2026-02-20
+
+### Added
+- Alert routing + notification audit trail:
+  - `alert_policies`, `notification_events`
+  - routing controls: dedupe window, throttling, quiet hours
+  - webhook/slack delivery adapter with failure-safe behavior
+- Extended contract/lineage artifacts:
+  - configurable unknown key handling (`allow|flag`)
+  - configurable type mismatch handling (`reject|quarantine`)
+  - `drift_events` + `quarantined_telemetry`
+  - richer `ingestion_batches` metadata (`source`, `pipeline_mode`, drift summary, processing status)
+- Agent replay CLI (`python -m agent.replay`) for bounded, idempotent backfill from local SQLite.
+- Optional Pub/Sub ingest lane:
+  - `INGEST_PIPELINE_MODE=direct|pubsub`
+  - internal worker endpoint: `POST /api/v1/internal/pubsub/push`
+- Optional analytics export lane:
+  - `export_batches` audit table
+  - Cloud Run job entrypoint: `python -m api.app.jobs.analytics_export`
+  - optional Terraform resources for export bucket/dataset/table and scheduler
+- New admin audit endpoints:
+  - `GET /api/v1/admin/drift-events`
+  - `GET /api/v1/admin/notifications`
+  - `GET /api/v1/admin/exports`
+
+### Changed
+- Task queue is now fully marked implemented in `docs/TASKS/README.md`.
+- Runbooks/docs updated for replay, pubsub mode, and analytics export lane.
+- Added `make analytics-export-gcp` helper for manual Cloud Run Job execution.
+
 ## [0.4.5] - 2026-02-20
 
 ### Added

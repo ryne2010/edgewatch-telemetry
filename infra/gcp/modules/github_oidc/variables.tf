@@ -32,23 +32,23 @@ variable "provider_id" {
 }
 
 variable "pool_display_name" {
-  type        = string
-  default     = "GitHub Actions Pool"
+  type    = string
+  default = "GitHub Actions Pool"
 }
 
 variable "pool_description" {
-  type        = string
-  default     = "Workload Identity Pool for GitHub Actions OIDC."
+  type    = string
+  default = "Workload Identity Pool for GitHub Actions OIDC."
 }
 
 variable "provider_display_name" {
-  type        = string
-  default     = "GitHub OIDC Provider"
+  type    = string
+  default = "GitHub OIDC Provider"
 }
 
 variable "provider_description" {
-  type        = string
-  default     = "OIDC provider for token.actions.githubusercontent.com"
+  type    = string
+  default = "OIDC provider for token.actions.githubusercontent.com"
 }
 
 variable "grant_token_creator" {

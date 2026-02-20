@@ -50,6 +50,7 @@ class IngestResponse(BaseModel):
     batch_id: str
     accepted: int
     duplicates: int
+    quarantined: int = 0
 
 
 class TelemetryContractMetricOut(BaseModel):
@@ -73,9 +74,51 @@ class IngestionBatchOut(BaseModel):
     points_submitted: int
     points_accepted: int
     duplicates: int
+    points_quarantined: int
     client_ts_min: Optional[datetime]
     client_ts_max: Optional[datetime]
     unknown_metric_keys: List[str]
+    type_mismatch_keys: List[str]
+    drift_summary: Dict[str, Any]
+    source: str
+    pipeline_mode: str
+    processing_status: str
+
+
+class DriftEventOut(BaseModel):
+    id: str
+    batch_id: str
+    device_id: str
+    event_type: str
+    action: str
+    details: Dict[str, Any]
+    created_at: datetime
+
+
+class NotificationEventOut(BaseModel):
+    id: str
+    alert_id: Optional[str]
+    device_id: str
+    alert_type: str
+    channel: str
+    decision: str
+    delivered: bool
+    reason: str
+    created_at: datetime
+
+
+class ExportBatchOut(BaseModel):
+    id: str
+    started_at: datetime
+    finished_at: Optional[datetime]
+    watermark_from: Optional[datetime]
+    watermark_to: Optional[datetime]
+    contract_version: str
+    contract_hash: str
+    gcs_uri: Optional[str]
+    row_count: int
+    status: str
+    error_message: Optional[str]
 
 
 class AlertOut(BaseModel):

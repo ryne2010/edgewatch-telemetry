@@ -78,6 +78,12 @@ variable "secret_env" {
   default     = {}
 }
 
+variable "cloud_sql_instances" {
+  type        = list(string)
+  description = "Optional Cloud SQL connection names (PROJECT:REGION:INSTANCE)."
+  default     = []
+}
+
 variable "vpc_connector_id" {
   type        = string
   description = "Serverless VPC Access connector ID (optional)."

@@ -1,5 +1,7 @@
 # Task: Replay / backfill tooling (agent-side + server-side)
 
+✅ **Status: Implemented** (2026-02-20)
+
 ## Intent
 
 Add a repeatable way to **replay** historical telemetry into EdgeWatch to support:

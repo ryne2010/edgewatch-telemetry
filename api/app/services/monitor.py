@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -7,6 +8,10 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..edge_policy import load_edge_policy
 from ..models import Device, Alert
+from .notifications import process_alert_notification
+
+
+logger = logging.getLogger("edgewatch.monitor")
 
 
 def utcnow() -> datetime:
@@ -52,14 +57,16 @@ def _open_or_create_offline_alert(session: Session, device: Device, now: datetim
         return
 
     msg = f"Device '{device.device_id}' is offline (last seen: {device.last_seen_at})."
-    session.add(
+    _create_alert(
+        session,
         Alert(
             device_id=device.device_id,
             alert_type="DEVICE_OFFLINE",
             severity="warning",
             message=msg,
             created_at=now,
-        )
+        ),
+        now=now,
     )
 
 
@@ -78,14 +85,16 @@ def _resolve_offline_alert_if_any(session: Session, device: Device, now: datetim
 
     # Optional: create an explicit online event when it returns
     if open_alerts:
-        session.add(
+        _create_alert(
+            session,
             Alert(
                 device_id=device.device_id,
                 alert_type="DEVICE_ONLINE",
                 severity="info",
                 message=f"Device '{device.device_id}' is back online.",
                 created_at=now,
-            )
+            ),
+            now=now,
         )
 
 
@@ -123,24 +132,46 @@ def ensure_water_pressure_alerts(
 
     if water_pressure_psi < low:
         if not open_alert:
-            session.add(
+            _create_alert(
+                session,
                 Alert(
                     device_id=device_id,
                     alert_type="WATER_PRESSURE_LOW",
                     severity="warning",
                     message=f"Water pressure low: {water_pressure_psi:.1f} psi (threshold: {low:.1f} psi).",
                     created_at=now,
-                )
+                ),
+                now=now,
             )
     else:
         if open_alert and water_pressure_psi >= recover:
             open_alert.resolved_at = now
-            session.add(
+            _create_alert(
+                session,
                 Alert(
                     device_id=device_id,
                     alert_type="WATER_PRESSURE_OK",
                     severity="info",
                     message=f"Water pressure recovered: {water_pressure_psi:.1f} psi.",
                     created_at=now,
-                )
+                ),
+                now=now,
             )
+
+
+def _create_alert(session: Session, alert: Alert, *, now: datetime) -> None:
+    session.add(alert)
+    session.flush()
+    try:
+        process_alert_notification(session, alert, now=now)
+    except Exception:
+        logger.exception(
+            "notification_processing_failed",
+            extra={
+                "fields": {
+                    "alert_id": alert.id,
+                    "device_id": alert.device_id,
+                    "alert_type": alert.alert_type,
+                }
+            },
+        )

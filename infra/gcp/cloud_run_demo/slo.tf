@@ -61,7 +61,7 @@ resource "google_monitoring_slo" "availability" {
   display_name = "Availability (2xx ratio) — ${var.service_name}"
 
   # Interview-ready default: 99.5% over a 28-day rolling window
-  goal               = 0.995
+  goal                = 0.995
   rolling_period_days = 28
 
   request_based_sli {

@@ -1,5 +1,7 @@
 # Task: Lineage artifacts (audit-friendly ingestion log)
 
+✅ **Status: Implemented** (2026-02-20)
+
 ## Intent
 
 Add a lightweight **lineage / audit trail** for telemetry ingestion so operators can answer:

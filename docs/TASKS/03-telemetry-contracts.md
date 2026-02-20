@@ -1,5 +1,7 @@
 # Task: Telemetry contracts + drift handling
 
+✅ **Status: Implemented** (2026-02-20)
+
 ## Intent
 
 Introduce a lightweight "data contract" for telemetry metrics so the system can:
@@ -8,8 +10,6 @@ Introduce a lightweight "data contract" for telemetry metrics so the system can:
 - produce a small lineage artifact per ingestion
 
 This bridges the "data architect" portfolio story into EdgeWatch without turning it into a full warehouse product.
-
-**Status:** MVP implemented (telemetry contract + ingestion_batches + unknown-key drift visibility).
 
 ## Non-goals
 

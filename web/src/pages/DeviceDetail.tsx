@@ -67,14 +67,12 @@ export function DeviceDetailPage() {
     if (metric === 'water_pressure_psi') return 'Water pressure (psi)'
     if (metric === 'oil_pressure_psi') return 'Oil pressure (psi)'
     if (metric === 'battery_v') return 'Battery (V)'
-    if (metric === 'signal_rssi') return 'Signal RSSI (dBm)'
     return metric
   }, [metric])
 
   const yAxisLabel = React.useMemo(() => {
     if (metric.endsWith('_psi')) return `${metric} (psi)`
     if (metric.endsWith('_v')) return `${metric} (V)`
-    if (metric === 'signal_rssi') return `${metric} (dBm)`
     return metric
   }, [metric])
 

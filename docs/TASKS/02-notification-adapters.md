@@ -1,5 +1,7 @@
 # Task: Notification delivery adapters (Slack/email/webhook)
 
+✅ **Status: Implemented** (2026-02-20)
+
 ## Intent
 
 Add pluggable notification adapters so routed alerts can reach real operators.

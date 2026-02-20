@@ -64,3 +64,15 @@ You can also simulate offline operation:
 ```bash
 uv run python agent/simulator.py --simulate-offline-after-s 60 --resume-after-s 180
 ```
+
+## Replay/backfill from buffer
+
+Replay buffered history by time range (preserves stable `message_id` values):
+
+```bash
+uv run python -m agent.replay \
+  --since 2026-01-01T00:00:00Z \
+  --until 2026-01-02T00:00:00Z \
+  --batch-size 100 \
+  --rate-limit-rps 2
+```

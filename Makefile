@@ -79,7 +79,7 @@ endef
 	db-up db-down api-dev web-install web-dev \
 	up down reset logs db-migrate db-revision \
 	demo-device devices alerts simulate \
-	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp deploy-gcp-safe url-gcp verify-gcp verify-gcp-ready logs-gcp migrate-gcp offline-check-gcp destroy-gcp \
+	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp deploy-gcp-safe url-gcp verify-gcp verify-gcp-ready logs-gcp migrate-gcp offline-check-gcp analytics-export-gcp destroy-gcp \
 	plan-gcp-demo apply-gcp-demo deploy-gcp-demo plan-gcp-prod apply-gcp-prod deploy-gcp-prod \
 	db-secret admin-secret lock hygiene
 
@@ -119,6 +119,7 @@ help:
 	@echo "  logs-gcp         Read Cloud Run logs"
 	@echo "  migrate-gcp      Run DB migrations via Cloud Run Job"
 	@echo "  offline-check-gcp Manually run offline check via Cloud Run Job"
+	@echo "  analytics-export-gcp Manually run analytics export via Cloud Run Job"
 	@echo "  destroy-gcp      Terraform destroy (keeps tfstate bucket)"
 	@echo "  db-secret        Add DATABASE_URL secret version (stdin)"
 	@echo "  admin-secret     Add ADMIN_API_KEY secret version (stdin)"
@@ -523,7 +524,8 @@ grant-cloudbuild-gcp: doctor-gcp
 	echo "Granting Cloud Build writer on Artifact Registry (project $$PROJECT_NUMBER)"; \
 	gcloud projects add-iam-policy-binding "$(PROJECT_ID)" \
 	  --member="serviceAccount:$${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-	  --role="roles/artifactregistry.writer" >/dev/null
+	  --role="roles/artifactregistry.writer" \
+	  --condition=None >/dev/null
 
 build-gcp: doctor-gcp infra-gcp grant-cloudbuild-gcp
 	@echo "Building + pushing via Cloud Build: $(IMAGE)"
@@ -602,6 +604,10 @@ migrate-gcp: doctor-gcp
 offline-check-gcp: doctor-gcp
 	@gcloud run jobs execute "edgewatch-offline-check-$(ENV)" --region "$(REGION)" --wait
 
+# Manually trigger the analytics export job when enabled.
+analytics-export-gcp: doctor-gcp
+	@gcloud run jobs execute "edgewatch-analytics-export-$(ENV)" --region "$(REGION)" --wait
+
 destroy-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) destroy -auto-approve \
 		$(TFVARS_ARG) \
@@ -653,7 +659,7 @@ tf-fmt: ## Terraform fmt check (no changes)
 	@terraform -chdir=$(TF_DIR) fmt -check -recursive
 
 tf-validate: ## Terraform validate (no remote backend required)
-	@terraform -chdir=$(TF_DIR) init -backend=false -upgrade >/dev/null
+	@terraform -chdir=$(TF_DIR) init -backend=false >/dev/null
 	@terraform -chdir=$(TF_DIR) validate
 
 tf-lint: ## tflint (falls back to docker)
@@ -676,12 +682,17 @@ tf-sec: ## tfsec (falls back to docker)
 	fi
 
 tf-policy: ## OPA/Conftest policy gate for Terraform (falls back to docker)
-	@if command -v conftest >/dev/null 2>&1; then \
+	@TF_FILES=$$(find "$(TF_DIR)" -type f -name '*.tf' ! -path '*/.terraform/*' | sort); \
+	if [ -z "$$TF_FILES" ]; then \
+	  echo "No Terraform files found under $(TF_DIR)"; \
+	  exit 1; \
+	fi; \
+	if command -v conftest >/dev/null 2>&1; then \
 	  echo "Running conftest (local)"; \
-	  conftest test --parser hcl2 --policy $(POLICY_DIR) $(TF_DIR); \
+	  conftest test --rego-version v0 --parser hcl2 --policy $(POLICY_DIR) $$TF_FILES; \
 	else \
 	  echo "conftest not found; running via Docker"; \
-	  docker run --rm -v "$$(pwd):/project" -w /project openpolicyagent/conftest:latest test --parser hcl2 --policy $(POLICY_DIR) $(TF_DIR); \
+	  docker run --rm -v "$$(pwd):/project" -w /project openpolicyagent/conftest:latest test --rego-version v0 --parser hcl2 --policy $(POLICY_DIR) $$TF_FILES; \
 	fi
 
 tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy ## Run all Terraform hygiene checks

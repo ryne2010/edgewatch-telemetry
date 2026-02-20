@@ -16,13 +16,16 @@ data "google_project" "project" {
 }
 
 locals {
-  offline_job_name        = "edgewatch-offline-check-${var.env}"
-  offline_scheduler_name  = "edgewatch-offline-check-${var.env}"
-  migrate_job_name        = "edgewatch-migrate-${var.env}"
+  enable_any_scheduler     = var.enable_scheduled_jobs || var.enable_analytics_export
+  offline_job_name         = "edgewatch-offline-check-${var.env}"
+  offline_scheduler_name   = "edgewatch-offline-check-${var.env}"
+  migrate_job_name         = "edgewatch-migrate-${var.env}"
+  analytics_job_name       = "edgewatch-analytics-export-${var.env}"
+  analytics_scheduler_name = "edgewatch-analytics-export-${var.env}"
 }
 
 resource "google_service_account" "scheduler" {
-  count = var.enable_scheduled_jobs ? 1 : 0
+  count = local.enable_any_scheduler ? 1 : 0
 
   project      = var.project_id
   account_id   = "sa-edgewatch-scheduler-${var.env}"
@@ -31,7 +34,7 @@ resource "google_service_account" "scheduler" {
 
 # Allow the Cloud Scheduler service agent to mint tokens for the scheduler SA.
 resource "google_service_account_iam_member" "scheduler_token_creator" {
-  count = var.enable_scheduled_jobs ? 1 : 0
+  count = local.enable_any_scheduler ? 1 : 0
 
   service_account_id = google_service_account.scheduler[0].name
   role               = "roles/iam.serviceAccountTokenCreator"
@@ -67,6 +70,8 @@ module "offline_check_job" {
     ADMIN_API_KEY = module.secrets.secret_names["edgewatch-admin-api-key"]
   }
 
+  cloud_sql_instances = local.cloud_sql_instances
+
   vpc_connector_id = var.enable_vpc_connector ? module.network[0].serverless_connector_id : null
   vpc_egress       = var.vpc_egress
 
@@ -74,6 +79,8 @@ module "offline_check_job" {
   memory = var.job_memory
 
   labels = local.labels
+
+  depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
 }
 
 module "migrate_job" {
@@ -99,6 +106,8 @@ module "migrate_job" {
     ADMIN_API_KEY = module.secrets.secret_names["edgewatch-admin-api-key"]
   }
 
+  cloud_sql_instances = local.cloud_sql_instances
+
   vpc_connector_id = var.enable_vpc_connector ? module.network[0].serverless_connector_id : null
   vpc_egress       = var.vpc_egress
 
@@ -106,6 +115,46 @@ module "migrate_job" {
   memory = var.job_memory
 
   labels = local.labels
+
+  depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
+}
+
+module "analytics_export_job" {
+  count  = var.enable_analytics_export ? 1 : 0
+  source = "../modules/cloud_run_job"
+
+  project_id            = var.project_id
+  region                = var.region
+  job_name              = local.analytics_job_name
+  image                 = var.image
+  service_account_email = module.service_accounts.runtime_service_account_email
+
+  command = ["python", "-m", "api.app.jobs.analytics_export"]
+
+  env_vars = merge(local.job_env_vars, {
+    ENABLE_SCHEDULER         = "false"
+    AUTO_MIGRATE             = "false"
+    BOOTSTRAP_DEMO_DEVICE    = "false"
+    ANALYTICS_EXPORT_ENABLED = "true"
+    ANALYTICS_EXPORT_BUCKET  = local.analytics_export_bucket
+  })
+
+  secret_env = {
+    DATABASE_URL  = module.secrets.secret_names["edgewatch-database-url"]
+    ADMIN_API_KEY = module.secrets.secret_names["edgewatch-admin-api-key"]
+  }
+
+  cloud_sql_instances = local.cloud_sql_instances
+
+  vpc_connector_id = var.enable_vpc_connector ? module.network[0].serverless_connector_id : null
+  vpc_egress       = var.vpc_egress
+
+  cpu    = var.job_cpu
+  memory = var.job_memory
+
+  labels = local.labels
+
+  depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
 }
 
 # -----------------------------------------------------------------------------
@@ -128,8 +177,19 @@ resource "google_cloud_run_v2_job_iam_member" "scheduler_offline_invoker" {
   member = "serviceAccount:${google_service_account.scheduler[0].email}"
 }
 
+resource "google_cloud_run_v2_job_iam_member" "scheduler_analytics_invoker" {
+  count = var.enable_analytics_export ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = module.analytics_export_job[0].job_name
+
+  role   = "roles/run.invoker"
+  member = "serviceAccount:${google_service_account.scheduler[0].email}"
+}
+
 resource "google_service_account_iam_member" "scheduler_actas_runtime" {
-  count = var.enable_scheduled_jobs ? 1 : 0
+  count = local.enable_any_scheduler ? 1 : 0
 
   service_account_id = module.service_accounts.runtime_service_account_name
   role               = "roles/iam.serviceAccountUser"
@@ -137,7 +197,7 @@ resource "google_service_account_iam_member" "scheduler_actas_runtime" {
 }
 
 resource "google_artifact_registry_repository_iam_member" "scheduler_artifact_reader" {
-  count = var.enable_scheduled_jobs ? 1 : 0
+  count = local.enable_any_scheduler ? 1 : 0
 
   project    = var.project_id
   location   = var.region
@@ -179,6 +239,40 @@ resource "google_cloud_scheduler_job" "offline_check" {
     module.offline_check_job,
     google_service_account_iam_member.scheduler_token_creator,
     google_cloud_run_v2_job_iam_member.scheduler_offline_invoker,
+    google_service_account_iam_member.scheduler_actas_runtime,
+    google_artifact_registry_repository_iam_member.scheduler_artifact_reader,
+  ]
+}
+
+resource "google_cloud_scheduler_job" "analytics_export" {
+  count = var.enable_analytics_export ? 1 : 0
+
+  project   = var.project_id
+  region    = var.region
+  name      = local.analytics_scheduler_name
+  schedule  = var.analytics_export_schedule
+  time_zone = var.scheduler_time_zone
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/jobs/${local.analytics_job_name}:run"
+
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    body = base64encode("{}")
+
+    oauth_token {
+      service_account_email = google_service_account.scheduler[0].email
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [
+    module.analytics_export_job,
+    google_service_account_iam_member.scheduler_token_creator,
+    google_cloud_run_v2_job_iam_member.scheduler_analytics_invoker,
     google_service_account_iam_member.scheduler_actas_runtime,
     google_artifact_registry_repository_iam_member.scheduler_artifact_reader,
   ]

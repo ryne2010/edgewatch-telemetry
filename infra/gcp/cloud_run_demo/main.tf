@@ -4,6 +4,13 @@ locals {
     env = var.env
   }
 
+  cloudsql_instance_name = coalesce(var.cloudsql_instance_name, "${var.service_name}-pg")
+
+  analytics_export_bucket = coalesce(
+    var.analytics_export_bucket_name,
+    "${var.project_id}-${var.service_name}-analytics",
+  )
+
   # Base env vars (safe for Cloud Run)
   base_env_vars = {
     APP_ENV    = var.env
@@ -31,6 +38,18 @@ locals {
     # Edge policy contract (device-side optimization)
     EDGE_POLICY_VERSION = "v1"
 
+    # Optional event-driven ingest lane
+    INGEST_PIPELINE_MODE     = var.enable_pubsub_ingest ? "pubsub" : "direct"
+    INGEST_PUBSUB_PROJECT_ID = var.project_id
+    INGEST_PUBSUB_TOPIC      = var.pubsub_topic_name
+
+    # Optional analytics export lane
+    ANALYTICS_EXPORT_ENABLED    = var.enable_analytics_export ? "true" : "false"
+    ANALYTICS_EXPORT_BUCKET     = local.analytics_export_bucket
+    ANALYTICS_EXPORT_DATASET    = var.analytics_export_dataset
+    ANALYTICS_EXPORT_TABLE      = var.analytics_export_table
+    ANALYTICS_EXPORT_GCS_PREFIX = var.analytics_export_gcs_prefix
+
     # Demo bootstrap guardrails.
     BOOTSTRAP_DEMO_DEVICE = var.bootstrap_demo_device ? "true" : "false"
   }
@@ -50,6 +69,31 @@ locals {
   # Jobs should stay minimal and must not inherit demo tokens.
   service_env_vars = merge(local.base_env_vars, local.demo_env_vars, local.cors_env_vars)
   job_env_vars     = local.base_env_vars
+
+  cloud_sql_instances = var.enable_cloud_sql ? [module.cloud_sql_postgres[0].connection_name] : []
+
+  cloudsql_user_password = coalesce(
+    var.cloudsql_user_password,
+    format("%s_Aa1", substr(sha256("${var.project_id}:${var.service_name}:${var.env}:edgewatch"), 0, 24)),
+  )
+
+  cloudsql_database_url = var.enable_cloud_sql ? format(
+    "postgresql+psycopg://%s:%s@/%s?host=/cloudsql/%s",
+    module.cloud_sql_postgres[0].user_name,
+    urlencode(local.cloudsql_user_password),
+    module.cloud_sql_postgres[0].database_name,
+    module.cloud_sql_postgres[0].connection_name,
+  ) : null
+
+  runtime_roles = concat(
+    [
+      "roles/logging.logWriter",
+      "roles/monitoring.metricWriter",
+      "roles/cloudtrace.agent",
+      "roles/secretmanager.secretAccessor",
+    ],
+    var.enable_cloud_sql ? ["roles/cloudsql.client"] : [],
+  )
 }
 
 module "core_services" {
@@ -93,12 +137,7 @@ module "service_accounts" {
   runtime_account_id   = "sa-edgewatch-runtime-${var.env}"
   runtime_display_name = "EdgeWatch Runtime (${var.env})"
 
-  runtime_roles = [
-    "roles/logging.logWriter",
-    "roles/monitoring.metricWriter",
-    "roles/cloudtrace.agent",
-    "roles/secretmanager.secretAccessor",
-  ]
+  runtime_roles = local.runtime_roles
 }
 
 module "secrets" {
@@ -106,9 +145,38 @@ module "secrets" {
   project_id = var.project_id
 
   secrets = {
-    "edgewatch-database-url"   = { labels = local.labels }
-    "edgewatch-admin-api-key"  = { labels = local.labels }
+    "edgewatch-database-url"  = { labels = local.labels }
+    "edgewatch-admin-api-key" = { labels = local.labels }
   }
+}
+
+module "cloud_sql_postgres" {
+  count  = var.enable_cloud_sql ? 1 : 0
+  source = "../modules/cloud_sql_postgres"
+
+  project_id          = var.project_id
+  region              = var.region
+  instance_name       = local.cloudsql_instance_name
+  database_version    = var.cloudsql_database_version
+  database_name       = var.cloudsql_database_name
+  user_name           = var.cloudsql_user_name
+  user_password       = local.cloudsql_user_password
+  tier                = var.cloudsql_tier
+  disk_size_gb        = var.cloudsql_disk_size_gb
+  disk_type           = var.cloudsql_disk_type
+  availability_type   = var.cloudsql_availability_type
+  backup_enabled      = var.cloudsql_backup_enabled
+  backup_start_time   = var.cloudsql_backup_start_time
+  require_ssl         = var.cloudsql_require_ssl
+  deletion_protection = var.cloudsql_deletion_protection
+  labels              = local.labels
+}
+
+resource "google_secret_manager_secret_version" "database_url_cloudsql" {
+  count = var.enable_cloud_sql ? 1 : 0
+
+  secret      = module.secrets.secret_names["edgewatch-database-url"]
+  secret_data = local.cloudsql_database_url
 }
 
 module "network" {
@@ -156,6 +224,10 @@ module "cloud_run" {
     ADMIN_API_KEY = module.secrets.secret_names["edgewatch-admin-api-key"]
   }
 
+  cloud_sql_instances = local.cloud_sql_instances
+
   vpc_connector_id = var.enable_vpc_connector ? module.network[0].serverless_connector_id : null
   vpc_egress       = var.vpc_egress
+
+  depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
 }

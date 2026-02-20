@@ -20,6 +20,28 @@ branch_labels = None
 depends_on = None
 
 
+def _is_postgres() -> bool:
+    return op.get_bind().dialect.name == "postgresql"
+
+
+def _json_type():
+    if _is_postgres():
+        return postgresql.JSONB(astext_type=sa.Text())
+    return sa.JSON()
+
+
+def _json_array_default():
+    if _is_postgres():
+        return sa.text("'[]'::jsonb")
+    return sa.text("'[]'")
+
+
+def _now_default():
+    if _is_postgres():
+        return sa.text("now()")
+    return sa.text("CURRENT_TIMESTAMP")
+
+
 def upgrade() -> None:
     op.create_table(
         "ingestion_batches",
@@ -29,7 +51,7 @@ def upgrade() -> None:
             "received_at",
             sa.DateTime(timezone=True),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=_now_default(),
         ),
         sa.Column("contract_version", sa.String(length=32), nullable=False),
         sa.Column("contract_hash", sa.String(length=64), nullable=False),
@@ -40,15 +62,15 @@ def upgrade() -> None:
         sa.Column("client_ts_max", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "unknown_metric_keys",
-            postgresql.JSONB(astext_type=sa.Text()),
+            _json_type(),
             nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
+            server_default=_json_array_default(),
         ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=_now_default(),
         ),
     )
     op.create_index(
@@ -60,19 +82,21 @@ def upgrade() -> None:
 
     # Optional lineage pointer from points to a batch.
     op.add_column("telemetry_points", sa.Column("batch_id", sa.String(length=36), nullable=True))
-    op.create_foreign_key(
-        "fk_telemetry_points_batch_id",
-        "telemetry_points",
-        "ingestion_batches",
-        ["batch_id"],
-        ["id"],
-    )
+    if _is_postgres():
+        op.create_foreign_key(
+            "fk_telemetry_points_batch_id",
+            "telemetry_points",
+            "ingestion_batches",
+            ["batch_id"],
+            ["id"],
+        )
     op.create_index("ix_telemetry_batch_id", "telemetry_points", ["batch_id"], unique=False)
 
 
 def downgrade() -> None:
     op.drop_index("ix_telemetry_batch_id", table_name="telemetry_points")
-    op.drop_constraint("fk_telemetry_points_batch_id", "telemetry_points", type_="foreignkey")
+    if _is_postgres():
+        op.drop_constraint("fk_telemetry_points_batch_id", "telemetry_points", type_="foreignkey")
     op.drop_column("telemetry_points", "batch_id")
 
     op.drop_index("ix_ingestion_batches_device_received", table_name="ingestion_batches")

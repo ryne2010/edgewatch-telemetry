@@ -17,6 +17,10 @@ Base: `/api/v1`
 - `GET  /alerts` — recent alerts
 - `GET  /device-policy` — edge policy/config for devices (Bearer token; ETag cached)
 - `POST /admin/devices` — register device (admin key)
+- `GET  /admin/ingestions` — ingestion lineage batches (admin key)
+- `GET  /admin/drift-events` — drift audit events (admin key)
+- `GET  /admin/notifications` — notification routing/delivery audit events (admin key)
+- `GET  /admin/exports` — analytics export batch audit (admin key)
 
 **Compatibility:**
 - Endpoints under `/api/v1` are intended to be stable for the portfolio demo.
@@ -29,6 +33,10 @@ Base: `/api/v1`
 These are intentionally unversioned:
 - `GET /health`
 - `GET /readyz`
+
+### Internal worker endpoint
+
+- `POST /api/v1/internal/pubsub/push` — Pub/Sub push worker endpoint (enabled when `INGEST_PIPELINE_MODE=pubsub`)
 
 ### Device agent payload contract
 
@@ -51,9 +59,16 @@ A request includes:
 
 2b) **Contract-aware ingest (type safety + drift visibility)**
 - The active telemetry contract lives at `contracts/telemetry/<version>.yaml`.
-- Unknown metric keys are accepted (additive drift) and recorded in the ingestion batch.
-- Known metric keys must match the declared type when `TELEMETRY_CONTRACT_ENFORCE_TYPES=1`.
+- Unknown metric keys are accepted (additive drift) and always recorded in the ingestion batch.
+- Unknown keys can also emit drift audit events when `TELEMETRY_CONTRACT_UNKNOWN_KEYS_MODE=flag`.
+- Known metric keys are handled by `TELEMETRY_CONTRACT_TYPE_MISMATCH_MODE`:
+  - `reject`: request fails with validation error details
+  - `quarantine`: invalid points are moved to `quarantined_telemetry`
 - Each ingest returns a `batch_id` that can be used to inspect the ingestion lineage.
+
+2c) **Lineage completeness**
+- Every ingest call writes an `ingestion_batches` artifact with contract hash + drift summary.
+- Replay and pubsub paths are tagged for auditability (`source`, `pipeline_mode`).
 
 3) **Token handling**
 - Plaintext device tokens are never stored.
@@ -96,6 +111,12 @@ A request includes:
 - **Edge policy contract**: `contracts/edge_policy/v1.yaml`
 - **Ingestion batches**: persisted in Postgres (`ingestion_batches`) and queryable via:
   - `GET /api/v1/admin/ingestions` (admin key)
+- **Drift events**: persisted in Postgres (`drift_events`) and queryable via:
+  - `GET /api/v1/admin/drift-events` (admin key)
+- **Notification events**: persisted in Postgres (`notification_events`) and queryable via:
+  - `GET /api/v1/admin/notifications` (admin key)
+- **Export batches**: persisted in Postgres (`export_batches`) and queryable via:
+  - `GET /api/v1/admin/exports` (admin key)
 
 ## Testing contract
 

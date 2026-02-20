@@ -6,15 +6,20 @@ What this demonstrates:
 - remote Terraform state (GCS)
 - Artifact Registry + Cloud Build image build flow
 - Secret Manager (`DATABASE_URL`, `ADMIN_API_KEY`)
+- optional managed Cloud SQL Postgres (`enable_cloud_sql=true` by default)
 - optional Serverless VPC Access connector (disabled by default)
 - optional **Google Groups IAM starter pack** (`iam_bindings.tf`)
 - optional **dashboards + alerts as code** (`observability.tf`)
 - production-safe **scheduled jobs**:
   - Cloud Run Job: DB migrations (`edgewatch-migrate-<env>`)
   - Cloud Run Job: offline checks (`edgewatch-offline-check-<env>`)
+  - Cloud Run Job: analytics export (`edgewatch-analytics-export-<env>`, optional)
   - Cloud Scheduler cron trigger -> Cloud Run Jobs API
+- optional Pub/Sub ingest lane (`enable_pubsub_ingest=true`)
 
-> Like other portfolio repos, this example does not provision a database to keep costs and coupling low. Point `DATABASE_URL` to Cloud SQL, AlloyDB, or another Postgres.
+By default this stack provisions a minimal-cost Cloud SQL Postgres instance and writes
+`DATABASE_URL` into Secret Manager from Terraform.
+`sqlite:///...` is not compatible with the `deploy-gcp-safe` lane because Cloud Run jobs and services do not share a local filesystem.
 
 ## Quickstart
 
@@ -22,7 +27,6 @@ From the repo root:
 
 ```bash
 make doctor-gcp
-make db-secret
 make admin-secret
 
 # Public demo posture (portfolio)
@@ -56,6 +60,25 @@ Scheduled jobs:
 - `offline_job_schedule` — cron schedule (default: every 5 minutes)
 - `scheduler_time_zone` — default `Etc/UTC`
 - `enable_migration_job` — create a migration job (manual execution)
+
+Cloud SQL:
+- `enable_cloud_sql` — provision managed Postgres and manage `DATABASE_URL` secret version
+- `cloudsql_tier` — default `db-f1-micro` (cost-min)
+- `cloudsql_disk_size_gb` / `cloudsql_disk_type` — storage controls
+- `cloudsql_deletion_protection` — recommended `true` for prod profile
+- `cloudsql_user_password` — optional override (`TF_VAR_cloudsql_user_password=...`) to avoid derived fallback passwords
+
+Optional Pub/Sub ingest:
+- `enable_pubsub_ingest` — create topic + push subscription and switch app mode to `pubsub`
+- `pubsub_topic_name`
+- `pubsub_push_subscription_name`
+
+Optional analytics export:
+- `enable_analytics_export` — provision analytics bucket/dataset/table + export job/scheduler
+- `analytics_export_schedule` — cron schedule (default hourly)
+- `analytics_export_bucket_name` — optional custom bucket name
+- `analytics_export_bucket_lifecycle_days` — lifecycle cleanup for staged files
+- `analytics_export_dataset` / `analytics_export_table` / `analytics_export_gcs_prefix`
 
 Demo bootstrap:
 - `bootstrap_demo_device` (guardrail: must be `false` for `env=stage|prod`)

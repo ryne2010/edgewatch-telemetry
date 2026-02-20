@@ -20,6 +20,34 @@ branch_labels = None
 depends_on = None
 
 
+def _is_postgres() -> bool:
+    return op.get_bind().dialect.name == "postgresql"
+
+
+def _json_type():
+    if _is_postgres():
+        return postgresql.JSONB(astext_type=sa.Text())
+    return sa.JSON()
+
+
+def _json_object_default():
+    if _is_postgres():
+        return sa.text("'{}'::jsonb")
+    return sa.text("'{}'")
+
+
+def _json_array_default():
+    if _is_postgres():
+        return sa.text("'[]'::jsonb")
+    return sa.text("'[]'")
+
+
+def _now_default():
+    if _is_postgres():
+        return sa.text("now()")
+    return sa.text("CURRENT_TIMESTAMP")
+
+
 def upgrade() -> None:
     op.add_column(
         "ingestion_batches",
@@ -29,18 +57,18 @@ def upgrade() -> None:
         "ingestion_batches",
         sa.Column(
             "type_mismatch_keys",
-            postgresql.JSONB(astext_type=sa.Text()),
+            _json_type(),
             nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
+            server_default=_json_array_default(),
         ),
     )
     op.add_column(
         "ingestion_batches",
         sa.Column(
             "drift_summary",
-            postgresql.JSONB(astext_type=sa.Text()),
+            _json_type(),
             nullable=False,
-            server_default=sa.text("'{}'::jsonb"),
+            server_default=_json_object_default(),
         ),
     )
     op.add_column(
@@ -87,8 +115,8 @@ def upgrade() -> None:
         sa.Column("quiet_hours_end_minute", sa.Integer(), nullable=True),
         sa.Column("quiet_hours_tz", sa.String(length=64), nullable=False, server_default=sa.text("'UTC'")),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=_now_default()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=_now_default()),
         sa.UniqueConstraint("device_id", name="uq_alert_policies_device"),
     )
 
@@ -104,7 +132,7 @@ def upgrade() -> None:
         sa.Column("reason", sa.String(length=1024), nullable=False),
         sa.Column("destination_fingerprint", sa.String(length=64), nullable=True),
         sa.Column("error_class", sa.String(length=128), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=_now_default()),
     )
     op.create_index(
         "ix_notification_events_device_created",
@@ -128,11 +156,11 @@ def upgrade() -> None:
         sa.Column("action", sa.String(length=32), nullable=False),
         sa.Column(
             "details",
-            postgresql.JSONB(astext_type=sa.Text()),
+            _json_type(),
             nullable=False,
-            server_default=sa.text("'{}'::jsonb"),
+            server_default=_json_object_default(),
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=_now_default()),
     )
     op.create_index(
         "ix_drift_events_batch_created",
@@ -150,17 +178,17 @@ def upgrade() -> None:
         sa.Column("ts", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "metrics",
-            postgresql.JSONB(astext_type=sa.Text()),
+            _json_type(),
             nullable=False,
-            server_default=sa.text("'{}'::jsonb"),
+            server_default=_json_object_default(),
         ),
         sa.Column(
             "errors",
-            postgresql.JSONB(astext_type=sa.Text()),
+            _json_type(),
             nullable=False,
-            server_default=sa.text("'[]'::jsonb"),
+            server_default=_json_array_default(),
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=_now_default()),
     )
     op.create_index(
         "ix_quarantined_telemetry_batch_created",
@@ -178,7 +206,7 @@ def upgrade() -> None:
     op.create_table(
         "export_batches",
         sa.Column("id", sa.String(length=36), primary_key=True, nullable=False),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default=_now_default()),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("watermark_from", sa.DateTime(timezone=True), nullable=True),
         sa.Column("watermark_to", sa.DateTime(timezone=True), nullable=True),
@@ -188,7 +216,7 @@ def upgrade() -> None:
         sa.Column("row_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("status", sa.String(length=32), nullable=False, server_default=sa.text("'running'")),
         sa.Column("error_message", sa.String(length=1024), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=_now_default()),
     )
     op.create_index(
         "ix_export_batches_status_started",

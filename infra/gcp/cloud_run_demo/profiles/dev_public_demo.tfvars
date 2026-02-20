@@ -20,9 +20,18 @@ service_memory = "256Mi"
 job_memory     = "256Mi"
 
 # Jobs
-enable_migration_job = true
+enable_migration_job  = true
 enable_scheduled_jobs = true
 offline_job_schedule  = "*/5 * * * *"
+
+# Managed Cloud SQL (minimal-cost defaults)
+enable_cloud_sql             = true
+cloudsql_tier                = "db-f1-micro"
+cloudsql_deletion_protection = false
+
+# Optional lanes (default OFF for cost-min posture)
+enable_pubsub_ingest    = false
+enable_analytics_export = false
 
 # Keep VPC connector OFF unless you need private networking
 enable_vpc_connector = false

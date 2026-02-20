@@ -1,5 +1,7 @@
 # Task: Analytics export (BigQuery)
 
+✅ **Status: Implemented** (2026-02-20)
+
 ## Intent
 
 Add an **optional** analytics lane that exports telemetry to BigQuery for reporting, dashboards, and portfolio-ready "data architect" depth.

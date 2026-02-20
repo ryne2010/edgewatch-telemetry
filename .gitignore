@@ -31,7 +31,10 @@ agent/.env.*
 # Edge agent runtime artifacts
 edgewatch_buffer.sqlite
 edgewatch_buffer.sqlite*
+edgewatch_buffer_*.sqlite
+edgewatch_buffer_*.sqlite3
 edgewatch_policy_cache.json
+edgewatch_policy_cache_*.json
 edgewatch_deadletter_*.jsonl
 
 # Node
@@ -54,4 +57,3 @@ crash.*.log
 
 # macOS
 .DS_Store
-

@@ -18,9 +18,19 @@ output "admin_api_key_secret" {
   value       = module.secrets.secret_names["edgewatch-admin-api-key"]
 }
 
+output "cloudsql_instance_name" {
+  description = "Cloud SQL instance name when enabled."
+  value       = try(module.cloud_sql_postgres[0].instance_name, null)
+}
+
+output "cloudsql_connection_name" {
+  description = "Cloud SQL connection name when enabled."
+  value       = try(module.cloud_sql_postgres[0].connection_name, null)
+}
+
 output "monitoring_dashboard_name" {
   description = "Monitoring dashboard resource name (if enabled)."
-  value       = try(google_monitoring_dashboard.cloudrun[0].name, null)
+  value       = try(google_monitoring_dashboard.cloudrun[0].id, null)
 }
 
 output "alert_policy_5xx_name" {
@@ -55,4 +65,29 @@ output "scheduler_service_account" {
 output "migration_job_name" {
   description = "Cloud Run Job name for DB migrations (if enabled)."
   value       = try(module.migrate_job[0].job_name, null)
+}
+
+output "pubsub_topic_name" {
+  description = "Pub/Sub topic name for ingest batches (if enabled)."
+  value       = try(google_pubsub_topic.telemetry_raw[0].name, null)
+}
+
+output "pubsub_subscription_name" {
+  description = "Pub/Sub push subscription name (if enabled)."
+  value       = try(google_pubsub_subscription.telemetry_raw_push[0].name, null)
+}
+
+output "analytics_export_job_name" {
+  description = "Cloud Run Job name for analytics export (if enabled)."
+  value       = try(module.analytics_export_job[0].job_name, null)
+}
+
+output "analytics_export_scheduler_name" {
+  description = "Cloud Scheduler job name for analytics export (if enabled)."
+  value       = try(google_cloud_scheduler_job.analytics_export[0].name, null)
+}
+
+output "analytics_export_bucket" {
+  description = "GCS bucket used for staged analytics export files (if enabled)."
+  value       = try(google_storage_bucket.analytics_export[0].name, null)
 }

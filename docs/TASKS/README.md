@@ -14,19 +14,21 @@ When a task changes contracts or boundaries, also write an ADR in `docs/DECISION
 
 ### Planned
 
-- `01-alert-routing-rules.md`
-- `02-notification-adapters.md`
-- `04-lineage-artifacts.md`
-- `07-replay-backfill.md`
-- `09-event-driven-ingest-pubsub.md`
-- `10-analytics-export-bigquery.md`
+None.
 
 ### In progress / partial
 
-- `03-telemetry-contracts.md` (MVP implemented; extensions remain)
+None.
 
 ### Implemented
 
+- `01-alert-routing-rules.md`
+- `02-notification-adapters.md`
+- `03-telemetry-contracts.md`
+- `04-lineage-artifacts.md`
 - `05-production-jobs-cloud-scheduler.md`
 - `06-db-migrations-alembic.md`
+- `07-replay-backfill.md`
 - `08-ci-cd-github-actions-wif.md`
+- `09-event-driven-ingest-pubsub.md`
+- `10-analytics-export-bigquery.md`

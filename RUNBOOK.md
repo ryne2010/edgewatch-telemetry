@@ -33,6 +33,12 @@ Run the edge simulator:
 make simulate
 ```
 
+Replay buffered history (agent-side):
+
+```bash
+uv run python -m agent.replay --since 2026-01-01T00:00:00Z --until 2026-01-02T00:00:00Z
+```
+
 Check device status / alerts:
 
 ```bash
@@ -68,6 +74,13 @@ Verify + logs:
 make verify-gcp ENV=dev
 make verify-gcp-ready ENV=dev
 make logs-gcp ENV=dev
+```
+
+Manually run optional jobs:
+
+```bash
+make offline-check-gcp ENV=dev
+make analytics-export-gcp ENV=dev
 ```
 
 ### Rollback

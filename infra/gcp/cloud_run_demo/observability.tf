@@ -21,16 +21,16 @@ resource "google_monitoring_dashboard" "cloudrun" {
           xyChart = {
             dataSets = [
               {
-                plotType = "LINE"
+                plotType   = "LINE"
                 targetAxis = "Y1"
                 timeSeriesQuery = {
                   timeSeriesFilter = {
                     filter = "${local.cloudrun_base_filter} metric.type=\"run.googleapis.com/request_count\""
                     aggregation = {
-                      alignmentPeriod   = "60s"
-                      perSeriesAligner  = "ALIGN_DELTA"
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
                       crossSeriesReducer = "REDUCE_SUM"
-                      groupByFields     = []
+                      groupByFields      = []
                     }
                   }
                 }
@@ -44,16 +44,16 @@ resource "google_monitoring_dashboard" "cloudrun" {
           xyChart = {
             dataSets = [
               {
-                plotType = "LINE"
+                plotType   = "LINE"
                 targetAxis = "Y1"
                 timeSeriesQuery = {
                   timeSeriesFilter = {
                     filter = "${local.cloudrun_base_filter} metric.type=\"run.googleapis.com/request_count\" metric.label.\"response_code_class\"=\"5xx\""
                     aggregation = {
-                      alignmentPeriod   = "60s"
-                      perSeriesAligner  = "ALIGN_DELTA"
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_DELTA"
                       crossSeriesReducer = "REDUCE_SUM"
-                      groupByFields     = []
+                      groupByFields      = []
                     }
                   }
                 }
@@ -67,16 +67,16 @@ resource "google_monitoring_dashboard" "cloudrun" {
           xyChart = {
             dataSets = [
               {
-                plotType = "LINE"
+                plotType   = "LINE"
                 targetAxis = "Y1"
                 timeSeriesQuery = {
                   timeSeriesFilter = {
                     filter = "${local.cloudrun_base_filter} metric.type=\"run.googleapis.com/request_latencies\""
                     aggregation = {
-                      alignmentPeriod   = "60s"
-                      perSeriesAligner  = "ALIGN_PERCENTILE_95"
+                      alignmentPeriod    = "60s"
+                      perSeriesAligner   = "ALIGN_PERCENTILE_95"
                       crossSeriesReducer = "REDUCE_MEAN"
-                      groupByFields     = []
+                      groupByFields      = []
                     }
                   }
                 }
@@ -112,10 +112,10 @@ resource "google_monitoring_alert_policy" "cloudrun_5xx" {
       threshold_value = 0
 
       aggregations {
-        alignment_period   = "60s"
-        per_series_aligner = "ALIGN_DELTA"
+        alignment_period     = "60s"
+        per_series_aligner   = "ALIGN_DELTA"
         cross_series_reducer = "REDUCE_SUM"
-        group_by_fields    = []
+        group_by_fields      = []
       }
     }
   }

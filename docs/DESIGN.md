@@ -25,6 +25,7 @@ Agents should not invent new structure without updating this file (and usually a
 
 - **Infrastructure (`infra/gcp/`)**
   - Optional GCP Cloud Run demo deployment with observability-as-code
+  - Optional Pub/Sub ingest lane and analytics export lane (BigQuery)
 
 **Deployment/runtime model**
 
@@ -101,9 +102,12 @@ Within `api/app/`:
 ## Concurrency and performance notes
 
 - Ingest performs per-point upserts (`ON CONFLICT DO NOTHING`).
+- Optional pipeline mode:
+  - `INGEST_PIPELINE_MODE=direct` (default): API persists immediately.
+  - `INGEST_PIPELINE_MODE=pubsub`: API publishes a batch; internal worker persists asynchronously.
 - Ingest is contract-aware:
   - unknown metric keys are accepted (additive drift)
-  - known metric keys must match declared type (breaking drift rejected)
+  - known metric key type mismatches are either rejected or quarantined (configurable)
 - Offline monitor runs on an interval and must be safe to run concurrently.
   - Scheduler is configured with `max_instances=1`.
 

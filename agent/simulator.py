@@ -9,7 +9,13 @@ import requests
 from dotenv import load_dotenv
 
 from buffer import SqliteBuffer
-from device_policy import CachedPolicy, DevicePolicy, fetch_device_policy, load_cached_policy, save_cached_policy
+from device_policy import (
+    CachedPolicy,
+    DevicePolicy,
+    fetch_device_policy,
+    load_cached_policy,
+    save_cached_policy,
+)
 from edgewatch_agent import (
     AgentState,
     _changed_keys,
@@ -106,7 +112,9 @@ def main() -> None:
 
         # Only critical alerts force faster sampling.
         sample_s = (
-            policy.reporting.alert_sample_interval_s if critical_active else policy.reporting.sample_interval_s
+            policy.reporting.alert_sample_interval_s
+            if critical_active
+            else policy.reporting.sample_interval_s
         )
 
         send_reason: str | None = None

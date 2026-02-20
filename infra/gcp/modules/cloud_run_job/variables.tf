@@ -47,6 +47,12 @@ variable "secret_env" {
   default     = {}
 }
 
+variable "cloud_sql_instances" {
+  type        = list(string)
+  description = "Optional Cloud SQL connection names (PROJECT:REGION:INSTANCE)."
+  default     = []
+}
+
 variable "labels" {
   type        = map(string)
   description = "Labels applied to the job."

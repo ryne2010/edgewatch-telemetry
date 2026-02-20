@@ -8,7 +8,9 @@ This repository includes an **optional** Terraform + Cloud Build demo deployment
 - **Cloud Run Jobs** for:
   - DB migrations (`edgewatch-migrate-<env>`)
   - offline checks (`edgewatch-offline-check-<env>`)
+  - analytics export (`edgewatch-analytics-export-<env>`, optional)
 - **Cloud Scheduler** to trigger offline checks on a cron schedule
+- Optional Pub/Sub ingest lane (`enable_pubsub_ingest=true`)
 
 The goal is a reproducible, team-friendly workflow.
 
@@ -51,9 +53,19 @@ The Terraform demo expects these Secret Manager secrets:
 Add secret versions:
 
 ```bash
-make db-secret
 make admin-secret
 ```
+
+`DATABASE_URL` is managed by Terraform when `enable_cloud_sql=true` (default).
+Only run `make db-secret` if you explicitly disable managed Cloud SQL and provide your own shared Postgres backend.
+For stronger credential hygiene, set an explicit DB password:
+
+```bash
+export TF_VAR_cloudsql_user_password='<strong-random-password>'
+```
+
+Important: `deploy-gcp-safe` requires a **shared** database backend reachable by both the Cloud Run
+service and Cloud Run jobs. `sqlite:///...` URLs are not suitable for this lane because each container has its own filesystem.
 
 ## 3) Deploy
 
@@ -117,7 +129,7 @@ The job name convention is:
 
 - `edgewatch-migrate-<env>`
 
-## 5) Scheduled offline checks
+## 5) Scheduled jobs
 
 By default, the Terraform demo stack creates:
 
@@ -129,6 +141,18 @@ Schedule is configurable via Terraform variable `offline_job_schedule` (default:
 > If you need faster detection, set it to every minute ("*/1 * * * *").
 
 This pattern avoids duplicate work when Cloud Run scales to multiple instances.
+
+Optional analytics lane:
+
+- Cloud Run Job: `edgewatch-analytics-export-<env>`
+- Cloud Scheduler job to trigger export (`analytics_export_schedule`, default hourly)
+- GCS staging bucket with lifecycle cleanup + partitioned/clustered BigQuery table
+
+Manual trigger:
+
+```bash
+make analytics-export-gcp ENV=dev
+```
 
 ## Production notes
 
@@ -177,3 +201,6 @@ make logs-gcp ENV=dev
 ```bash
 make migrate-gcp ENV=dev
 ```
+
+- If `migrate-gcp` succeeds but `/readyz` still returns 503, verify `DATABASE_URL` points to a
+  shared database (not a local SQLite file path).

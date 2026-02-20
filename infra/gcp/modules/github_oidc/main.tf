@@ -2,18 +2,16 @@ locals {
   branch_conditions = length(var.allowed_branches) > 0 ? [
     for b in var.allowed_branches : "assertion.ref == 'refs/heads/${b}'"
   ] : []
-  attribute_condition = length(local.branch_conditions) > 0
-    ? "assertion.repository == '${var.github_repository}' && (${join(" || ", local.branch_conditions)})"
-    : "assertion.repository == '${var.github_repository}'"
+  attribute_condition = length(local.branch_conditions) > 0 ? "assertion.repository == '${var.github_repository}' && (${join(" || ", local.branch_conditions)})" : "assertion.repository == '${var.github_repository}'"
 }
 
 resource "google_iam_workload_identity_pool" "pool" {
-  provider                    = google-beta
-  project                     = var.project_id
-  workload_identity_pool_id   = var.pool_id
-  display_name                = var.pool_display_name
-  description                 = var.pool_description
-  disabled                    = false
+  provider                  = google-beta
+  project                   = var.project_id
+  workload_identity_pool_id = var.pool_id
+  display_name              = var.pool_display_name
+  description               = var.pool_description
+  disabled                  = false
 }
 
 resource "google_iam_workload_identity_pool_provider" "provider" {

@@ -2,165 +2,196 @@ from __future__ import annotations
 
 import uuid
 
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.dialects.postgresql import insert
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from ..config import settings
 from ..contracts import load_telemetry_contract
 from ..db import db_session
-from ..models import Device, TelemetryPoint, IngestionBatch
+from ..models import Device, IngestionBatch
 from ..schemas import IngestRequest, IngestResponse
 from ..security import require_device_auth
-from ..services.monitor import ensure_water_pressure_alerts
+from ..services.ingest_pipeline import (
+    CandidatePoint,
+    build_pubsub_batch_payload,
+    parse_ingest_source,
+    prepare_points,
+)
+from ..services.ingestion_runtime import (
+    persist_points_for_batch,
+    record_drift_events,
+    record_quarantined_points,
+    update_ingestion_batch,
+)
+from ..services.pubsub import publish_ingestion_batch
+
 
 router = APIRouter(prefix="/api/v1", tags=["ingest"])
 
 
-def _normalize_utc(dt: datetime) -> datetime:
-    """Normalize an incoming datetime to timezone-aware UTC.
-
-    - If dt is naive, assume UTC.
-    - If dt has tzinfo, convert to UTC.
-
-    We keep ingestion semantics based on the *device timestamp*, not delivery time.
-    """
-
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
 @router.post("/ingest", response_model=IngestResponse)
-def ingest(req: IngestRequest, device: Device = Depends(require_device_auth)) -> IngestResponse:
-    """Ingest a batch of points for the authenticated device.
+def ingest(
+    req: IngestRequest,
+    device: Device = Depends(require_device_auth),
+    x_edgewatch_ingest_source: str | None = Header(default=None, alias="X-EdgeWatch-Ingest-Source"),
+) -> IngestResponse:
+    """Ingest telemetry for an authenticated device.
 
-    Notes:
-      * Inserts are idempotent per (device_id, message_id) via a unique constraint.
-      * We bulk-insert for performance, then evaluate threshold alerts only for newly-inserted points.
-      * last_seen_at is updated based on the newest *inserted* point timestamp.
+    Pipeline modes:
+    - direct: persist points synchronously
+    - pubsub: enqueue one pubsub message per ingestion batch and return quickly
+
+    Regardless of mode, each request records an ingestion lineage artifact.
     """
 
-    # Load the active telemetry contract.
     try:
         contract = load_telemetry_contract(settings.telemetry_contract_version)
-    except Exception:
-        # Don't leak file paths or stack traces to devices.
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="telemetry contract is not available",
-        )
+        ) from exc
+
+    source = parse_ingest_source(x_edgewatch_ingest_source)
+    batch_id = str(uuid.uuid4())
+
+    candidates = [
+        CandidatePoint(message_id=point.message_id, ts=point.ts, metrics=dict(point.metrics))
+        for point in req.points
+    ]
+
+    prepared = prepare_points(
+        points=candidates,
+        contract=contract,
+        unknown_keys_mode=settings.telemetry_contract_unknown_keys_mode,
+        type_mismatch_mode=settings.telemetry_contract_type_mismatch_mode,
+    )
+
+    ingest_response: IngestResponse | None = None
+    reject_detail: dict[str, object] | None = None
+    publish_payload: dict[str, object] | None = None
 
     with db_session() as session:
-        rows: list[dict] = []
-        batch_id = str(uuid.uuid4())
-
-        # Contract validation + drift visibility (unknown keys).
-        unknown_keys_union: set[str] = set()
-        type_errors: list[str] = []
-
-        # Keep the *first* seen point for any message_id in this request so we can evaluate
-        # alerts based on what actually got inserted when duplicates are present in the same batch.
-        point_by_message_id: dict[str, tuple[datetime, dict]] = {}
-
-        client_ts_min: datetime | None = None
-        client_ts_max: datetime | None = None
-
-        for p in req.points:
-            ts = _normalize_utc(p.ts)
-
-            if client_ts_min is None or ts < client_ts_min:
-                client_ts_min = ts
-            if client_ts_max is None or ts > client_ts_max:
-                client_ts_max = ts
-
-            unknown_keys, errors = contract.validate_metrics(p.metrics)
-            unknown_keys_union |= unknown_keys
-            if settings.telemetry_contract_enforce_types:
-                type_errors.extend(errors)
-
-            if p.message_id not in point_by_message_id:
-                point_by_message_id[p.message_id] = (ts, p.metrics)
-
-            rows.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "message_id": p.message_id,
-                    "device_id": device.device_id,
-                    "batch_id": batch_id,
-                    "ts": ts,
-                    "metrics": p.metrics,
-                }
-            )
-
-        if not rows:
-            return IngestResponse(device_id=device.device_id, batch_id=batch_id, accepted=0, duplicates=0)
-
-        if type_errors:
-            # Avoid flooding: show only the first handful.
-            sample = type_errors[:10]
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "telemetry metrics failed contract validation",
-                    "contract_version": contract.version,
-                    "contract_hash": contract.sha256,
-                    "errors": sample,
-                    "error_count": len(type_errors),
-                },
-            )
-
-        # Create an ingestion batch row first (flush to satisfy FK constraint).
         batch = IngestionBatch(
             id=batch_id,
             device_id=device.device_id,
             contract_version=contract.version,
             contract_hash=contract.sha256,
-            points_submitted=len(rows),
+            points_submitted=len(req.points),
             points_accepted=0,
             duplicates=0,
-            client_ts_min=client_ts_min,
-            client_ts_max=client_ts_max,
-            unknown_metric_keys=sorted(unknown_keys_union),
+            points_quarantined=len(prepared.quarantined_points),
+            client_ts_min=prepared.client_ts_min,
+            client_ts_max=prepared.client_ts_max,
+            unknown_metric_keys=prepared.unknown_metric_keys,
+            type_mismatch_keys=prepared.type_mismatch_keys,
+            drift_summary=prepared.drift_summary,
+            source=source,
+            pipeline_mode=settings.ingest_pipeline_mode,
+            processing_status="pending",
         )
         session.add(batch)
         session.flush()
 
-        stmt = (
-            insert(TelemetryPoint)
-            .values(rows)
-            .on_conflict_do_nothing(index_elements=["device_id", "message_id"])
-            .returning(TelemetryPoint.message_id)
+        record_drift_events(
+            session,
+            batch_id=batch_id,
+            device_id=device.device_id,
+            unknown_metric_keys=prepared.unknown_metric_keys,
+            type_mismatch_keys=prepared.type_mismatch_keys,
+            type_mismatch_count=prepared.type_mismatch_count,
+            unknown_keys_mode=settings.telemetry_contract_unknown_keys_mode,
+            type_mismatch_mode=settings.telemetry_contract_type_mismatch_mode,
+        )
+        record_quarantined_points(
+            session,
+            batch_id=batch_id,
+            device_id=device.device_id,
+            points=prepared.quarantined_points,
         )
 
-        inserted_message_ids = list(session.execute(stmt).scalars().all())
-        accepted = len(inserted_message_ids)
-        duplicates = len(rows) - accepted
+        if prepared.reject_errors:
+            batch.processing_status = "rejected"
+            reject_sample = prepared.reject_errors[:10]
+            reject_detail = {
+                "error": "telemetry metrics failed contract validation",
+                "batch_id": batch_id,
+                "contract_version": contract.version,
+                "contract_hash": contract.sha256,
+                "errors": reject_sample,
+                "error_count": len(prepared.reject_errors),
+            }
+        elif settings.ingest_pipeline_mode == "direct":
+            accepted, duplicates, _ = persist_points_for_batch(
+                session,
+                batch_id=batch_id,
+                device_id=device.device_id,
+                points=prepared.accepted_points,
+            )
+            update_ingestion_batch(
+                session,
+                batch_id=batch_id,
+                points_accepted=accepted,
+                duplicates=duplicates,
+                processing_status="completed",
+            )
+            ingest_response = IngestResponse(
+                device_id=device.device_id,
+                batch_id=batch_id,
+                accepted=accepted,
+                duplicates=duplicates,
+                quarantined=len(prepared.quarantined_points),
+            )
+        else:
+            if prepared.accepted_points:
+                publish_payload = build_pubsub_batch_payload(
+                    batch_id=batch_id,
+                    device_id=device.device_id,
+                    source=source,
+                    points=prepared.accepted_points,
+                )
+                batch.processing_status = "queued"
+            else:
+                batch.processing_status = "completed"
 
-        batch.points_accepted = accepted
-        batch.duplicates = duplicates
+            ingest_response = IngestResponse(
+                device_id=device.device_id,
+                batch_id=batch_id,
+                accepted=len(prepared.accepted_points),
+                duplicates=0,
+                quarantined=len(prepared.quarantined_points),
+            )
 
-        newest_ts: datetime | None = None
+    if reject_detail is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=reject_detail)
 
-        # Threshold alert evaluation on newly-inserted points only.
-        for mid in inserted_message_ids:
-            if mid not in point_by_message_id:
-                continue
-            ts, metrics = point_by_message_id[mid]
+    if publish_payload is not None:
+        try:
+            publish_ingestion_batch(publish_payload)
+        except Exception as exc:
+            with db_session() as session:
+                update_ingestion_batch(
+                    session,
+                    batch_id=batch_id,
+                    points_accepted=0,
+                    duplicates=0,
+                    processing_status="publish_failed",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "failed to publish telemetry batch",
+                    "batch_id": batch_id,
+                },
+            ) from exc
 
-            if newest_ts is None or ts > newest_ts:
-                newest_ts = ts
+    if ingest_response is None:
+        # Defensive fallback; should not happen due flow above.
+        ingest_response = IngestResponse(
+            device_id=device.device_id,
+            batch_id=batch_id,
+            accepted=0,
+            duplicates=0,
+            quarantined=len(prepared.quarantined_points),
+        )
 
-            wp = metrics.get("water_pressure_psi")
-            if isinstance(wp, (int, float)):
-                ensure_water_pressure_alerts(session, device.device_id, float(wp), ts)
-
-        if newest_ts is not None:
-            d = session.query(Device).filter(Device.device_id == device.device_id).one()
-            if d.last_seen_at is None or newest_ts > d.last_seen_at:
-                d.last_seen_at = newest_ts
-
-    return IngestResponse(
-        device_id=device.device_id, batch_id=batch_id, accepted=accepted, duplicates=duplicates
-    )
+    return ingest_response
