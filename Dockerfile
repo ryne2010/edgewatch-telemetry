@@ -18,9 +18,9 @@ RUN pnpm -C web build
 ### Backend (FastAPI)
 FROM python:3.11-slim
 
-# Install uv by copying the binaries from the official distroless image.
-# See: https://docs.astral.sh/uv/guides/integration/docker/
-COPY --from=ghcr.io/astral-sh/uv:0.10.4 /uv /uvx /bin/
+# Install uv in-image to avoid a separate registry pull for ghcr.io.
+# Increase timeout/retries to tolerate constrained dev networks.
+RUN PIP_DEFAULT_TIMEOUT=300 pip install --no-cache-dir --retries 10 "uv==0.10.4"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

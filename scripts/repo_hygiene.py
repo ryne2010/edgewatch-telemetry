@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Iterable, List
 
 
@@ -75,6 +76,7 @@ def _git_tracked_paths() -> set[str]:
         return {line.strip() for line in out.decode("utf-8").splitlines() if line.strip()}
     except Exception:
         return set()
+
 
 # Files we treat as text for substring scans.
 TEXT_EXTENSIONS = {
@@ -220,6 +222,37 @@ def check_optional_lockfiles() -> List[Finding]:
     return findings
 
 
+def check_alembic_revision_ids() -> List[Finding]:
+    """Fail if Alembic revision IDs exceed alembic_version.version_num width."""
+
+    findings: List[Finding] = []
+    versions_dir = REPO_ROOT / "migrations" / "versions"
+    if not versions_dir.exists():
+        return findings
+
+    pattern = re.compile(r'^\s*revision\s*=\s*["\']([^"\']+)["\']\s*$', re.MULTILINE)
+    for path in sorted(versions_dir.glob("*.py")):
+        text = _read_text_safely(path)
+        if not text:
+            continue
+        match = pattern.search(text)
+        if not match:
+            continue
+        revision = match.group(1)
+        if len(revision) > 32:
+            findings.append(
+                Finding(
+                    level="ERROR",
+                    path=path,
+                    message=(
+                        "Alembic revision ID exceeds 32 chars; use <=32 to remain "
+                        "compatible with alembic_version.version_num."
+                    ),
+                )
+            )
+    return findings
+
+
 def main() -> int:
     files = list(_iter_repo_files(REPO_ROOT))
 
@@ -227,6 +260,7 @@ def main() -> int:
     findings += check_os_cruft(files)
     findings += check_forbidden_substrings(files)
     findings += check_optional_lockfiles()
+    findings += check_alembic_revision_ids()
 
     errors = [f for f in findings if f.level == "ERROR"]
     warns = [f for f in findings if f.level == "WARN"]
