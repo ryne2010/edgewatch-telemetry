@@ -843,3 +843,43 @@
 ### Follow-ups / tech debt
 
 - [ ] When device-side media upload lane is enabled, wire upload-complete callbacks to increment media upload counters on actual upload success.
+
+## Task 14 (Iteration) — Devices List UX Polish (2026-02-21)
+
+### What changed
+
+- Polished Devices page quick filtering and status clarity:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx`
+  - added quick filter toggle for `open alerts only` (in addition to online/offline/unknown status filters)
+  - added per-device health explanation labels/details for:
+    - offline (stale telemetry threshold context)
+    - stale heartbeat
+    - weak signal
+    - low battery
+    - open alerts
+    - awaiting telemetry / healthy
+  - added open-alert indicators in the table status column and fleet summary counts
+  - improved empty-state guidance with actionable next steps and clear-filter affordance.
+- Updated web API contract typing to include edge-policy cost caps:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+- Updated UI/task docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/14-ui-ux-polish.md`
+
+### Why it changed
+
+- Advances Task 14’s remaining Devices-list goals: clearer status explanations, better empty states, and operator-friendly quick filters including open-alert focus.
+
+### How it was validated
+
+- `pnpm -C web typecheck` ✅
+- `pnpm -r --if-present build` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- The open-alert device filter currently derives from `GET /api/v1/alerts?open_only=true&limit=1000`; extremely large fleets may need a dedicated aggregate endpoint in a future iteration.
+
+### Follow-ups / tech debt
+
+- [ ] Complete remaining Task 14 work for device-detail and alerts timeline/audit UX enhancements.
