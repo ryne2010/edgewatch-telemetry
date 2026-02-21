@@ -14,6 +14,7 @@ import requests
 from dotenv import load_dotenv
 
 from buffer import SqliteBuffer
+from cellular import CellularConfigError, build_cellular_monitor_from_env
 from device_policy import (
     CachedPolicy,
     DevicePolicy,
@@ -457,6 +458,11 @@ def main() -> None:
     except SensorConfigError as exc:
         raise SystemExit(f"[edgewatch-agent] invalid sensor config: {exc}") from exc
 
+    try:
+        cellular_monitor = build_cellular_monitor_from_env()
+    except CellularConfigError as exc:
+        raise SystemExit(f"[edgewatch-agent] invalid cellular config: {exc}") from exc
+
     session = requests.Session()
 
     cached: Optional[CachedPolicy] = load_cached_policy()
@@ -475,7 +481,7 @@ def main() -> None:
         print(f"[edgewatch-agent] media disabled due to setup error: {exc!r}")
 
     print(
-        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s"
+        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s cellular=%s"
         % (
             device_id,
             api_url,
@@ -483,6 +489,7 @@ def main() -> None:
             policy.policy_version,
             sensor_config.backend,
             "enabled" if media_runtime is not None else "disabled",
+            "enabled" if cellular_monitor is not None else "disabled",
         )
     )
 
@@ -509,6 +516,11 @@ def main() -> None:
                 next_policy_refresh_at = time.time() + 60.0
 
         metrics = sensor_backend.read_metrics()
+        if cellular_monitor is not None:
+            cellular_metrics = cellular_monitor.read_metrics()
+            if cellular_metrics:
+                metrics.update(cellular_metrics)
+
         current_state, current_alerts = _compute_state(metrics, state.last_alerts, policy)
         critical_active = "WATER_PRESSURE_LOW" in current_alerts
 

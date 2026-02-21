@@ -55,6 +55,43 @@ metrics:
     unit: dBm
     description: Cellular/WiFi RSSI (dBm).
 
+  cellular_rsrp_dbm:
+    type: number
+    unit: dBm
+    description: LTE reference signal received power (best effort from modem).
+
+  cellular_rsrq_db:
+    type: number
+    unit: dB
+    description: LTE reference signal received quality (best effort from modem).
+
+  cellular_sinr_db:
+    type: number
+    unit: dB
+    description: LTE signal-to-interference-plus-noise ratio (best effort from modem).
+
+  cellular_registration_state:
+    type: string
+    description: Cellular registration state as reported by modem manager (for example home/roaming/searching).
+
+  cellular_bytes_sent_today:
+    type: number
+    unit: bytes
+    description: Best-effort bytes transmitted by the active network interface for the current UTC day.
+
+  cellular_bytes_received_today:
+    type: number
+    unit: bytes
+    description: Best-effort bytes received by the active network interface for the current UTC day.
+
+  link_ok:
+    type: boolean
+    description: Connectivity watchdog result; true when DNS + HTTP checks both succeed.
+
+  link_last_ok_at:
+    type: string
+    description: Last watchdog success timestamp in ISO-8601 UTC format.
+
   pump_on:
     type: boolean
     description: Whether the pump is currently running.

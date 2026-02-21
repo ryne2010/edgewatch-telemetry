@@ -185,9 +185,11 @@ Recommended patterns:
 
 - LTE modem HAT for Raspberry Pi (Quectel-based) **or** a USB LTE modem
 - Use ModemManager / NetworkManager on Raspberry Pi OS for connection management
-- Expose `signal_rssi_dbm` (already supported) and optionally add:
+- Expose `signal_rssi_dbm` and optional cellular observability metrics:
   - `cellular_rsrp_dbm`, `cellular_rsrq_db`, `cellular_sinr_db`
-  - data usage counters per day (for cost hygiene)
+  - `cellular_registration_state`
+  - `cellular_bytes_sent_today`, `cellular_bytes_received_today`
+  - `link_ok`, `link_last_ok_at` (watchdog telemetry)
 
 Practical selection guidance:
 

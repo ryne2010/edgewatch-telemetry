@@ -16,7 +16,7 @@ This includes:
 ## Implementation plan (Codex-friendly slices)
 
 1) Docs + bring-up steps → `13a-cellular-runbook.md`
-2) Agent cellular metrics + link watchdog → `13b-agent-cellular-metrics-watchdog.md`
+2) Agent cellular metrics + link watchdog → `13b-agent-cellular-metrics-watchdog.md` (implemented)
 3) Edge policy cost caps + enforcement → `13c-cost-caps-policy.md`
 
 ## Non-goals

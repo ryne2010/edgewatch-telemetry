@@ -86,6 +86,14 @@ Common operational metrics:
 - `drip_oil_level_pct`
 - `battery_v`
 - `signal_rssi_dbm`
+- `cellular_rsrp_dbm`
+- `cellular_rsrq_db`
+- `cellular_sinr_db`
+- `cellular_registration_state`
+- `cellular_bytes_sent_today`
+- `cellular_bytes_received_today`
+- `link_ok`
+- `link_last_ok_at`
 
 ## Data model overview
 

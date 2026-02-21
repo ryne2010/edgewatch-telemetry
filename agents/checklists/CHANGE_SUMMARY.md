@@ -709,5 +709,67 @@
 
 ### Follow-ups / tech debt
 
-- [ ] Task 13b: wire additional cellular metrics + watchdog behavior into the agent runtime.
 - [ ] Task 13c: enforce policy-driven cellular cost caps for media + telemetry.
+
+## Task 13b — Agent Cellular Metrics + Link Watchdog (2026-02-21)
+
+### What changed
+
+- Added a new agent cellular observability module:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/cellular.py`
+  - includes:
+    - optional env-driven enablement (`CELLULAR_METRICS_ENABLED=true`)
+    - best-effort ModemManager (`mmcli`) metric collection
+    - parsed metrics:
+      - `signal_rssi_dbm`
+      - `cellular_rsrp_dbm`
+      - `cellular_rsrq_db`
+      - `cellular_sinr_db`
+      - `cellular_registration_state`
+    - lightweight connectivity watchdog (DNS + HTTP HEAD/GET fallback):
+      - `link_ok`
+      - `link_last_ok_at`
+    - best-effort daily byte counters from Linux interface statistics:
+      - `cellular_bytes_sent_today`
+      - `cellular_bytes_received_today`
+- Wired cellular monitor into the main edge loop:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - startup now validates cellular env config and reports `cellular=enabled|disabled`.
+  - collected cellular metrics are merged into telemetry payloads when enabled.
+- Added deterministic tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_cellular.py`
+  - covers:
+    - env parsing/validation
+    - modem/watchdog parsing
+    - daily usage counter behavior
+    - non-Pi/mmcli-missing safety
+- Updated contracts/docs/runbooks:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CELLULAR.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+- Updated task tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/13b-agent-cellular-metrics-watchdog.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/13-cellular-connectivity.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 13b by adding field-focused cellular link observability while keeping local development and CI environments runnable without modem tooling.
+
+### How it was validated
+
+- `make harness` ✅
+- Focused test lane:
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: pytest -q tests/test_agent_cellular.py` ✅
+
+### Risks / rollout notes
+
+- Cellular metrics are best-effort and depend on modem/driver output shape; unavailable fields are omitted.
+- Daily byte counters currently reset on agent restart (acceptable for best-effort telemetry; Task 13c introduces policy-enforced counters/audit).
+
+### Follow-ups / tech debt
+
+- [ ] Task 13c: enforce edge policy cost caps (bytes/day, media/day) and audit events.

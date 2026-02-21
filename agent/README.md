@@ -91,6 +91,28 @@ python -m agent.tools.oil_life reset --state ./agent/state/oil_life_state.json
 python -m agent.tools.oil_life show --state ./agent/state/oil_life_state.json
 ```
 
+## Cellular metrics + link watchdog
+
+Enable optional cellular observability on Raspberry Pi nodes with ModemManager:
+
+```bash
+CELLULAR_METRICS_ENABLED=true \
+CELLULAR_WATCHDOG_ENABLED=true \
+CELLULAR_INTERFACE=wwan0 \
+uv run python agent/edgewatch_agent.py
+```
+
+When enabled, the agent adds best-effort metrics such as:
+- `signal_rssi_dbm`
+- `cellular_rsrp_dbm`, `cellular_rsrq_db`, `cellular_sinr_db` (if modem reports them)
+- `cellular_registration_state`
+- `cellular_bytes_sent_today`, `cellular_bytes_received_today`
+- `link_ok`, `link_last_ok_at`
+
+Notes:
+- On non-Pi hosts (or when `mmcli` is absent), the agent remains runnable.
+- Watchdog checks are observation-only (DNS + HTTP HEAD); they do not restart networking.
+
 ## Camera snapshots + local ring buffer (MVP)
 
 Enable scheduled photo snapshots with a local disk ring buffer:

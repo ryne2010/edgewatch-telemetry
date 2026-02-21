@@ -1,6 +1,6 @@
 # Task 13b — Agent cellular metrics + link watchdog
 
-🟡 **Status: Planned**
+✅ **Status: Implemented (2026-02-21)**
 
 ## Objective
 
