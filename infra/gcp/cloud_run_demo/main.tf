@@ -74,6 +74,10 @@ locals {
     ANALYTICS_EXPORT_TABLE      = var.analytics_export_table
     ANALYTICS_EXPORT_GCS_PREFIX = var.analytics_export_gcs_prefix
 
+    # Postgres scale path
+    TELEMETRY_PARTITIONING_ENABLED = "true"
+    TELEMETRY_ROLLUPS_ENABLED      = var.telemetry_rollups_enabled ? "true" : "false"
+
     # Demo bootstrap guardrails.
     BOOTSTRAP_DEMO_DEVICE = var.bootstrap_demo_device ? "true" : "false"
   }

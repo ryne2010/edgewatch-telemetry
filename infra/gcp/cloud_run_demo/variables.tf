@@ -643,6 +643,44 @@ variable "retention_max_batches" {
   default     = 50
 }
 
+# --- Optional: partition manager job (Postgres scale path) ---
+
+variable "enable_partition_manager_job" {
+  type        = bool
+  description = "If true, provision a Cloud Run Job + Cloud Scheduler trigger to pre-create telemetry partitions and refresh hourly rollups."
+  default     = true
+}
+
+variable "partition_manager_job_schedule" {
+  type        = string
+  description = "Cron schedule for the partition manager job."
+  default     = "0 */6 * * *"
+}
+
+variable "telemetry_partition_lookback_months" {
+  type        = number
+  description = "How many months back the partition manager should ensure exist for late-arriving telemetry."
+  default     = 1
+}
+
+variable "telemetry_partition_prewarm_months" {
+  type        = number
+  description = "How many months ahead the partition manager should pre-create telemetry partitions."
+  default     = 2
+}
+
+variable "telemetry_rollups_enabled" {
+  type        = bool
+  description = "If true, the partition manager computes hourly telemetry rollups for long-range charts."
+  default     = true
+}
+
+variable "telemetry_rollup_backfill_hours" {
+  type        = number
+  description = "How many recent hours the partition manager recomputes when refreshing hourly rollups."
+  default     = 168
+}
+
 
 # --- Optional: synthetic telemetry generator (dev/stage only) ---
 

@@ -10,6 +10,7 @@ This repository includes an **optional** Terraform + Cloud Build demo deployment
   - DB migrations (`edgewatch-migrate-<env>`)
   - offline checks (`edgewatch-offline-check-<env>`)
   - retention/compaction (`edgewatch-retention-<env>`, recommended)
+  - telemetry partition manager (`edgewatch-partition-manager-<env>`, recommended for Postgres scale path)
   - analytics export (`edgewatch-analytics-export-<env>`, optional)
   - synthetic telemetry (`edgewatch-simulate-telemetry-<env>`, optional)
 - **Cloud Scheduler** to trigger offline checks on a cron schedule
@@ -221,6 +222,16 @@ Retention is configurable via Terraform variables:
 - `retention_job_schedule` (default: daily 03:15 UTC)
 - `telemetry_retention_days` / `quarantine_retention_days`
 
+Postgres partition manager is configurable via Terraform variables:
+
+- `enable_partition_manager_job=true`
+- `partition_manager_job_schedule` (default: every 6 hours)
+- `telemetry_partition_lookback_months` / `telemetry_partition_prewarm_months`
+- `telemetry_rollups_enabled`
+- `telemetry_rollup_backfill_hours`
+
+To use rollups for hourly API chart reads, set `TELEMETRY_ROLLUPS_ENABLED=true` on the Cloud Run service environment.
+
 > If you need faster detection, set it to every minute ("*/1 * * * *").
 
 This pattern avoids duplicate work when Cloud Run scales to multiple instances.
@@ -241,6 +252,12 @@ Manual trigger (retention):
 
 ```bash
 make retention-gcp ENV=dev
+```
+
+Manual trigger (partition manager):
+
+```bash
+make partition-manager-gcp ENV=dev
 ```
 
 ## 6) Synthetic telemetry (dev + staging)

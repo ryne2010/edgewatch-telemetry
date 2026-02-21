@@ -4,7 +4,7 @@
 
 Replay historical telemetry from the edge buffer without creating duplicate telemetry rows.
 
-Idempotency remains enforced by the server constraint on `(device_id, message_id)`.
+Idempotency remains enforced by the server-side dedupe key `(device_id, message_id)` (`telemetry_ingest_dedupe`).
 
 ## Prerequisites
 

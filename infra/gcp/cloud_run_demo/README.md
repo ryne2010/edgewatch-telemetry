@@ -15,6 +15,7 @@ What this demonstrates:
   - Cloud Run Job: offline checks (`edgewatch-offline-check-<env>`)
   - Cloud Run Job: analytics export (`edgewatch-analytics-export-<env>`, optional)
   - Cloud Run Job: synthetic telemetry (`edgewatch-simulate-telemetry-<env>`, optional)
+  - Cloud Run Job: telemetry partition manager (`edgewatch-partition-manager-<env>`, optional)
   - Cloud Scheduler cron trigger -> Cloud Run Jobs API
 - optional Pub/Sub ingest lane (`enable_pubsub_ingest=true`)
 
@@ -105,6 +106,13 @@ Retention / compaction (recommended):
 - `retention_job_schedule` — cron schedule (default daily)
 - `telemetry_retention_days` / `quarantine_retention_days` — deletion horizon
 - `retention_batch_size` / `retention_max_batches` — safety guardrails
+
+Postgres scale path (recommended):
+- `enable_partition_manager_job` — provision a Cloud Run Job + Scheduler to pre-create telemetry partitions
+- `partition_manager_job_schedule` — cron schedule (default every 6 hours)
+- `telemetry_partition_lookback_months` / `telemetry_partition_prewarm_months` — monthly partition window to maintain
+- `telemetry_rollups_enabled` — enable hourly rollup refresh for long-range charts
+- `telemetry_rollup_backfill_hours` — rolling backfill window for rollup recompute
 
 Synthetic telemetry (dev/stage):
 - `enable_simulation` — provision a Cloud Run Job + Scheduler that generates synthetic telemetry

@@ -84,7 +84,7 @@ endef
 	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp grant-cloudbuild-gcp build-gcp \
 	deploy-gcp deploy-gcp-safe deploy-gcp-safe-multiarch \
 	url-gcp url-gcp-admin url-gcp-dashboard verify-gcp verify-gcp-ready logs-gcp \
-	migrate-gcp offline-check-local offline-check-gcp simulate-gcp analytics-export-gcp retention-gcp destroy-gcp \
+	migrate-gcp offline-check-local offline-check-gcp simulate-gcp analytics-export-gcp retention-gcp partition-manager-gcp destroy-gcp \
 	plan-gcp-demo apply-gcp-demo deploy-gcp-demo \
 	plan-gcp-stage apply-gcp-stage deploy-gcp-stage \
 	plan-gcp-stage-iot apply-gcp-stage-iot deploy-gcp-stage-iot \
@@ -140,6 +140,7 @@ help:
 	@echo "  offline-check-gcp Manually run offline check via Cloud Run Job"
 	@echo "  simulate-gcp     Manually run synthetic telemetry via Cloud Run Job"
 	@echo "  analytics-export-gcp Manually run analytics export via Cloud Run Job"
+	@echo "  partition-manager-gcp Manually run telemetry partition manager via Cloud Run Job"
 	@echo "  destroy-gcp      Terraform destroy (keeps tfstate bucket)"
 	@echo "  db-secret        Add DATABASE_URL secret version (stdin)"
 	@echo "  admin-secret     Add ADMIN_API_KEY secret version (stdin)"
@@ -897,3 +898,8 @@ retention-gcp:
 	$(call require,gcloud)
 	@echo "Executing Cloud Run retention job: edgewatch-retention-$(ENV)"
 	gcloud run jobs execute edgewatch-retention-$(ENV) --region $(REGION) --project $(PROJECT_ID) --wait
+
+partition-manager-gcp:
+	$(call require,gcloud)
+	@echo "Executing Cloud Run partition manager job: edgewatch-partition-manager-$(ENV)"
+	gcloud run jobs execute edgewatch-partition-manager-$(ENV) --region $(REGION) --project $(PROJECT_ID) --wait

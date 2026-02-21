@@ -1,6 +1,6 @@
 # Task 17 — Telemetry partitioning + rollups (Postgres scale path)
 
-🟡 **Status: Planned**
+✅ **Status: Implemented**
 
 ## Objective
 

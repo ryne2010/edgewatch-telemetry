@@ -16,16 +16,18 @@ data "google_project" "project" {
 }
 
 locals {
-  enable_any_scheduler      = var.enable_scheduled_jobs || var.enable_analytics_export || var.enable_simulation || var.enable_retention_job
-  offline_job_name          = "edgewatch-offline-check-${var.env}"
-  offline_scheduler_name    = "edgewatch-offline-check-${var.env}"
-  migrate_job_name          = "edgewatch-migrate-${var.env}"
-  analytics_job_name        = "edgewatch-analytics-export-${var.env}"
-  analytics_scheduler_name  = "edgewatch-analytics-export-${var.env}"
-  simulation_job_name       = "edgewatch-simulate-telemetry-${var.env}"
-  simulation_scheduler_name = "edgewatch-simulate-telemetry-${var.env}"
-  retention_job_name        = "edgewatch-retention-${var.env}"
-  retention_scheduler_name  = "edgewatch-retention-${var.env}"
+  enable_any_scheduler             = var.enable_scheduled_jobs || var.enable_analytics_export || var.enable_simulation || var.enable_retention_job || var.enable_partition_manager_job
+  offline_job_name                 = "edgewatch-offline-check-${var.env}"
+  offline_scheduler_name           = "edgewatch-offline-check-${var.env}"
+  migrate_job_name                 = "edgewatch-migrate-${var.env}"
+  analytics_job_name               = "edgewatch-analytics-export-${var.env}"
+  analytics_scheduler_name         = "edgewatch-analytics-export-${var.env}"
+  simulation_job_name              = "edgewatch-simulate-telemetry-${var.env}"
+  simulation_scheduler_name        = "edgewatch-simulate-telemetry-${var.env}"
+  retention_job_name               = "edgewatch-retention-${var.env}"
+  retention_scheduler_name         = "edgewatch-retention-${var.env}"
+  partition_manager_job_name       = "edgewatch-partition-manager-${var.env}"
+  partition_manager_scheduler_name = "edgewatch-partition-manager-${var.env}"
 }
 
 resource "google_service_account" "scheduler" {
@@ -228,6 +230,52 @@ module "retention_job" {
 
     RETENTION_BATCH_SIZE  = tostring(var.retention_batch_size)
     RETENTION_MAX_BATCHES = tostring(var.retention_max_batches)
+
+    TELEMETRY_PARTITIONING_ENABLED = "true"
+    TELEMETRY_ROLLUPS_ENABLED      = tostring(var.telemetry_rollups_enabled)
+  })
+
+  secret_env = {
+    DATABASE_URL  = module.secrets.secret_names["edgewatch-database-url"]
+    ADMIN_API_KEY = module.secrets.secret_names["edgewatch-admin-api-key"]
+  }
+
+  cloud_sql_instances = local.cloud_sql_instances
+
+  vpc_connector_id = var.enable_vpc_connector ? module.network[0].serverless_connector_id : null
+  vpc_egress       = var.vpc_egress
+
+  cpu    = var.job_cpu
+  memory = var.job_memory
+
+  labels = local.labels
+
+  depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
+}
+
+
+module "partition_manager_job" {
+  count  = var.enable_partition_manager_job ? 1 : 0
+  source = "../modules/cloud_run_job"
+
+  project_id            = var.project_id
+  region                = var.region
+  job_name              = local.partition_manager_job_name
+  image                 = var.image
+  service_account_email = module.service_accounts.runtime_service_account_email
+
+  command = ["python", "-m", "api.app.jobs.partition_manager"]
+
+  env_vars = merge(local.job_env_vars, {
+    ENABLE_SCHEDULER      = "false"
+    AUTO_MIGRATE          = "false"
+    BOOTSTRAP_DEMO_DEVICE = "false"
+
+    TELEMETRY_PARTITIONING_ENABLED      = "true"
+    TELEMETRY_PARTITION_LOOKBACK_MONTHS = tostring(var.telemetry_partition_lookback_months)
+    TELEMETRY_PARTITION_PREWARM_MONTHS  = tostring(var.telemetry_partition_prewarm_months)
+    TELEMETRY_ROLLUPS_ENABLED           = tostring(var.telemetry_rollups_enabled)
+    TELEMETRY_ROLLUP_BACKFILL_HOURS     = tostring(var.telemetry_rollup_backfill_hours)
   })
 
   secret_env = {
@@ -298,6 +346,17 @@ resource "google_cloud_run_v2_job_iam_member" "scheduler_retention_invoker" {
   project  = var.project_id
   location = var.region
   name     = module.retention_job[0].job_name
+
+  role   = "roles/run.invoker"
+  member = "serviceAccount:${google_service_account.scheduler[0].email}"
+}
+
+resource "google_cloud_run_v2_job_iam_member" "scheduler_partition_manager_invoker" {
+  count = var.enable_partition_manager_job ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = module.partition_manager_job[0].job_name
 
   role   = "roles/run.invoker"
   member = "serviceAccount:${google_service_account.scheduler[0].email}"
@@ -457,6 +516,40 @@ resource "google_cloud_scheduler_job" "retention" {
     module.retention_job,
     google_service_account_iam_member.scheduler_token_creator,
     google_cloud_run_v2_job_iam_member.scheduler_retention_invoker,
+    google_service_account_iam_member.scheduler_actas_runtime,
+    google_artifact_registry_repository_iam_member.scheduler_artifact_reader,
+  ]
+}
+
+resource "google_cloud_scheduler_job" "partition_manager" {
+  count = var.enable_partition_manager_job ? 1 : 0
+
+  project   = var.project_id
+  region    = var.region
+  name      = local.partition_manager_scheduler_name
+  schedule  = var.partition_manager_job_schedule
+  time_zone = var.scheduler_time_zone
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project_id}/locations/${var.region}/jobs/${local.partition_manager_job_name}:run"
+
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    body = base64encode("{}")
+
+    oauth_token {
+      service_account_email = google_service_account.scheduler[0].email
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [
+    module.partition_manager_job,
+    google_service_account_iam_member.scheduler_token_creator,
+    google_cloud_run_v2_job_iam_member.scheduler_partition_manager_invoker,
     google_service_account_iam_member.scheduler_actas_runtime,
     google_artifact_registry_repository_iam_member.scheduler_artifact_reader,
   ]

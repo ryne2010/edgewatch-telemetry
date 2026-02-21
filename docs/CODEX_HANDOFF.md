@@ -63,15 +63,11 @@ If you want the fastest path to “real field node”:
 
 If you want the fastest path to “enterprise operator posture”:
 
-- Observability
-  - `docs/TASKS/16-opentelemetry.md`
-
-- Scale path
-  - `docs/TASKS/17-telemetry-partitioning-rollups.md`
-  - `docs/TASKS/20-edge-protection-cloud-armor.md`
-
 - Edge buffer hardening
   - `docs/TASKS/19-agent-buffer-hardening.md`
+
+- Ingest perimeter hardening
+  - `docs/TASKS/20-edge-protection-cloud-armor.md`
 
 ## Working agreements
 
@@ -87,7 +83,7 @@ These can be developed in parallel if PRs are rebased/merged carefully:
 - Stream A (sensors): `11a` → `11b` / `11c` → `11d`
 - Stream B (media): `12a` (device) in parallel with `12b` (API) until the upload handshake needs integration
 - Stream C (cellular): `13a` docs can be written anytime; `13b` agent + `13c` policy changes should be coordinated
-- Stream D (platform): OTEL (`16`) + partitioning (`17`) can proceed independently
+- Stream D (platform): edge buffer hardening (`19`) + ingest perimeter hardening (`20`)
 
 ## Deployment lanes
 

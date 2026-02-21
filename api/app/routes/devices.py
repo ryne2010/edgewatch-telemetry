@@ -7,8 +7,9 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func
 
+from ..config import settings
 from ..db import db_session
-from ..models import Device, TelemetryPoint
+from ..models import Device, TelemetryPoint, TelemetryRollupHourly
 from ..schemas import DeviceOut, TimeseriesMultiPointOut, TimeseriesPointOut, DeviceSummaryOut
 from ..services.monitor import compute_status
 
@@ -251,6 +252,26 @@ def get_timeseries(
         raise HTTPException(status_code=400, detail="since must be <= until")
 
     with db_session() as session:
+        if bucket == "hour" and settings.telemetry_rollups_enabled:
+            rollup_query = session.query(
+                TelemetryRollupHourly.bucket_ts.label("bucket_ts"),
+                TelemetryRollupHourly.avg_value.label("value"),
+            ).filter(
+                TelemetryRollupHourly.device_id == device_id,
+                TelemetryRollupHourly.metric_key == metric,
+            )
+            if since is not None:
+                rollup_query = rollup_query.filter(TelemetryRollupHourly.bucket_ts >= since)
+            if until is not None:
+                rollup_query = rollup_query.filter(TelemetryRollupHourly.bucket_ts <= until)
+            rollup_rows = rollup_query.order_by(desc(TelemetryRollupHourly.bucket_ts)).limit(limit).all()
+            if rollup_rows:
+                return [
+                    TimeseriesPointOut(bucket_ts=r.bucket_ts, value=float(r.value))
+                    for r in reversed(rollup_rows)
+                    if r.value is not None
+                ]
+
         value_text = TelemetryPoint.metrics[metric].astext
         # Avoid runtime errors when the JSON value isn't numeric (bad data / drift).
         numeric_value = case(
@@ -341,6 +362,53 @@ def get_timeseries_multi(
         cols.append(value)
 
     with db_session() as session:
+        if bucket == "hour" and settings.telemetry_rollups_enabled:
+            bucket_q = session.query(TelemetryRollupHourly.bucket_ts).filter(
+                TelemetryRollupHourly.device_id == device_id,
+                TelemetryRollupHourly.metric_key.in_(unique_metrics),
+            )
+            if since is not None:
+                bucket_q = bucket_q.filter(TelemetryRollupHourly.bucket_ts >= since)
+            if until is not None:
+                bucket_q = bucket_q.filter(TelemetryRollupHourly.bucket_ts <= until)
+
+            bucket_rows = (
+                bucket_q.group_by(TelemetryRollupHourly.bucket_ts)
+                .order_by(desc(TelemetryRollupHourly.bucket_ts))
+                .limit(limit)
+                .all()
+            )
+            if bucket_rows:
+                selected_buckets = [r.bucket_ts for r in bucket_rows]
+                rollup_rows = (
+                    session.query(
+                        TelemetryRollupHourly.bucket_ts,
+                        TelemetryRollupHourly.metric_key,
+                        TelemetryRollupHourly.avg_value,
+                    )
+                    .filter(
+                        TelemetryRollupHourly.device_id == device_id,
+                        TelemetryRollupHourly.metric_key.in_(unique_metrics),
+                        TelemetryRollupHourly.bucket_ts.in_(selected_buckets),
+                    )
+                    .all()
+                )
+
+                values_by_bucket: dict[datetime, dict[str, Optional[float]]] = {
+                    b: {m: None for m in unique_metrics} for b in selected_buckets
+                }
+                for bucket_ts, metric_key, avg_value in rollup_rows:
+                    bucket_values = values_by_bucket.get(bucket_ts)
+                    if bucket_values is None:
+                        continue
+                    bucket_values[metric_key] = float(avg_value) if avg_value is not None else None
+
+                ordered_buckets = sorted(selected_buckets)
+                return [
+                    TimeseriesMultiPointOut(bucket_ts=bucket_ts, values=values_by_bucket[bucket_ts])
+                    for bucket_ts in ordered_buckets
+                ]
+
         q = session.query(*cols).filter(TelemetryPoint.device_id == device_id)
         if since is not None:
             q = q.filter(TelemetryPoint.ts >= since)

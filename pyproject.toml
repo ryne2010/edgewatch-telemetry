@@ -1,6 +1,6 @@
 [project]
 name = "edgewatch-telemetry"
-version = "0.14.1"
+version = "0.15.0"
 description = "Local-first edge telemetry platform: device ingestion, buffering, status, alerts, and a small dashboard."
 readme = "README.md"
 requires-python = ">=3.11"

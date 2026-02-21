@@ -106,7 +106,7 @@ Common operational metrics:
   - `last_seen_at` tracks newest observed telemetry timestamp
 - `telemetry_points`
   - append-only time series points
-  - unique by `message_id` to enforce idempotency
+  - idempotency enforced by server-side dedupe key `(device_id, message_id)`
 - `alerts`
   - operational events
   - may be open (`resolved_at is null`) or resolved

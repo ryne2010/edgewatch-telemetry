@@ -101,7 +101,7 @@ Within `api/app/`:
 
 ## Concurrency and performance notes
 
-- Ingest performs per-point upserts (`ON CONFLICT DO NOTHING`).
+- Ingest reserves idempotency keys in `telemetry_ingest_dedupe` (`ON CONFLICT DO NOTHING`), then inserts accepted points.
 - Optional pipeline mode:
   - `INGEST_PIPELINE_MODE=direct` (default): API persists immediately.
   - `INGEST_PIPELINE_MODE=pubsub`: API publishes a batch; internal worker persists asynchronously.

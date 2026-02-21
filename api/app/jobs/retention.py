@@ -4,11 +4,12 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..config import settings
 from ..db import db_session, engine
+from ..services.telemetry_partitions import drop_expired_monthly_partitions
 
 
 logger = logging.getLogger("edgewatch.retention")
@@ -40,14 +41,14 @@ def _delete_cte_batched(*, table: str, ts_column: str, cutoff: datetime, batch_s
     sql = text(
         f"""
 WITH doomed AS (
-  SELECT id FROM {table}
+  SELECT ctid
+  FROM {table}
   WHERE {ts_column} < :cutoff
   ORDER BY {ts_column} ASC
   LIMIT :batch_size
 )
 DELETE FROM {table}
-USING doomed
-WHERE {table}.id = doomed.id
+WHERE ctid IN (SELECT ctid FROM doomed)
         """.strip()
     )
 
@@ -64,6 +65,13 @@ def _delete_simple(*, table: str, ts_column: str, cutoff: datetime) -> int:
     with engine.begin() as conn:
         res = conn.execute(sql, {"cutoff": cutoff})
         return int(res.rowcount or 0)
+
+
+def _table_exists(table: str) -> bool:
+    try:
+        return bool(inspect(engine).has_table(table))
+    except Exception:
+        return False
 
 
 def run_retention() -> None:
@@ -90,6 +98,8 @@ def run_retention() -> None:
                 "quarantine_retention_days": settings.quarantine_retention_days,
                 "batch_size": batch_size,
                 "max_batches": max_batches,
+                "partitioning_enabled": settings.telemetry_partitioning_enabled,
+                "rollups_enabled": settings.telemetry_rollups_enabled,
             }
         },
     )
@@ -103,29 +113,91 @@ def run_retention() -> None:
             qt = session.execute(
                 text("SELECT COUNT(1) FROM quarantined_telemetry WHERE ts < :cutoff"), {"cutoff": q_cutoff}
             ).scalar_one()
+            dedupe = 0
+            rollups = 0
+            if _table_exists("telemetry_ingest_dedupe"):
+                dedupe = int(
+                    session.execute(
+                        text("SELECT COUNT(1) FROM telemetry_ingest_dedupe WHERE point_ts < :cutoff"),
+                        {"cutoff": tel_cutoff},
+                    ).scalar_one()
+                )
+            if _table_exists("telemetry_rollups_hourly"):
+                rollups = int(
+                    session.execute(
+                        text("SELECT COUNT(1) FROM telemetry_rollups_hourly WHERE bucket_ts < :cutoff"),
+                        {"cutoff": tel_cutoff},
+                    ).scalar_one()
+                )
             logger.info(
                 "retention_dry_run_counts",
-                extra={"fields": {"telemetry_points": int(tel), "quarantined_telemetry": int(qt)}},
+                extra={
+                    "fields": {
+                        "telemetry_points": int(tel),
+                        "quarantined_telemetry": int(qt),
+                        "telemetry_ingest_dedupe": int(dedupe),
+                        "telemetry_rollups_hourly": int(rollups),
+                    }
+                },
             )
         return
 
-    deleted_total = {"telemetry_points": 0, "quarantined_telemetry": 0}
+    deleted_total: dict[str, object] = {
+        "telemetry_points": 0,
+        "quarantined_telemetry": 0,
+        "telemetry_ingest_dedupe": 0,
+        "telemetry_rollups_hourly": 0,
+        "telemetry_partitions_dropped": 0,
+    }
 
-    def _run_table(*, table: str, cutoff: datetime) -> int:
+    def _run_table(*, table: str, ts_column: str, cutoff: datetime) -> int:
         deleted = 0
         if dialect == "postgresql":
             for _ in range(max_batches):
-                n = _delete_cte_batched(table=table, ts_column="ts", cutoff=cutoff, batch_size=batch_size)
+                n = _delete_cte_batched(
+                    table=table,
+                    ts_column=ts_column,
+                    cutoff=cutoff,
+                    batch_size=batch_size,
+                )
                 deleted += n
                 if n < batch_size:
                     break
         else:
-            deleted = _delete_simple(table=table, ts_column="ts", cutoff=cutoff)
+            deleted = _delete_simple(table=table, ts_column=ts_column, cutoff=cutoff)
         return deleted
 
     try:
-        deleted_total["telemetry_points"] = _run_table(table="telemetry_points", cutoff=tel_cutoff)
-        deleted_total["quarantined_telemetry"] = _run_table(table="quarantined_telemetry", cutoff=q_cutoff)
+        dropped_partitions: list[str] = []
+        if dialect == "postgresql" and settings.telemetry_partitioning_enabled:
+            dropped_partitions = drop_expired_monthly_partitions(cutoff=tel_cutoff)
+            deleted_total["telemetry_partitions_dropped"] = len(dropped_partitions)
+            if dropped_partitions:
+                deleted_total["telemetry_partitions_dropped_names"] = dropped_partitions
+
+        deleted_total["telemetry_points"] = _run_table(
+            table="telemetry_points",
+            ts_column="ts",
+            cutoff=tel_cutoff,
+        )
+        deleted_total["quarantined_telemetry"] = _run_table(
+            table="quarantined_telemetry",
+            ts_column="ts",
+            cutoff=q_cutoff,
+        )
+
+        if _table_exists("telemetry_ingest_dedupe"):
+            deleted_total["telemetry_ingest_dedupe"] = _run_table(
+                table="telemetry_ingest_dedupe",
+                ts_column="point_ts",
+                cutoff=tel_cutoff,
+            )
+        if _table_exists("telemetry_rollups_hourly"):
+            deleted_total["telemetry_rollups_hourly"] = _run_table(
+                table="telemetry_rollups_hourly",
+                ts_column="bucket_ts",
+                cutoff=tel_cutoff,
+            )
     except SQLAlchemyError:
         logger.exception("retention_failed")
         raise

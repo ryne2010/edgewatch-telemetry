@@ -129,6 +129,7 @@ If you choose Cloud SQL, keep:
 - the smallest instance size that meets your needs
 - low storage
 - reasonable log retention
+- retention + partition manager jobs enabled (drop old telemetry partitions and pre-create future partitions)
 
 ---
 
@@ -149,7 +150,7 @@ This prevents accidental “make prod public” incidents.
 Common next steps:
 - Put operator UX behind IAP (LB + IAP) and keep ingest public
 - Perimeter rate limiting + WAF (Cloud Armor / API Gateway / Cloudflare)
-- Telemetry storage scale path (partitioning + rollups)
+- Tune telemetry partitioning + rollup schedules for fleet volume (Task 17 lane)
 - Pub/Sub buffering + replay/backfill patterns
 - SLOs/burn alerts tuned to fleet size
 - OpenTelemetry traces (optional)
