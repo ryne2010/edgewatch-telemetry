@@ -113,6 +113,25 @@ Notes:
 - On non-Pi hosts (or when `mmcli` is absent), the agent remains runnable.
 - Watchdog checks are observation-only (DNS + HTTP HEAD); they do not restart networking.
 
+## Cost-cap enforcement (Task 13c)
+
+Devices enforce daily UTC caps from `GET /api/v1/device-policy` (`cost_caps`):
+- `max_bytes_per_day`
+- `max_snapshots_per_day`
+- `max_media_uploads_per_day`
+
+Behavior:
+- telemetry switches to heartbeat-only once byte cap is reached
+- scheduled media captures are skipped once snapshot/upload caps are reached
+- audit metrics are emitted in telemetry:
+  - `cost_cap_active`
+  - `bytes_sent_today`
+  - `media_uploads_today`
+  - `snapshots_today`
+
+Durable counters are stored in:
+- `EDGEWATCH_COST_CAP_STATE_PATH` (default: `./edgewatch_cost_caps_<device_id>.json`)
+
 ## Camera snapshots + local ring buffer (MVP)
 
 Enable scheduled photo snapshots with a local disk ring buffer:

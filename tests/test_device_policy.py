@@ -44,6 +44,7 @@ def test_load_edge_policy_v1_has_expected_fields() -> None:
     assert p.version == "v1"
     assert p.reporting.heartbeat_interval_s > 0
     assert p.alert_thresholds.water_pressure_low_psi > 0
+    assert p.cost_caps.max_bytes_per_day > 0
 
 
 def test_device_policy_sets_etag_and_supports_304() -> None:
@@ -58,6 +59,7 @@ def test_device_policy_sets_etag_and_supports_304() -> None:
     assert isinstance(out1, DevicePolicyOut)
     assert out1.device_id == device.device_id
     assert out1.reporting.heartbeat_interval_s == device.heartbeat_interval_s
+    assert out1.cost_caps.max_bytes_per_day > 0
 
     etag = resp1.headers.get("etag") or resp1.headers.get("ETag")
     assert etag

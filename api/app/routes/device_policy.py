@@ -8,7 +8,12 @@ from fastapi.responses import Response as StarletteResponse
 from ..config import settings
 from ..edge_policy import load_edge_policy
 from ..models import Device
-from ..schemas import DevicePolicyOut, EdgePolicyAlertThresholdsOut, EdgePolicyReportingOut
+from ..schemas import (
+    DevicePolicyOut,
+    EdgePolicyAlertThresholdsOut,
+    EdgePolicyCostCapsOut,
+    EdgePolicyReportingOut,
+)
 from ..security import require_device_auth
 
 
@@ -121,5 +126,10 @@ def get_device_policy(
             battery_recover_v=policy.alert_thresholds.battery_recover_v,
             signal_low_rssi_dbm=sig_low,
             signal_recover_rssi_dbm=policy.alert_thresholds.signal_recover_rssi_dbm,
+        ),
+        cost_caps=EdgePolicyCostCapsOut(
+            max_bytes_per_day=policy.cost_caps.max_bytes_per_day,
+            max_snapshots_per_day=policy.cost_caps.max_snapshots_per_day,
+            max_media_uploads_per_day=policy.cost_caps.max_media_uploads_per_day,
         ),
     )

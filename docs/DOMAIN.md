@@ -94,6 +94,10 @@ Common operational metrics:
 - `cellular_bytes_received_today`
 - `link_ok`
 - `link_last_ok_at`
+- `cost_cap_active`
+- `bytes_sent_today`
+- `media_uploads_today`
+- `snapshots_today`
 
 ## Data model overview
 

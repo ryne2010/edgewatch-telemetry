@@ -10,6 +10,25 @@ If your goal is to keep the monthly bill near-zero for a small demo/staging depl
 
 ## Built-in safeguards
 
+### Edge policy cost caps (device-side)
+
+`contracts/edge_policy/v1.yaml` includes:
+
+- `cost_caps.max_bytes_per_day`
+- `cost_caps.max_snapshots_per_day`
+- `cost_caps.max_media_uploads_per_day`
+
+Agent enforcement behavior:
+
+- persists UTC-day counters to `EDGEWATCH_COST_CAP_STATE_PATH` (durable across reboot)
+- switches telemetry to heartbeat-only when byte cap is reached
+- skips scheduled media capture once snapshot/upload caps are reached
+- emits audit telemetry:
+  - `cost_cap_active`
+  - `bytes_sent_today`
+  - `media_uploads_today`
+  - `snapshots_today`
+
 ### Cloud Run guardrails
 - min/max instances are configurable (`min_instances`, `max_instances`)
 - serverless = no always-on VM cost for the app tier

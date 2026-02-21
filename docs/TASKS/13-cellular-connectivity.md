@@ -1,6 +1,6 @@
 # Task 13 (Epic) — LTE data SIM connectivity + cost hygiene
 
-🟡 **Status: Planned (decomposed into smaller Codex tasks)**
+✅ **Status: Implemented (via 13a + 13b + 13c)**
 
 ## Intent
 
@@ -17,7 +17,7 @@ This includes:
 
 1) Docs + bring-up steps → `13a-cellular-runbook.md`
 2) Agent cellular metrics + link watchdog → `13b-agent-cellular-metrics-watchdog.md` (implemented)
-3) Edge policy cost caps + enforcement → `13c-cost-caps-policy.md`
+3) Edge policy cost caps + enforcement → `13c-cost-caps-policy.md` (implemented)
 
 ## Non-goals
 

@@ -8,13 +8,14 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 import requests
 from dotenv import load_dotenv
 
 from buffer import SqliteBuffer
 from cellular import CellularConfigError, build_cellular_monitor_from_env
+from cost_caps import CostCapError, CostCapState
 from device_policy import (
     CachedPolicy,
     DevicePolicy,
@@ -76,6 +77,12 @@ def post_points(
     )
 
 
+def _estimate_ingest_payload_bytes(points: List[Dict[str, Any]]) -> int:
+    payload = {"points": points}
+    blob = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return len(blob.encode("utf-8"))
+
+
 @dataclass
 class AgentState:
     """In-memory agent state.
@@ -94,6 +101,8 @@ class AgentState:
 
     consecutive_failures: int = 0
     next_network_attempt_at: float = 0.0
+    last_cost_cap_active: bool = False
+    last_snapshot_cap_log_at: float = 0.0
 
 
 def _is_number(v: Any) -> bool:
@@ -269,6 +278,7 @@ def _flush_buffer(
     api_url: str,
     token: str,
     max_points_per_batch: int,
+    on_batch_sent: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
 ) -> bool:
     """Flush queued points.
 
@@ -313,6 +323,11 @@ def _flush_buffer(
             ra = _parse_retry_after_seconds(resp.headers)
             raise RateLimited("buffer flush rate limited (429)", retry_after_s=ra)
         if 200 <= resp.status_code < 300:
+            if on_batch_sent is not None:
+                try:
+                    on_batch_sent([m.payload for m in queued])
+                except Exception:
+                    pass
             for m in queued:
                 buf.delete(m.message_id)
             continue
@@ -326,6 +341,11 @@ def _flush_buffer(
                     ra = _parse_retry_after_seconds(r2.headers)
                     raise RateLimited("buffer flush single-message rate limited (429)", retry_after_s=ra)
                 if 200 <= r2.status_code < 300:
+                    if on_batch_sent is not None:
+                        try:
+                            on_batch_sent([m.payload])
+                        except Exception:
+                            pass
                     buf.delete(m.message_id)
                 elif r2.status_code == 422:
                     _deadletter(m.payload, status_code=r2.status_code, body=r2.text)
@@ -343,7 +363,7 @@ def _default_policy(device_id: str) -> DevicePolicy:
 
     # Conservative defaults: low-ish network usage, but still demo-friendly.
     # In production, policy should come from /api/v1/device-policy.
-    from device_policy import AlertThresholds, ReportingPolicy
+    from device_policy import AlertThresholds, CostCaps, ReportingPolicy
 
     reporting = ReportingPolicy(
         sample_interval_s=int(os.getenv("SAMPLE_INTERVAL_S", "30")),
@@ -374,6 +394,12 @@ def _default_policy(device_id: str) -> DevicePolicy:
         signal_recover_rssi_dbm=float(os.getenv("SIGNAL_RECOVER_RSSI_DBM", "-90")),
     )
 
+    cost_caps = CostCaps(
+        max_bytes_per_day=int(os.getenv("MAX_BYTES_PER_DAY", "50000000")),
+        max_snapshots_per_day=int(os.getenv("MAX_SNAPSHOTS_PER_DAY", "48")),
+        max_media_uploads_per_day=int(os.getenv("MAX_MEDIA_UPLOADS_PER_DAY", "48")),
+    )
+
     return DevicePolicy(
         device_id=device_id,
         policy_version="fallback",
@@ -395,6 +421,7 @@ def _default_policy(device_id: str) -> DevicePolicy:
             "signal_rssi_dbm": float(os.getenv("DELTA_SIGNAL_RSSI_DBM", "2")),
         },
         alert_thresholds=alerts,
+        cost_caps=cost_caps,
     )
 
 
@@ -480,8 +507,13 @@ def main() -> None:
     except Exception as exc:
         print(f"[edgewatch-agent] media disabled due to setup error: {exc!r}")
 
+    try:
+        cost_cap_state = CostCapState.from_env(device_id=device_id)
+    except CostCapError as exc:
+        raise SystemExit(f"[edgewatch-agent] invalid cost-cap config: {exc}") from exc
+
     print(
-        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s cellular=%s"
+        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s cellular=%s cost_caps=%s"
         % (
             device_id,
             api_url,
@@ -490,6 +522,7 @@ def main() -> None:
             sensor_config.backend,
             "enabled" if media_runtime is not None else "disabled",
             "enabled" if cellular_monitor is not None else "disabled",
+            cost_cap_state.path,
         )
     )
 
@@ -523,6 +556,24 @@ def main() -> None:
 
         current_state, current_alerts = _compute_state(metrics, state.last_alerts, policy)
         critical_active = "WATER_PRESSURE_LOW" in current_alerts
+        heartbeat_only_mode = cost_cap_state.telemetry_heartbeat_only(policy.cost_caps)
+        cost_cap_active = cost_cap_state.cost_cap_active(policy.cost_caps)
+
+        if cost_cap_active != state.last_cost_cap_active:
+            counters = cost_cap_state.counters()
+            print(
+                "[edgewatch-agent] cost-cap %s bytes=%s/%s snapshots=%s/%s uploads=%s/%s"
+                % (
+                    "active" if cost_cap_active else "cleared",
+                    counters.bytes_sent_today,
+                    policy.cost_caps.max_bytes_per_day,
+                    counters.snapshots_today,
+                    policy.cost_caps.max_snapshots_per_day,
+                    counters.media_uploads_today,
+                    policy.cost_caps.max_media_uploads_per_day,
+                )
+            )
+            state.last_cost_cap_active = cost_cap_active
 
         # Determine sampling interval for the next loop.
         # Only "critical" alerts (water pressure) force faster sampling by default.
@@ -535,39 +586,44 @@ def main() -> None:
         send_reason: Optional[str] = None
         payload_metrics: Dict[str, Any] = {}
 
-        # Bootstrap: send a full snapshot once on startup to establish baseline.
-        if state.last_state == "UNKNOWN" and not state.last_metrics_snapshot:
-            send_reason = "startup"
-            payload_metrics = dict(metrics)
-
-        # Immediate send on alert transitions (including transitions between different alert sets).
-        elif current_alerts != state.last_alerts:
-            send_reason = "state_change" if current_state != state.last_state else "alert_change"
-            payload_metrics = dict(metrics)
-
-        else:
-            # Periodic snapshot while in critical alert state
-            if critical_active and (
-                now - state.last_alert_snapshot_at >= policy.reporting.alert_report_interval_s
-            ):
-                send_reason = "alert_snapshot"
-                payload_metrics = dict(metrics)
-
-            # Heartbeat (only after a period of silence; last_heartbeat_at updates on any record)
-            elif now - state.last_heartbeat_at >= policy.reporting.heartbeat_interval_s:
+        if heartbeat_only_mode:
+            if now - state.last_heartbeat_at >= policy.reporting.heartbeat_interval_s:
                 send_reason = "heartbeat"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
+        else:
+            # Bootstrap: send a full snapshot once on startup to establish baseline.
+            if state.last_state == "UNKNOWN" and not state.last_metrics_snapshot:
+                send_reason = "startup"
+                payload_metrics = dict(metrics)
 
-            # Delta-based send
+            # Immediate send on alert transitions (including transitions between different alert sets).
+            elif current_alerts != state.last_alerts:
+                send_reason = "state_change" if current_state != state.last_state else "alert_change"
+                payload_metrics = dict(metrics)
+
             else:
-                changed = _changed_keys(
-                    current=metrics,
-                    previous=state.last_metrics_snapshot,
-                    thresholds=policy.delta_thresholds,
-                )
-                if changed:
-                    send_reason = "delta"
-                    payload_metrics = {k: metrics[k] for k in changed}
+                # Periodic snapshot while in critical alert state
+                if critical_active and (
+                    now - state.last_alert_snapshot_at >= policy.reporting.alert_report_interval_s
+                ):
+                    send_reason = "alert_snapshot"
+                    payload_metrics = dict(metrics)
+
+                # Heartbeat (only after a period of silence; last_heartbeat_at updates on any record)
+                elif now - state.last_heartbeat_at >= policy.reporting.heartbeat_interval_s:
+                    send_reason = "heartbeat"
+                    payload_metrics = _minimal_heartbeat_metrics(metrics)
+
+                # Delta-based send
+                else:
+                    changed = _changed_keys(
+                        current=metrics,
+                        previous=state.last_metrics_snapshot,
+                        thresholds=policy.delta_thresholds,
+                    )
+                    if changed:
+                        send_reason = "delta"
+                        payload_metrics = {k: metrics[k] for k in changed}
 
         if send_reason:
             # Update local baseline for delta decisions.
@@ -576,6 +632,7 @@ def main() -> None:
             )
 
             payload_metrics["device_state"] = current_state
+            payload_metrics.update(cost_cap_state.audit_metrics(policy.cost_caps))
 
             point = make_point(payload_metrics)
 
@@ -592,19 +649,26 @@ def main() -> None:
                 print(f"[edgewatch-agent] backoff active -> buffered ({send_reason}) queue={buf.count()}")
             else:
                 try:
-                    # Flush buffer first.
-                    ok = _flush_buffer(
-                        session=session,
-                        buf=buf,
-                        api_url=api_url,
-                        token=token,
-                        max_points_per_batch=policy.reporting.max_points_per_batch,
-                    )
-                    if not ok:
-                        raise RuntimeError("buffer flush failed")
+
+                    def _record_sent(points: List[Dict[str, Any]]) -> None:
+                        cost_cap_state.record_bytes_sent(_estimate_ingest_payload_bytes(points))
+
+                    # Flush buffered non-heartbeat points only when not in heartbeat-only mode.
+                    if not heartbeat_only_mode:
+                        ok = _flush_buffer(
+                            session=session,
+                            buf=buf,
+                            api_url=api_url,
+                            token=token,
+                            max_points_per_batch=policy.reporting.max_points_per_batch,
+                            on_batch_sent=_record_sent,
+                        )
+                        if not ok:
+                            raise RuntimeError("buffer flush failed")
 
                     resp = post_points(session, api_url, token, [point])
                     if 200 <= resp.status_code < 300:
+                        _record_sent([point])
                         state.consecutive_failures = 0
                         state.next_network_attempt_at = 0.0
                         print(
@@ -649,17 +713,39 @@ def main() -> None:
 
         if media_runtime is not None:
             try:
-                media_asset = media_runtime.maybe_capture_scheduled(now_s=time.time())
-                if media_asset is not None:
-                    print(
-                        "[edgewatch-agent] media captured camera=%s reason=%s bytes=%s path=%s"
-                        % (
-                            media_asset.metadata.camera_id,
-                            media_asset.metadata.reason,
-                            media_asset.metadata.bytes,
-                            media_asset.asset_path,
+                if cost_cap_state.allow_snapshot_capture(policy.cost_caps):
+                    media_asset = media_runtime.maybe_capture_scheduled(now_s=time.time())
+                    if media_asset is not None:
+                        cost_cap_state.record_snapshot_capture()
+                        counters = cost_cap_state.counters()
+                        print(
+                            "[edgewatch-agent] media captured camera=%s reason=%s bytes=%s path=%s "
+                            "snapshots=%s/%s uploads=%s/%s"
+                            % (
+                                media_asset.metadata.camera_id,
+                                media_asset.metadata.reason,
+                                media_asset.metadata.bytes,
+                                media_asset.asset_path,
+                                counters.snapshots_today,
+                                policy.cost_caps.max_snapshots_per_day,
+                                counters.media_uploads_today,
+                                policy.cost_caps.max_media_uploads_per_day,
+                            )
                         )
-                    )
+                else:
+                    if now - state.last_snapshot_cap_log_at >= 60.0:
+                        counters = cost_cap_state.counters()
+                        print(
+                            "[edgewatch-agent] media capture skipped due to cost caps "
+                            "(snapshots=%s/%s uploads=%s/%s)"
+                            % (
+                                counters.snapshots_today,
+                                policy.cost_caps.max_snapshots_per_day,
+                                counters.media_uploads_today,
+                                policy.cost_caps.max_media_uploads_per_day,
+                            )
+                        )
+                        state.last_snapshot_cap_log_at = now
             except Exception as exc:
                 print(f"[edgewatch-agent] media capture failed: {exc!r}")
 

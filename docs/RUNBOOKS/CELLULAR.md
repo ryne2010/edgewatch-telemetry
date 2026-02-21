@@ -179,6 +179,10 @@ Validate telemetry fields in UI/API:
 - `link_last_ok_at` updates when connectivity succeeds
 - when modem supports them: `cellular_rsrp_dbm`, `cellular_rsrq_db`, `cellular_sinr_db`
 - daily counters increment: `cellular_bytes_sent_today`, `cellular_bytes_received_today`
+- cost-cap audit metrics appear:
+  - `cost_cap_active`
+  - `bytes_sent_today`
+  - `media_uploads_today`
 - local buffer is not continuously growing
 
 ## 7) Common failures (with commands + expected output)

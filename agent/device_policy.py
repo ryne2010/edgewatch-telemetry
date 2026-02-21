@@ -50,6 +50,13 @@ class AlertThresholds:
 
 
 @dataclass(frozen=True)
+class CostCaps:
+    max_bytes_per_day: int
+    max_snapshots_per_day: int
+    max_media_uploads_per_day: int
+
+
+@dataclass(frozen=True)
 class DevicePolicy:
     device_id: str
     policy_version: str
@@ -62,6 +69,7 @@ class DevicePolicy:
     reporting: ReportingPolicy
     delta_thresholds: Dict[str, float]
     alert_thresholds: AlertThresholds
+    cost_caps: CostCaps
 
 
 @dataclass(frozen=True)
@@ -101,6 +109,7 @@ def _require_mapping(obj: Mapping[str, Any], key: str) -> Mapping[str, Any]:
 def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
     reporting_raw = _require_mapping(payload, "reporting")
     alerts_raw = _require_mapping(payload, "alert_thresholds")
+    cost_caps_raw = payload.get("cost_caps")
 
     delta_raw = payload.get("delta_thresholds")
     if not isinstance(delta_raw, Mapping):
@@ -146,6 +155,28 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
         signal_recover_rssi_dbm=_require_float(alerts_raw, "signal_recover_rssi_dbm"),
     )
 
+    if cost_caps_raw is None:
+        # Backward-compatible fallback for older policy payloads.
+        cost_caps = CostCaps(
+            max_bytes_per_day=50_000_000,
+            max_snapshots_per_day=48,
+            max_media_uploads_per_day=48,
+        )
+    else:
+        if not isinstance(cost_caps_raw, Mapping):
+            raise ValueError("'cost_caps' must be a mapping")
+        cost_caps = CostCaps(
+            max_bytes_per_day=_require_int(cost_caps_raw, "max_bytes_per_day"),
+            max_snapshots_per_day=_require_int(cost_caps_raw, "max_snapshots_per_day"),
+            max_media_uploads_per_day=_require_int(cost_caps_raw, "max_media_uploads_per_day"),
+        )
+    if cost_caps.max_bytes_per_day <= 0:
+        raise ValueError("'cost_caps.max_bytes_per_day' must be > 0")
+    if cost_caps.max_snapshots_per_day <= 0:
+        raise ValueError("'cost_caps.max_snapshots_per_day' must be > 0")
+    if cost_caps.max_media_uploads_per_day <= 0:
+        raise ValueError("'cost_caps.max_media_uploads_per_day' must be > 0")
+
     return DevicePolicy(
         device_id=str(payload.get("device_id") or ""),
         policy_version=str(payload.get("policy_version") or ""),
@@ -156,6 +187,7 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
         reporting=reporting,
         delta_thresholds=delta,
         alert_thresholds=alerts,
+        cost_caps=cost_caps,
     )
 
 
@@ -234,6 +266,11 @@ def save_cached_policy(policy: DevicePolicy, etag: str, *, path: Optional[Path] 
                 "battery_recover_v": policy.alert_thresholds.battery_recover_v,
                 "signal_low_rssi_dbm": policy.alert_thresholds.signal_low_rssi_dbm,
                 "signal_recover_rssi_dbm": policy.alert_thresholds.signal_recover_rssi_dbm,
+            },
+            "cost_caps": {
+                "max_bytes_per_day": policy.cost_caps.max_bytes_per_day,
+                "max_snapshots_per_day": policy.cost_caps.max_snapshots_per_day,
+                "max_media_uploads_per_day": policy.cost_caps.max_media_uploads_per_day,
             },
         },
     }

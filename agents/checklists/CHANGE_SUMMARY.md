@@ -709,7 +709,7 @@
 
 ### Follow-ups / tech debt
 
-- [ ] Task 13c: enforce policy-driven cellular cost caps for media + telemetry.
+- [ ] Task 13c: enforce policy-driven cellular cost caps for media + telemetry. (completed in next section)
 
 ## Task 13b — Agent Cellular Metrics + Link Watchdog (2026-02-21)
 
@@ -772,4 +772,74 @@
 
 ### Follow-ups / tech debt
 
-- [ ] Task 13c: enforce edge policy cost caps (bytes/day, media/day) and audit events.
+- [ ] Validate full end-to-end media upload counters once device-side upload lane is implemented.
+
+## Task 13c — Cost Caps in Edge Policy (2026-02-21)
+
+### What changed
+
+- Extended edge policy contract with `cost_caps`:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/edge_policy/v1.yaml`
+  - new fields:
+    - `max_bytes_per_day`
+    - `max_snapshots_per_day`
+    - `max_media_uploads_per_day`
+- Wired `cost_caps` through API policy loaders and response schemas:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/edge_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/contracts.py`
+- Extended agent policy parsing/cache with cost caps:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/device_policy.py`
+- Added durable cost-cap counter module:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/cost_caps.py`
+  - persists UTC-day counters across restart:
+    - bytes sent
+    - snapshots captured
+    - media upload units
+- Integrated enforcement into agent runtime:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - behavior:
+    - heartbeat-only telemetry mode once `max_bytes_per_day` is reached
+    - skip scheduled media capture when snapshot/upload caps are reached
+    - telemetry/log audit metrics:
+      - `cost_cap_active`
+      - `bytes_sent_today`
+      - `media_uploads_today`
+      - `snapshots_today`
+  - fallback policy now includes cost-cap env defaults when policy fetch is unavailable.
+- Added deterministic tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_cost_caps.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_device_policy.py`
+  - updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_policy.py`
+- Updated telemetry contract discoverability/docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/COST_HYGIENE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CELLULAR.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md`
+- Updated task status tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/13c-cost-caps-policy.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/13-cellular-connectivity.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 13c by making cellular consumption predictable via policy-driven, durable daily caps with explicit audit visibility.
+
+### How it was validated
+
+- `make harness` ✅
+- Focused test lanes:
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: uv run --locked pytest -q tests/test_agent_cost_caps.py tests/test_agent_device_policy.py tests/test_device_policy.py` ✅
+
+### Risks / rollout notes
+
+- Current media pipeline captures locally (Task 12a); to stay conservative, each scheduled capture currently increments the media upload unit counter.
+- Byte counters are agent-accounted payload estimates (telemetry JSON body size), not carrier-billed octets.
+
+### Follow-ups / tech debt
+
+- [ ] When device-side media upload lane is enabled, wire upload-complete callbacks to increment media upload counters on actual upload success.
