@@ -202,9 +202,11 @@
   - `make doctor-dev` (pass)
   - `make harness` (fails on pre-existing repo-wide issues unrelated to Task 11a; see risks)
 - Task-focused validation:
-  - `python scripts/harness.py lint --only python`
-  - `python scripts/harness.py typecheck --only python`
-  - `DATABASE_URL=sqlite+pysqlite:///:memory: uv run --locked pytest tests/test_sensor_framework.py`
+  - `python scripts/harness.py lint --only python` (blocked by existing `uv.lock` drift when harness enforces `uv run --locked`)
+  - `make test` (same `uv run --locked` lockfile block)
+  - `ruff check agent/edgewatch_agent.py agent/sensors tests/test_sensor_framework.py` (pass)
+  - `pyright agent/edgewatch_agent.py agent/sensors tests/test_sensor_framework.py` (pass)
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: pytest -q tests/test_sensor_framework.py` (pass)
   - `make harness` (rerun after changes; still blocked by existing unrelated failures)
 
 ### Risks / rollout notes
