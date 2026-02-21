@@ -84,4 +84,3 @@ ENV=stage make retention-gcp
 
 - On Cloud SQL Postgres, large deletes can leave bloat. Consider periodic `VACUUM (ANALYZE)` and/or partitioning once the telemetry volume is high.
 - For larger fleets and high-frequency sampling, consider **time-based partitioning** for `telemetry_points`.
-

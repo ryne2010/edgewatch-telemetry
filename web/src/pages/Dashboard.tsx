@@ -4,7 +4,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { Link } from '@tanstack/react-router'
 import { api, type AlertOut, type DeviceSummaryOut } from '../api'
 import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page } from '../ui-kit'
-import { fmtDateTime, timeAgo } from '../utils/format'
+import { fmtAlertType, fmtDateTime, timeAgo } from '../utils/format'
 
 function statusVariant(status: DeviceSummaryOut['status']): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'

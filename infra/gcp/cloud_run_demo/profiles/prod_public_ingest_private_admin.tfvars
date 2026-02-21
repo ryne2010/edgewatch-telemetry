@@ -8,11 +8,11 @@ service_name = "edgewatch-prod"
 
 # Public ingest service
 # Harden the public surface: no UI, no read endpoints
-enable_ui         = false
-enable_read_routes = false
-enable_ingest_routes = true
-allow_unauthenticated     = true
-allow_public_in_non_dev   = true
+enable_ui               = false
+enable_read_routes      = false
+enable_ingest_routes    = true
+allow_unauthenticated   = true
+allow_public_in_non_dev = true
 
 # Remove admin endpoints from the public surface
 enable_admin_routes = false

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
-
-import re
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func
@@ -16,7 +15,7 @@ from ..services.monitor import compute_status
 router = APIRouter(prefix="/api/v1", tags=["devices"])
 
 
-METRIC_KEY_RE = re.compile(r'^[A-Za-z0-9_]{1,64}$')
+METRIC_KEY_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
 
 DEFAULT_SUMMARY_METRICS: list[str] = [
@@ -57,7 +56,7 @@ def list_devices() -> List[DeviceOut]:
         devices = session.query(Device).order_by(Device.device_id.asc()).all()
         out: List[DeviceOut] = []
         for d in devices:
-            status, seconds = compute_status(d, now)
+            device_status, seconds = compute_status(d, now)
             out.append(
                 DeviceOut(
                     device_id=d.device_id,
@@ -66,7 +65,7 @@ def list_devices() -> List[DeviceOut]:
                     offline_after_s=d.offline_after_s,
                     last_seen_at=d.last_seen_at,
                     enabled=d.enabled,
-                    status=status,
+                    status=device_status,
                     seconds_since_last_seen=seconds,
                 )
             )
@@ -94,7 +93,7 @@ def list_device_summaries(
 
     requested: List[str]
     if metrics:
-        requested = [m.strip() for m in metrics if (m or '').strip()]
+        requested = [m.strip() for m in metrics if (m or "").strip()]
     else:
         requested = list(DEFAULT_SUMMARY_METRICS)
 
@@ -108,19 +107,23 @@ def list_device_summaries(
     # De-dupe while preserving order.
     seen: set[str] = set()
     unique_metrics: List[str] = []
-    for m in requested:
-        if m in seen:
+    for metric_name in requested:
+        if metric_name in seen:
             continue
-        if not METRIC_KEY_RE.fullmatch(m):
+        if not METRIC_KEY_RE.fullmatch(metric_name):
             continue
-        seen.add(m)
-        unique_metrics.append(m)
+        seen.add(metric_name)
+        unique_metrics.append(metric_name)
 
     now = datetime.now(timezone.utc)
 
     with db_session() as session:
         tp = TelemetryPoint
-        rn = func.row_number().over(partition_by=tp.device_id, order_by=(tp.ts.desc(), tp.created_at.desc())).label("rn")
+        rn = (
+            func.row_number()
+            .over(partition_by=tp.device_id, order_by=(tp.ts.desc(), tp.created_at.desc()))
+            .label("rn")
+        )
         ranked = (
             session.query(
                 tp.device_id.label("device_id"),
@@ -142,10 +145,10 @@ def list_device_summaries(
 
         out: List[DeviceSummaryOut] = []
         for d, ts, message_id, metrics_obj in rows:
-            status, seconds = compute_status(d, now)
+            device_status, seconds = compute_status(d, now)
 
-            m: dict = metrics_obj if isinstance(metrics_obj, dict) else {}
-            summary_metrics = {k: m.get(k) for k in unique_metrics}
+            metrics_map: dict[str, object] = metrics_obj if isinstance(metrics_obj, dict) else {}
+            summary_metrics = {k: metrics_map.get(k) for k in unique_metrics}
 
             out.append(
                 DeviceSummaryOut(
@@ -155,7 +158,7 @@ def list_device_summaries(
                     offline_after_s=d.offline_after_s,
                     last_seen_at=d.last_seen_at,
                     enabled=d.enabled,
-                    status=status,
+                    status=device_status,
                     seconds_since_last_seen=seconds,
                     latest_telemetry_at=ts,
                     latest_message_id=message_id,
@@ -174,7 +177,7 @@ def get_device(device_id: str) -> DeviceOut:
         if d is None:
             raise HTTPException(status_code=404, detail="Device not found")
 
-        status, seconds = compute_status(d, now)
+        device_status, seconds = compute_status(d, now)
         return DeviceOut(
             device_id=d.device_id,
             display_name=d.display_name,
@@ -182,7 +185,7 @@ def get_device(device_id: str) -> DeviceOut:
             offline_after_s=d.offline_after_s,
             last_seen_at=d.last_seen_at,
             enabled=d.enabled,
-            status=status,
+            status=device_status,
             seconds_since_last_seen=seconds,
         )
 

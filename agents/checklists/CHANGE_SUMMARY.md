@@ -558,3 +558,56 @@
 
 - [ ] Task 12c: implement dashboard media gallery against the new `/api/v1/media` endpoints.
 - [ ] Add route-level integration tests for media endpoints (auth matrix + response envelopes) once baseline main-route test lane is stabilized.
+
+## Task 12b — CI Harness Stabilization Follow-up (2026-02-21)
+
+### What changed
+
+- Fixed repo-wide Python issues that blocked `harness` in CI:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/main.py`
+    - added missing `os` import used for OTEL service name
+    - tightened exception payload typing to satisfy pyright
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/devices.py`
+    - fixed `status` unbound bug by avoiding local variable shadowing
+    - corrected metric filtering typing issues
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/middleware/limits.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/rate_limit.py`
+    - moved module docstrings ahead of imports to satisfy `ruff` E402
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/scripts/package_dist.py`
+    - removed import-order violation by loading `api/app/version.py` via `importlib` instead of path mutation + late import
+- Fixed CI environment gap for Terraform hook:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/.github/workflows/ci.yml`
+  - added `hashicorp/setup-terraform@v3` (`1.14.5`) before running `python scripts/harness.py all --strict`
+- Fixed Node typecheck blockers reached once Python/Terraform gates were green:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx` (severity type narrowing)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx` (missing `fmtAlertType` import)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/package.json` + `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pnpm-lock.yaml` (added `lucide-react`)
+- Included repository-wide formatting drift fixes produced by pre-commit/terraform fmt (docs, infra tf/tfvars, and Python formatting-only files) so CI no longer auto-modifies files and fails.
+
+### Why it changed
+
+- Task 12b PR could not merge because required `harness` check was red from baseline repository issues unrelated to the media feature itself.
+- This follow-up makes the PR mergeable and restores deterministic CI behavior for the repo gate.
+
+### How it was validated
+
+- `uv run --locked pre-commit run --all-files` ✅
+- `pnpm -r --if-present typecheck` ✅
+- `make harness` ✅
+  - includes:
+    - pre-commit hooks
+    - `ruff` format/check
+    - `pyright`
+    - `pytest` (77 passed)
+    - `terraform fmt` under `infra/gcp`
+    - web build/type lanes
+
+### Risks / rollout notes
+
+- This follow-up includes broad formatting-only churn in infra/docs files due existing drift; no functional Terraform behavior changes were introduced by `terraform fmt`.
+- CI now depends on an explicit Terraform install step in the harness workflow, aligned with the other Terraform workflows in this repo.
+
+### Follow-ups / tech debt
+
+- [ ] Consider splitting harness into language/tool lanes if future failures in one ecosystem should not block unrelated task PRs.
+- [ ] Consider pin-refresh for `pre-commit` hooks (`pre-commit-hooks` deprecation warning about legacy stages) in a dedicated maintenance PR.

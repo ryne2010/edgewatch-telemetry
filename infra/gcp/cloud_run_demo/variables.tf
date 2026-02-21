@@ -619,7 +619,7 @@ variable "bootstrap_demo_device" {
 
 variable "allow_demo_in_non_dev" {
   type        = bool
-  description = "Guardrail override: allow demo fleet bootstrap in stage/prod. Only set this to true for non-production staging environments." 
+  description = "Guardrail override: allow demo fleet bootstrap in stage/prod. Only set this to true for non-production staging environments."
   default     = false
 }
 

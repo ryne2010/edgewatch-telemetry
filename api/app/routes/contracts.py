@@ -17,7 +17,11 @@ from ..schemas import (
 router = APIRouter(prefix="/api/v1", tags=["contracts"])
 
 
-@router.get("/contracts/telemetry", response_model=TelemetryContractOut, responses={304: {"description": "Not Modified"}})
+@router.get(
+    "/contracts/telemetry",
+    response_model=TelemetryContractOut,
+    responses={304: {"description": "Not Modified"}},
+)
 def get_telemetry_contract(request: Request, response: Response) -> TelemetryContractOut | StarletteResponse:
     """Return the active telemetry contract.
 
@@ -42,12 +46,12 @@ def get_telemetry_contract(request: Request, response: Response) -> TelemetryCon
             headers={
                 "ETag": etag,
                 # Telemetry contracts change rarely; cache aggressively.
-                "Cache-Control": 'max-age=3600',
+                "Cache-Control": "max-age=3600",
             },
         )
 
     response.headers["ETag"] = etag
-    response.headers["Cache-Control"] = 'max-age=3600'
+    response.headers["Cache-Control"] = "max-age=3600"
 
     return TelemetryContractOut(
         version=c.version,
@@ -59,8 +63,14 @@ def get_telemetry_contract(request: Request, response: Response) -> TelemetryCon
     )
 
 
-@router.get("/contracts/edge_policy", response_model=EdgePolicyContractOut, responses={304: {"description": "Not Modified"}})
-def get_edge_policy_contract(request: Request, response: Response) -> EdgePolicyContractOut | StarletteResponse:
+@router.get(
+    "/contracts/edge_policy",
+    response_model=EdgePolicyContractOut,
+    responses={304: {"description": "Not Modified"}},
+)
+def get_edge_policy_contract(
+    request: Request, response: Response
+) -> EdgePolicyContractOut | StarletteResponse:
     """Return the active edge policy contract.
 
     This is intentionally public (no secrets):
@@ -83,12 +93,12 @@ def get_edge_policy_contract(request: Request, response: Response) -> EdgePolicy
             status_code=status.HTTP_304_NOT_MODIFIED,
             headers={
                 "ETag": etag,
-                "Cache-Control": f'max-age={p.cache_max_age_s}',
+                "Cache-Control": f"max-age={p.cache_max_age_s}",
             },
         )
 
     response.headers["ETag"] = etag
-    response.headers["Cache-Control"] = f'max-age={p.cache_max_age_s}'
+    response.headers["Cache-Control"] = f"max-age={p.cache_max_age_s}"
 
     return EdgePolicyContractOut(
         policy_version=p.version,
@@ -123,4 +133,3 @@ def get_edge_policy_contract(request: Request, response: Response) -> EdgePolicy
             signal_recover_rssi_dbm=p.alert_thresholds.signal_recover_rssi_dbm,
         ),
     )
-

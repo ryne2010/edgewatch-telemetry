@@ -70,4 +70,3 @@ export function fmtAlertType(value: string | null | undefined): string {
     })
     .join(' ')
 }
-

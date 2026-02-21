@@ -13,15 +13,15 @@ locals {
 
   # Base env vars (safe for Cloud Run)
   base_env_vars = {
-    APP_ENV    = var.env
-    LOG_LEVEL  = "INFO"
-    LOG_FORMAT = "json"
+    APP_ENV        = var.env
+    LOG_LEVEL      = "INFO"
+    LOG_FORMAT     = "json"
     GCP_PROJECT_ID = var.project_id
 
     # Safety limits (defense in depth)
-    MAX_REQUEST_BODY_BYTES = tostring(var.max_request_body_bytes)
-    MAX_POINTS_PER_REQUEST = tostring(var.max_points_per_request)
-    RATE_LIMIT_ENABLED = var.rate_limit_enabled ? "true" : "false"
+    MAX_REQUEST_BODY_BYTES           = tostring(var.max_request_body_bytes)
+    MAX_POINTS_PER_REQUEST           = tostring(var.max_points_per_request)
+    RATE_LIMIT_ENABLED               = var.rate_limit_enabled ? "true" : "false"
     INGEST_RATE_LIMIT_POINTS_PER_MIN = tostring(var.ingest_rate_limit_points_per_min)
 
     # Admin surface toggles (see docs/PRODUCTION_POSTURE.md)
@@ -29,7 +29,7 @@ locals {
     ADMIN_AUTH_MODE     = var.admin_auth_mode
 
     # Route surface toggles (see docs/PRODUCTION_POSTURE.md)
-    ENABLE_UI           = var.enable_ui ? "true" : "false"
+    ENABLE_UI            = var.enable_ui ? "true" : "false"
     ENABLE_INGEST_ROUTES = var.enable_ingest_routes ? "true" : "false"
     ENABLE_READ_ROUTES   = var.enable_read_routes ? "true" : "false"
 
@@ -85,9 +85,9 @@ locals {
   # Only the *primary* service gets demo + CORS vars.
   # Jobs should stay minimal and must not inherit demo tokens.
   # Secondary services (dashboard/admin) explicitly disable demo bootstrap.
-  primary_service_env_vars = merge(local.base_env_vars, local.demo_env_vars, local.cors_env_vars)
+  primary_service_env_vars   = merge(local.base_env_vars, local.demo_env_vars, local.cors_env_vars)
   secondary_service_env_vars = merge(local.base_env_vars, local.cors_env_vars)
-  job_env_vars              = local.base_env_vars
+  job_env_vars               = local.base_env_vars
 
   cloud_sql_instances = var.enable_cloud_sql ? [module.cloud_sql_postgres[0].connection_name] : []
 
@@ -282,8 +282,8 @@ module "cloud_run_admin" {
     ADMIN_AUTH_MODE     = var.admin_service_admin_auth_mode
 
     # Admin UI should be reachable on this service
-    ENABLE_UI           = "true"
-    ENABLE_READ_ROUTES  = "true"
+    ENABLE_UI            = "true"
+    ENABLE_READ_ROUTES   = "true"
     ENABLE_INGEST_ROUTES = "false"
 
     # Avoid demo-token env propagation in secondary services
@@ -342,4 +342,3 @@ module "cloud_run_dashboard" {
 
   depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
 }
-

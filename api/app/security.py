@@ -88,7 +88,11 @@ def require_admin(x_admin_key: str | None = Header(default=None, alias="X-Admin-
         return
 
     # Default: shared admin key (local/dev).
-    if not x_admin_key or not settings.admin_api_key or not hmac.compare_digest(x_admin_key, settings.admin_api_key):
+    if (
+        not x_admin_key
+        or not settings.admin_api_key
+        or not hmac.compare_digest(x_admin_key, settings.admin_api_key)
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin key")
 
 

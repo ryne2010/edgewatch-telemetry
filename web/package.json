@@ -23,6 +23,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
     "tailwind-merge": "^2.5.4",
+    "lucide-react": "^0.515.0",
     "@tanstack/react-form": "^0.41.4"
   },
   "devDependencies": {

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request
@@ -150,13 +152,15 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
                     return FileResponse(index_path)
 
         # Preserve explicit error envelopes when callers supply them.
+        payload: dict[str, Any]
         if isinstance(exc.detail, dict) and "error" in exc.detail:
             payload = exc.detail
         else:
             payload = {"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}}
 
-        if isinstance(payload.get("error"), dict):
-            payload["error"].setdefault("request_id", rid)
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            error_obj.setdefault("request_id", rid)
 
         headers = dict(exc.headers or {})
         headers.setdefault("X-Request-ID", rid)

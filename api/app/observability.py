@@ -168,7 +168,7 @@ def _http_request_payload(request: Request, *, status: int, duration_ms: int) ->
         "requestMethod": request.method,
         "requestUrl": request.url.path,
         "status": status,
-        "latency": f"{duration_ms/1000:.3f}s",
+        "latency": f"{duration_ms / 1000:.3f}s",
     }
     if client_ip:
         payload["remoteIp"] = client_ip
@@ -297,7 +297,9 @@ def configure_logging(*, level: int, log_format: str, gcp_project_id: str | None
     handler = logging.StreamHandler()
     handler.addFilter(ContextFilter())
     if log_format.strip().lower() == "json":
-        handler.setFormatter(JsonFormatter(JsonLogConfig(gcp_project_id=_detect_gcp_project_id(gcp_project_id))))
+        handler.setFormatter(
+            JsonFormatter(JsonLogConfig(gcp_project_id=_detect_gcp_project_id(gcp_project_id)))
+        )
     else:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s - %(message)s"))
 
@@ -309,7 +311,9 @@ def configure_logging(*, level: int, log_format: str, gcp_project_id: str | None
 # -----------------------------
 
 
-def maybe_instrument_opentelemetry(*, enabled: bool, app, service_name: str, service_version: str, environment: str) -> None:
+def maybe_instrument_opentelemetry(
+    *, enabled: bool, app, service_name: str, service_version: str, environment: str
+) -> None:
     """Optionally instrument FastAPI with OpenTelemetry.
 
     This is **best-effort** and must never prevent the API from starting.
