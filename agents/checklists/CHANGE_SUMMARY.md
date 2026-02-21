@@ -882,4 +882,44 @@
 
 ### Follow-ups / tech debt
 
-- [ ] Complete remaining Task 14 work for device-detail and alerts timeline/audit UX enhancements.
+- [ ] Complete remaining Task 14 work for Device Detail oil-life gauge UX enhancement.
+
+## Task 14 (Iteration) — Alerts Timeline + Routing Audit (2026-02-21)
+
+### What changed
+
+- Upgraded the Alerts page to include timeline grouping and expanded filtering:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+  - added filters for:
+    - device id
+    - alert type
+    - severity
+    - open/resolved
+  - added timeline grouping by day with per-severity counts and recent-row previews.
+- Added routing decision audit visibility on Alerts:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+  - consumes admin notifications when admin routes/auth are available
+  - shows dedupe/throttle/quiet-hours decision badges and reasons per alert
+  - added a routing audit summary card with decision counts for currently shown alerts.
+- Updated docs/task tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/14-ui-ux-polish.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+
+### Why it changed
+
+- Completes the remaining Alerts slice in Task 14 so operators can quickly scan incident windows and verify notification routing behavior without leaving the dashboard.
+
+### How it was validated
+
+- `pnpm -C web typecheck` ✅
+- `pnpm -r --if-present build` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Routing audit visibility depends on admin notification endpoints; when admin routes are disabled (or key auth is required but not configured), the UI intentionally degrades to explanatory empty states.
+- Alerts timeline is built from loaded pages in the current client view; broad historical analysis still requires loading additional pages.
+
+### Follow-ups / tech debt
+
+- [ ] Add a dedicated oil-life gauge to Device Detail to finish the remaining non-IAP Task 14 UX item.
