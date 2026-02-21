@@ -9,14 +9,18 @@ from typing import Any, Mapping
 import yaml
 
 from .base import SafeSensorBackend, SensorBackend
-from .backends import CompositeSensorBackend, MockSensorBackend, PlaceholderSensorBackend
+from .backends import (
+    CompositeSensorBackend,
+    MockSensorBackend,
+    PlaceholderSensorBackend,
+    RpiI2CSensorBackend,
+)
 
 _VALID_BACKENDS = {"mock", "rpi_i2c", "rpi_adc", "derived", "composite"}
 _METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ALLOWED_UNITS = {"pct", "psi", "c", "v", "dbm", "gpm", "bool"}
 
 _PLACEHOLDER_KEYS: dict[str, frozenset[str]] = {
-    "rpi_i2c": frozenset({"temperature_c", "humidity_pct"}),
     "rpi_adc": frozenset(
         {
             "water_pressure_psi",
@@ -123,6 +127,9 @@ def build_sensor_backend(*, device_id: str, config: SensorConfig) -> SensorBacke
 def _build_backend(*, device_id: str, config: SensorConfig) -> SensorBackend:
     if config.backend == "mock":
         return MockSensorBackend(device_id=device_id)
+
+    if config.backend == "rpi_i2c":
+        return _build_rpi_i2c_backend(config=config)
 
     if config.backend == "composite":
         children = [_build_backend(device_id=device_id, config=child) for child in config.backends]
@@ -250,3 +257,78 @@ def _as_float(value: Any, *, message: str) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     raise SensorConfigError(message)
+
+
+def _build_rpi_i2c_backend(*, config: SensorConfig) -> RpiI2CSensorBackend:
+    i2c_config = _mapping_value(config.backend_settings.get("rpi_i2c"))
+
+    sensor = _as_string(
+        config.backend_settings.get("sensor", i2c_config.get("sensor", "bme280")),
+        message="rpi_i2c sensor must be a string",
+    ).strip()
+
+    bus_number = _as_int(
+        config.backend_settings.get("bus", i2c_config.get("bus", 1)),
+        message="rpi_i2c bus must be an integer",
+    )
+    if bus_number < 0:
+        raise SensorConfigError("rpi_i2c bus must be >= 0")
+
+    address = _parse_i2c_address(config.backend_settings.get("address", i2c_config.get("address", 0x76)))
+
+    warning_interval_s = _as_float(
+        config.backend_settings.get(
+            "warning_interval_s",
+            i2c_config.get("warning_interval_s", 300.0),
+        ),
+        message="rpi_i2c warning_interval_s must be numeric",
+    )
+    if warning_interval_s < 0:
+        raise SensorConfigError("rpi_i2c warning_interval_s must be >= 0")
+
+    return RpiI2CSensorBackend(
+        sensor=sensor,
+        bus_number=bus_number,
+        address=address,
+        warning_interval_s=warning_interval_s,
+    )
+
+
+def _parse_i2c_address(value: Any) -> int:
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str):
+        raw = value.strip().lower()
+        try:
+            if raw.startswith("0x"):
+                parsed = int(raw, 16)
+            else:
+                parsed = int(raw, 10)
+        except ValueError as exc:
+            raise SensorConfigError("rpi_i2c address must be an integer or hex string") from exc
+    else:
+        raise SensorConfigError("rpi_i2c address must be an integer or hex string")
+
+    if parsed < 0 or parsed > 0x7F:
+        raise SensorConfigError("rpi_i2c address must be between 0x00 and 0x7f")
+    return parsed
+
+
+def _as_int(value: Any, *, message: str) -> int:
+    if isinstance(value, bool):
+        raise SensorConfigError(message)
+    if isinstance(value, int):
+        return value
+    raise SensorConfigError(message)
+
+
+def _as_string(value: Any, *, message: str) -> str:
+    if isinstance(value, str):
+        return value
+    raise SensorConfigError(message)
+
+
+def _mapping_value(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    return {}

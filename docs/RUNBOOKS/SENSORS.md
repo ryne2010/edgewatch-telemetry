@@ -20,21 +20,52 @@ Scope (planned/target):
 ## 2) Enable and validate I2C
 
 1. Enable I2C in raspi-config (or via config file).
-2. Install I2C tools (package name varies by distro).
-3. Scan the bus (typical bus is `1` on modern Pi boards):
+2. Install I2C tooling and Python runtime:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y i2c-tools python3-pip
+pip install smbus2
+```
+
+3. Wire BME280 (3.3V only):
+   - Pi pin 1 (3V3) -> BME280 VIN
+   - Pi pin 6 (GND) -> BME280 GND
+   - Pi pin 3 (GPIO2/SDA) -> BME280 SDA
+   - Pi pin 5 (GPIO3/SCL) -> BME280 SCL
+4. Scan the bus (typical bus is `1` on modern Pi boards):
 
 ```bash
 i2cdetect -y 1
 ```
 
 Expected:
-- BME280/SHT31 should appear at an address (varies by model)
+- BME280 should appear at `0x76` or `0x77` (strap dependent)
 - ADS1115 should appear (commonly 0x48 by default)
 
 If nothing shows up:
 - confirm SDA/SCL wiring
 - confirm pull-ups
 - confirm the sensor is powered (3.3V)
+
+### BME280 backend sanity check
+
+Run the agent with the I2C backend and verify `temperature_c` and `humidity_pct` are present in telemetry:
+
+```bash
+SENSOR_BACKEND=rpi_i2c uv run python agent/edgewatch_agent.py
+```
+
+Optional explicit YAML:
+
+```yaml
+backend: rpi_i2c
+rpi_i2c:
+  sensor: bme280
+  bus: 1
+  address: 0x76
+  warning_interval_s: 300
+```
 
 ## 3) Validate analog channels (ADS1115)
 

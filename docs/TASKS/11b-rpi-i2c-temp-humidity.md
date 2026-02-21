@@ -1,6 +1,6 @@
 # Task 11b — Raspberry Pi I2C: temperature + humidity
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 

@@ -66,9 +66,16 @@ Supported backend names in this stage:
 
 - `mock`
 - `composite`
-- `rpi_i2c` (placeholder, emits `None` metrics until Task 11b lands)
+- `rpi_i2c` (BME280 temperature + humidity via I2C; requires `smbus2` on Pi)
 - `rpi_adc` (placeholder, emits `None` metrics until Task 11c lands)
 - `derived` (placeholder, emits `None` metrics until Task 11d lands)
+
+For Raspberry Pi I2C:
+
+```bash
+pip install smbus2
+SENSOR_BACKEND=rpi_i2c uv run python agent/edgewatch_agent.py
+```
 
 ## Simulator
 
