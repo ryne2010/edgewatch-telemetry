@@ -46,7 +46,8 @@ TFVARS ?=
 ifeq ($(strip $(TFVARS)),)
 TFVARS_ARG :=
 else
-TFVARS_ARG := -var-file="$(TFVARS)"
+TFVARS_PATH := $(patsubst $(TF_DIR)/%,%,$(TFVARS))
+TFVARS_ARG := -var-file="$(TFVARS_PATH)"
 endif
 
 TF_STATE_BUCKET ?= $(PROJECT_ID)-tfstate

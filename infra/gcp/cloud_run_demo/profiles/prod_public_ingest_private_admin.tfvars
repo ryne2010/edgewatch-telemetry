@@ -14,6 +14,16 @@ enable_ingest_routes    = true
 allow_unauthenticated   = true
 allow_public_in_non_dev = true
 
+# Optional: Cloud Armor edge protection in front of public ingest.
+# enable_ingest_edge_protection = true
+# ingest_edge_domain            = "ingest.example.com"
+# ingest_edge_rate_limit_count  = 1200
+# ingest_edge_rate_limit_interval_sec = 60
+# ingest_edge_rate_limit_enforce_on_key = "IP"
+# ingest_edge_allowlist_cidrs = [
+#   "203.0.113.0/24",
+# ]
+
 # Remove admin endpoints from the public surface
 enable_admin_routes = false
 

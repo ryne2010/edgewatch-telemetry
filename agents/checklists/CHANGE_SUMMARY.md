@@ -1264,3 +1264,71 @@
 ### Follow-ups / tech debt
 
 - [ ] Consider exporting buffer metrics as dedicated local health endpoints in addition to telemetry payload embedding.
+
+## Task 20 — Edge Protection for Public Ingest (2026-02-21)
+
+### What changed
+
+- Added optional Cloud Armor edge protection for public ingest in Terraform:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/edge_protection.tf`
+  - provisions HTTPS LB + Cloud Armor security policy for the primary ingest service
+  - includes edge throttling independent of app logic
+  - supports optional trusted CIDR allowlist bypass and preview mode
+- Added Terraform inputs/validations:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/variables.tf`
+  - `enable_ingest_edge_protection`, `ingest_edge_domain`, rate-limit tuning vars, allowlist vars
+- Added Terraform outputs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/outputs.tf`
+  - `ingest_edge_url`, `ingest_edge_security_policy_name`
+- Fixed Terraform profile var-file handling for `-chdir` workflows:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile`
+  - `TFVARS_ARG` now normalizes `infra/gcp/cloud_run_demo/...` paths to chdir-relative paths.
+- Updated profile/docs guidance:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_admin.tfvars`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_dashboard_private_admin.tfvars`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_admin.tfvars`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_dashboard_private_admin.tfvars`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_GCP.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/security.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/PRODUCTION_POSTURE.md`
+- Added runbook:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/EDGE_PROTECTION.md`
+- Updated task status/queue:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/20-edge-protection-cloud-armor.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CODEX_HANDOFF.md`
+
+### Why it changed
+
+- Task 20 requires perimeter throttling for internet-exposed ingest so abuse/cost incidents are mitigated before requests hit app code.
+- This preserves current least-privilege multi-service posture while adding an optional, Terraform-first edge control layer.
+
+### How it was validated
+
+- `make fmt` ✅
+- `make lint` ✅
+- `make typecheck` ✅
+- `make test` ✅
+- `make harness` ✅
+- `make tf-check` ✅
+- `terraform -chdir=infra/gcp/cloud_run_demo init -backend=false` ✅
+- `terraform -chdir=infra/gcp/cloud_run_demo validate` ✅
+- `make -n plan-gcp-stage-iot` ✅ confirms normalized profile var-file path (`profiles/...`) with `-chdir`
+- `terraform -chdir=infra/gcp/cloud_run_demo plan -var-file=profiles/stage_public_ingest_private_admin.tfvars ...` ✅
+  - plan includes new resources:
+    - `google_compute_security_policy.ingest_edge`
+    - `google_compute_backend_service.ingest_edge`
+    - `google_compute_global_forwarding_rule.ingest_edge`
+    - `ingest_edge_url` output
+
+### Risks / rollout notes
+
+- Enabling edge protection requires DNS for `ingest_edge_domain` and routing devices to `ingest_edge_url`.
+- If a fleet is heavily NATed, per-IP throttling can over-limit; tune `ingest_edge_rate_limit_*` or use `XFF_IP` where appropriate.
+- Manual edge-throttle smoke in a real GCP environment is still required before production enforcement.
+
+### Follow-ups / tech debt
+
+- [ ] Add a CI smoke target that exercises Cloud Armor preview-mode logs in a staging project.

@@ -23,6 +23,16 @@ output "admin_iap_url" {
   value       = var.enable_admin_iap ? "https://${var.admin_iap_domain}" : null
 }
 
+output "ingest_edge_url" {
+  description = "Ingest HTTPS LB URL fronted by Cloud Armor (if enable_ingest_edge_protection=true)."
+  value       = var.enable_ingest_edge_protection ? "https://${var.ingest_edge_domain}" : null
+}
+
+output "ingest_edge_security_policy_name" {
+  description = "Cloud Armor security policy name for ingest edge protection (if enabled)."
+  value       = try(google_compute_security_policy.ingest_edge[0].name, null)
+}
+
 output "runtime_service_account" {
   description = "Cloud Run runtime service account email."
   value       = module.service_accounts.runtime_service_account_email

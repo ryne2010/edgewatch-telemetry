@@ -93,6 +93,13 @@ Optional IAP perimeter (dashboard/admin):
 - `dashboard_iap_oauth2_client_secret` / `admin_iap_oauth2_client_secret`
 - `dashboard_iap_allowlist_members` / `admin_iap_allowlist_members` — users/groups allowed by IAP
 
+Optional ingest edge protection (Cloud Armor):
+- `enable_ingest_edge_protection` — create HTTPS LB + Cloud Armor for the primary ingest service
+- `ingest_edge_domain` — public FQDN for the ingest LB (required when enabled)
+- `ingest_edge_rate_limit_count` / `ingest_edge_rate_limit_interval_sec` — edge throttle threshold
+- `ingest_edge_rate_limit_enforce_on_key` — throttle key (`IP`, `XFF_IP`, or `ALL`)
+- `ingest_edge_allowlist_cidrs` — optional source CIDRs that bypass throttling
+- `ingest_edge_rate_limit_preview` — log-only mode for safe tuning
 
 
 Scheduled jobs:
@@ -160,3 +167,9 @@ TF_VAR_enable_vpc_connector=true make apply-gcp ENV=dev
 When enabled, Terraform outputs:
 - `dashboard_iap_url`
 - `admin_iap_url`
+
+### Ingest edge-protection outputs
+
+When enabled, Terraform outputs:
+- `ingest_edge_url`
+- `ingest_edge_security_policy_name`

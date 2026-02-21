@@ -119,6 +119,24 @@ Route surface hardening (IoT posture): the provided IoT profiles set these app e
 
 This keeps the public surface minimal while still allowing operators to use the private dashboard/admin services.
 
+### Optional: Cloud Armor edge protection for public ingest
+
+For internet-exposed ingest, you can front the primary service with HTTPS LB + Cloud Armor throttling:
+
+- `enable_ingest_edge_protection=true`
+- `ingest_edge_domain` (public FQDN for ingest)
+- `ingest_edge_rate_limit_count`
+- `ingest_edge_rate_limit_interval_sec`
+- `ingest_edge_rate_limit_enforce_on_key` (`IP`, `XFF_IP`, or `ALL`)
+- optional trusted CIDR bypass: `ingest_edge_allowlist_cidrs`
+
+Terraform outputs:
+- `ingest_edge_url`
+- `ingest_edge_security_policy_name`
+
+Use `ingest_edge_url` as the device ingest entrypoint when edge protection is enabled.
+For operations/tuning guidance, see `docs/RUNBOOKS/EDGE_PROTECTION.md`.
+
 ### Optional: IAP perimeter for dashboard/admin
 
 When you deploy split services (`enable_dashboard_service=true` and/or `enable_admin_service=true`), you can put those services behind IAP:

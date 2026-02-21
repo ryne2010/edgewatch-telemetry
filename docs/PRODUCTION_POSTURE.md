@@ -103,7 +103,16 @@ make url-gcp-dashboard PROJECT_ID=... REGION=us-central1 TFVARS=infra/gcp/cloud_
 ```
 
 **Recommended additions (infrastructure perimeter)**
-- Cloud Armor / WAF + basic rate limits
+- Cloud Armor edge protection for ingest (HTTPS LB + edge throttling)
+  - `enable_ingest_edge_protection=true`
+  - `ingest_edge_domain=<public-fqdn>`
+  - tune:
+    - `ingest_edge_rate_limit_count`
+    - `ingest_edge_rate_limit_interval_sec`
+    - `ingest_edge_rate_limit_enforce_on_key`
+  - optional trusted CIDR bypass:
+    - `ingest_edge_allowlist_cidrs`
+  - use `ingest_edge_url` output as device entrypoint
 - Optional: put the **dashboard/admin UI** behind IAP (HTTPS Load Balancer + IAP) while keeping ingest public
   - `enable_dashboard_iap=true` / `enable_admin_iap=true`
   - configure `*_iap_domain`, `*_iap_oauth2_client_id`, `*_iap_oauth2_client_secret`
