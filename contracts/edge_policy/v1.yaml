@@ -41,6 +41,16 @@ reporting:
   backoff_initial_s: 5
   backoff_max_s: 300
 
+# Cost hygiene caps (UTC day)
+#
+# These are device-side safety rails intended to prevent runaway cellular usage.
+# When telemetry bytes hit max_bytes_per_day, the agent switches to heartbeat-only mode.
+# Media captures are skipped when snapshot/upload caps are reached.
+cost_caps:
+  max_bytes_per_day: 50000000
+  max_snapshots_per_day: 48
+  max_media_uploads_per_day: 48
+
 # Metric-level delta thresholds.
 # If a metric changes by >= threshold (absolute), it's considered "worth sending".
 # Missing metrics are ignored; boolean and string metrics use equality.

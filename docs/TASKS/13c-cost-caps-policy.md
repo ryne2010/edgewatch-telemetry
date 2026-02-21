@@ -1,6 +1,6 @@
 # Task 13c — Cost caps in edge policy (bytes/day, snapshots/day)
 
-🟡 **Status: Planned**
+✅ **Status: Implemented (2026-02-21)**
 
 ## Objective
 

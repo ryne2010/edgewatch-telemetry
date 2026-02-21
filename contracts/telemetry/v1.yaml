@@ -92,6 +92,25 @@ metrics:
     type: string
     description: Last watchdog success timestamp in ISO-8601 UTC format.
 
+  cost_cap_active:
+    type: boolean
+    description: True when any edge policy daily cost cap is currently active.
+
+  bytes_sent_today:
+    type: number
+    unit: bytes
+    description: Agent-accounted telemetry bytes sent today (UTC), used for cost-cap audit.
+
+  media_uploads_today:
+    type: number
+    unit: count
+    description: Agent-accounted media upload units today (UTC), used for cost-cap audit.
+
+  snapshots_today:
+    type: number
+    unit: count
+    description: Agent-accounted scheduled snapshots captured today (UTC).
+
   pump_on:
     type: boolean
     description: Whether the pump is currently running.

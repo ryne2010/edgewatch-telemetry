@@ -97,6 +97,16 @@ A request includes:
 - `GET /api/v1/device-policy` must support `ETag` + `If-None-Match`.
 - Devices should be able to run for long periods without re-downloading policy.
 
+6b) **Device policy cost caps**
+- Edge policy contract includes `cost_caps`:
+  - `max_bytes_per_day`
+  - `max_snapshots_per_day`
+  - `max_media_uploads_per_day`
+- Agents must persist UTC-day counters across restarts and emit audit metrics:
+  - `cost_cap_active`
+  - `bytes_sent_today`
+  - `media_uploads_today`
+
 5) **No secret leakage**
 - Logs and error messages must not include device tokens, admin keys, or database URLs.
 

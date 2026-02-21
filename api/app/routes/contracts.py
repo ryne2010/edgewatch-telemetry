@@ -8,6 +8,7 @@ from ..contracts import load_telemetry_contract
 from ..edge_policy import load_edge_policy
 from ..schemas import (
     EdgePolicyAlertThresholdsOut,
+    EdgePolicyCostCapsOut,
     EdgePolicyContractOut,
     EdgePolicyReportingOut,
     TelemetryContractOut,
@@ -131,5 +132,10 @@ def get_edge_policy_contract(
             battery_recover_v=p.alert_thresholds.battery_recover_v,
             signal_low_rssi_dbm=p.alert_thresholds.signal_low_rssi_dbm,
             signal_recover_rssi_dbm=p.alert_thresholds.signal_recover_rssi_dbm,
+        ),
+        cost_caps=EdgePolicyCostCapsOut(
+            max_bytes_per_day=p.cost_caps.max_bytes_per_day,
+            max_snapshots_per_day=p.cost_caps.max_snapshots_per_day,
+            max_media_uploads_per_day=p.cost_caps.max_media_uploads_per_day,
         ),
     )

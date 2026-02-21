@@ -50,6 +50,13 @@ class AlertThresholds:
 
 
 @dataclass(frozen=True)
+class CostCapsPolicy:
+    max_bytes_per_day: int
+    max_snapshots_per_day: int
+    max_media_uploads_per_day: int
+
+
+@dataclass(frozen=True)
 class EdgePolicy:
     version: str
     sha256: str
@@ -58,6 +65,7 @@ class EdgePolicy:
     reporting: ReportingPolicy
     delta_thresholds: dict[str, float]
     alert_thresholds: AlertThresholds
+    cost_caps: CostCapsPolicy
 
 
 def _repo_root() -> Path:
@@ -113,6 +121,15 @@ def _validate_delta_thresholds(delta_thresholds: dict[str, float]) -> None:
     for k, v in delta_thresholds.items():
         if v <= 0:
             raise ValueError(f"Invalid delta threshold for {k}: {v} (must be > 0)")
+
+
+def _validate_cost_caps(caps: CostCapsPolicy) -> None:
+    if caps.max_bytes_per_day <= 0:
+        raise ValueError("cost_caps.max_bytes_per_day must be > 0")
+    if caps.max_snapshots_per_day <= 0:
+        raise ValueError("cost_caps.max_snapshots_per_day must be > 0")
+    if caps.max_media_uploads_per_day <= 0:
+        raise ValueError("cost_caps.max_media_uploads_per_day must be > 0")
 
 
 def _require_mapping(obj: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -178,8 +195,16 @@ def load_edge_policy(version: str) -> EdgePolicy:
         signal_recover_rssi_dbm=_require_float(alerts_raw, "signal_recover_rssi_dbm"),
     )
 
+    cost_caps_raw = _require_mapping(data, "cost_caps")
+    cost_caps = CostCapsPolicy(
+        max_bytes_per_day=_require_int(cost_caps_raw, "max_bytes_per_day"),
+        max_snapshots_per_day=_require_int(cost_caps_raw, "max_snapshots_per_day"),
+        max_media_uploads_per_day=_require_int(cost_caps_raw, "max_media_uploads_per_day"),
+    )
+
     _validate_alert_thresholds(alert_thresholds)
     _validate_delta_thresholds(delta_thresholds)
+    _validate_cost_caps(cost_caps)
 
     return EdgePolicy(
         version=version_from_file,
@@ -188,4 +213,5 @@ def load_edge_policy(version: str) -> EdgePolicy:
         reporting=reporting,
         delta_thresholds=delta_thresholds,
         alert_thresholds=alert_thresholds,
+        cost_caps=cost_caps,
     )

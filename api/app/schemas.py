@@ -244,6 +244,12 @@ class EdgePolicyAlertThresholdsOut(BaseModel):
     signal_recover_rssi_dbm: float
 
 
+class EdgePolicyCostCapsOut(BaseModel):
+    max_bytes_per_day: int
+    max_snapshots_per_day: int
+    max_media_uploads_per_day: int
+
+
 class EdgePolicyContractOut(BaseModel):
     """Public edge policy contract (device-side optimization).
 
@@ -260,6 +266,7 @@ class EdgePolicyContractOut(BaseModel):
     reporting: EdgePolicyReportingOut
     delta_thresholds: Dict[str, float]
     alert_thresholds: EdgePolicyAlertThresholdsOut
+    cost_caps: EdgePolicyCostCapsOut
 
 
 class DevicePolicyOut(BaseModel):
@@ -275,3 +282,4 @@ class DevicePolicyOut(BaseModel):
     reporting: EdgePolicyReportingOut
     delta_thresholds: Dict[str, float]
     alert_thresholds: EdgePolicyAlertThresholdsOut
+    cost_caps: EdgePolicyCostCapsOut
