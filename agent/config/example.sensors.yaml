@@ -1,6 +1,13 @@
 backend: composite
 backends:
   - backend: mock
+  # Replace mock with rpi_i2c on Raspberry Pi once BME280 is wired.
+  # - backend: rpi_i2c
+  #   rpi_i2c:
+  #     sensor: bme280
+  #     bus: 1
+  #     address: 0x76
+  #     warning_interval_s: 300
   - backend: derived
     derived:
       oil_life_max_run_hours: 300

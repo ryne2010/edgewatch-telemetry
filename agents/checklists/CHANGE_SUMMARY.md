@@ -219,3 +219,62 @@
 - [ ] Task 11b: replace `rpi_i2c` placeholder with real BME280 implementation.
 - [ ] Task 11c: replace `rpi_adc` placeholder and use channel/scaling config in real conversions.
 - [ ] Task 11d: replace `derived` placeholder with durable oil-life model + reset CLI.
+
+## Task 11b — Raspberry Pi I2C (BME280 temp + humidity) (2026-02-21)
+
+### What changed
+
+- Added `rpi_i2c` backend implementation:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/rpi_i2c.py`
+  - lazy `smbus2` import (no import-time failure on laptops/CI)
+  - BME280 calibration + compensation logic for:
+    - `temperature_c`
+    - `humidity_pct`
+  - robust fallback behavior:
+    - sensor read failures return `None` values
+    - warning logs are rate-limited to avoid spam loops
+- Wired backend selection:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/config.py`
+  - `rpi_i2c` now constructs a real backend (not placeholder)
+  - supports config fields:
+    - `sensor` (currently `bme280`)
+    - `bus`
+    - `address` (int or hex string)
+    - `warning_interval_s`
+- Updated backend exports:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/__init__.py`
+- Added deterministic tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_rpi_i2c.py`
+  - covers BME280 decoding, rounding, failure fallback, warning rate limiting, and config wiring
+- Updated operator/dev docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SENSORS.md` (wiring + setup + sanity checks)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md` (backend status + smbus2 install)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example` (I2C backend env example)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/config/example.sensors.yaml` (commented `rpi_i2c` config block)
+- Updated task status docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/11b-rpi-i2c-temp-humidity.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 11b by providing production-ready Pi I2C reads for temperature/humidity without breaking local-first developer lanes.
+- Keeps dependency imports isolated so CI and non-Pi environments run without hardware libraries.
+
+### How it was validated
+
+- Required full-gate run:
+  - `make harness` (fails on pre-existing repo-wide issues unrelated to this task, including existing API lint/type/test failures and repo hygiene `.DS_Store`)
+- Task-focused validation:
+  - `ruff check agent/sensors/backends/rpi_i2c.py agent/sensors/config.py tests/test_sensor_rpi_i2c.py tests/test_sensor_framework.py agent/sensors/backends/__init__.py` (pass)
+  - `pyright agent/sensors/backends/rpi_i2c.py agent/sensors/config.py tests/test_sensor_rpi_i2c.py tests/test_sensor_framework.py agent/sensors/backends/__init__.py` (pass)
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: pytest -q tests/test_sensor_rpi_i2c.py tests/test_sensor_framework.py` (pass)
+
+### Risks / rollout notes
+
+- Runtime on Raspberry Pi still requires installing `smbus2` in the device environment.
+- Backend currently targets BME280 only; additional I2C sensors remain future work.
+
+### Follow-ups / tech debt
+
+- [ ] Add an explicit optional dependency group for Pi sensor runtime packages (`smbus2`) once lockfile/tooling drift is resolved.
+- [ ] Extend `rpi_i2c` to support additional sensor families (for example SHT31) behind the same backend contract.
