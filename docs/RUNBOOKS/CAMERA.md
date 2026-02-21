@@ -8,8 +8,6 @@ Design assumption:
 See ADR:
 - `docs/DECISIONS/ADR-20260220-camera-switching.md`
 
-> Note: implementation is tracked by `docs/TASKS/12-camera-capture-upload.md`.
-
 ## 1) Hardware checklist
 
 - Camera ribbon cables are fully seated (both ends)
@@ -20,8 +18,12 @@ See ADR:
 
 On Raspberry Pi OS, validate libcamera is working:
 
-- Run a basic camera test command (varies by OS image)
-- Confirm you can capture a still image successfully
+```bash
+libcamera-hello --list-cameras
+libcamera-still --camera 0 --nopreview --immediate -o /tmp/cam1-test.jpg
+```
+
+Confirm that `/tmp/cam1-test.jpg` is created and non-empty.
 
 If the camera is not detected:
 - confirm ribbon orientation
@@ -39,19 +41,44 @@ Operational consequences:
 - short clips are captured from **one camera at a time**
 - the agent must enforce a capture mutex to prevent conflicts
 
-## 4) EdgeWatch validation (planned)
+## 4) EdgeWatch 12a validation (device-side capture + ring buffer)
 
-End-to-end validation target:
+Start API + DB lane:
 
-- start stack (`make up`)
-- run the agent with camera backend enabled
-- trigger:
-  - scheduled snapshots (interval)
-  - alert-transition snapshots (water pressure low/recover)
-- confirm:
-  - local ring buffer grows and evicts oldest-first
-  - upload succeeds (local filesystem or GCS demo)
-  - UI shows the latest capture per camera
+```bash
+make up
+```
+
+Run the agent with media enabled:
+
+```bash
+MEDIA_ENABLED=true \
+CAMERA_IDS=cam1,cam2 \
+MEDIA_SNAPSHOT_INTERVAL_S=300 \
+MEDIA_RING_DIR=./edgewatch_media \
+MEDIA_RING_MAX_BYTES=524288000 \
+uv run python agent/edgewatch_agent.py
+```
+
+Expected behavior:
+- agent logs periodic `media captured camera=... reason=scheduled ...`
+- captures are serialized (only one camera capture active at a time)
+- files are written under `MEDIA_RING_DIR/<device_id>/<camera_id>/<YYYY-MM-DD>/`
+- each image has a JSON sidecar with:
+  - `device_id`, `camera_id`, `captured_at`, `reason`, `sha256`, `bytes`, `mime_type`
+- when disk usage exceeds `MEDIA_RING_MAX_BYTES`, oldest assets are evicted first
+
+Manual capture command (operator diagnostic):
+
+```bash
+python -m agent.tools.camera cam1 \
+  --device-id demo-well-001 \
+  --reason manual \
+  --media-dir ./edgewatch_media \
+  --max-bytes 524288000
+```
+
+This prints JSON containing `asset_path`, `sidecar_path`, and persisted metadata.
 
 ## 5) Field diagnostics to collect
 

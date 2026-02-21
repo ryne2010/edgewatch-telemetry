@@ -1,6 +1,6 @@
 # Task 12a — Agent camera capture + ring buffer (one camera at a time)
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 
