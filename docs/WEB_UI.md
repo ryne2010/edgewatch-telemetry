@@ -40,7 +40,7 @@ The left sidebar (desktop) / drawer (mobile) includes:
 - **Dashboard**: fleet overview (device counts, open alerts, offline devices) + vitals threshold cards.
   - Uses `GET /api/v1/devices/summary` to avoid N+1 calls.
   - Uses `GET /api/v1/contracts/edge_policy` for thresholds.
-- **Devices**: searchable fleet table (status + latest vitals chips).
+- **Devices**: searchable fleet table with quick filters (`online/offline/unknown/open alerts`), health explanations, and latest vitals chips.
 - **Alerts**: alert feed with severity + open/resolved filters + volume sparklines.
 - **Contracts**: telemetry contract + edge policy contract (cadence/thresholds).
 - **Admin**: audit console (only shown when the backend enables admin routes).

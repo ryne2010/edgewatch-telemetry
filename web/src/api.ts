@@ -111,6 +111,11 @@ export type EdgePolicyContractOut = {
     signal_low_rssi_dbm: number
     signal_recover_rssi_dbm: number
   }
+  cost_caps: {
+    max_bytes_per_day: number
+    max_snapshots_per_day: number
+    max_media_uploads_per_day: number
+  }
 }
 
 export type IngestionBatchOut = {

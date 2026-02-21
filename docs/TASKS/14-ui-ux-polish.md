@@ -53,10 +53,9 @@ The UI reads `/api/v1/health` feature flags and:
 
 ### Devices list
 
-- Improve the “vitals summary” presentation:
-  - clearer status explanations (offline vs stale vs weak signal)
-  - better empty state guidance
-- Add quick filters:
+- ✅ clearer status explanations (offline vs stale vs weak signal)
+- ✅ better empty state guidance
+- ✅ quick filters:
   - online/offline
   - open alerts only
 
