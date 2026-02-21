@@ -22,8 +22,9 @@ import type { Point } from '../ui/LineChart'
 import { fmtAlertType, fmtDateTime, timeAgo } from '../utils/format'
 
 type SeverityFilter = 'all' | 'critical' | 'warning' | 'info'
+type SeverityKind = Exclude<SeverityFilter, 'all'>
 
-function sevKind(sev: string): SeverityFilter {
+function sevKind(sev: string): SeverityKind {
   const s = (sev ?? '').toLowerCase()
   if (s === 'critical' || s === 'high' || s === 'error') return 'critical'
   if (s === 'warn' || s === 'warning' || s === 'medium') return 'warning'

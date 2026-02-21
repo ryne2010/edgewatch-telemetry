@@ -36,5 +36,11 @@ jobs:
       - name: Sync Python deps (uv.lock)
         run: uv sync --all-groups --locked
 
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.5"
+          terraform_wrapper: false
+
       - name: Run repo gates (harness)
         run: python scripts/harness.py all --strict

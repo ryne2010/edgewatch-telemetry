@@ -1,6 +1,6 @@
 # Task 12b — API: media metadata + storage (local + GCS)
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 

@@ -19,6 +19,11 @@ Base: `/api/v1`
 - `GET  /device-policy` — edge policy/config for devices (Bearer token; ETag cached)
 - `GET  /contracts/telemetry` — active telemetry contract (public)
 - `GET  /contracts/edge_policy` — active edge policy contract (public)
+- `POST /media` — create media metadata + upload instructions (device auth)
+- `PUT  /media/{media_id}/upload` — upload media bytes (device auth)
+- `GET  /devices/{device_id}/media` — list recent uploaded media (device auth)
+- `GET  /media/{media_id}` — media metadata detail (device auth)
+- `GET  /media/{media_id}/download` — media bytes download (device auth; proxied or signed URL)
 - `POST /admin/devices` — register device (admin surface; optional)
 - `GET  /admin/ingestions` — ingestion lineage batches (admin surface; optional)
 - `GET  /admin/drift-events` — drift audit events (admin surface; optional)
@@ -94,6 +99,10 @@ A request includes:
 
 5) **No secret leakage**
 - Logs and error messages must not include device tokens, admin keys, or database URLs.
+
+7) **Media metadata idempotency**
+- Creating media metadata with a previously-seen `(device_id, message_id, camera_id)` must not create duplicates.
+- Object paths are deterministic: `<device_id>/<camera_id>/<YYYY-MM-DD>/<message_id>.<ext>`.
 
 ## Compatibility policy
 

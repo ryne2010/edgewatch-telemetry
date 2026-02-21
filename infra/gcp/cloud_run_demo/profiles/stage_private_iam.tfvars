@@ -44,7 +44,7 @@ enable_analytics_export = false
 enable_vpc_connector = false
 
 # Retention / compaction
-enable_retention_job   = true
-retention_job_schedule = "30 3 * * *"
+enable_retention_job      = true
+retention_job_schedule    = "30 3 * * *"
 telemetry_retention_days  = 14
 quarantine_retention_days = 14

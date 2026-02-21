@@ -74,17 +74,17 @@ Why burn rate alerts?
 
 Try these controlled failures and document your findings:
 
-1) **IAM failure**  
+1) **IAM failure**
    Remove Secret Manager access (if used) or remove invoker role (for private services) and watch:
    - Cloud Run revision fails or 401/403 spikes
    - logs show permission errors
 
-2) **Bad deploy**  
+2) **Bad deploy**
    Deploy a container that listens on the wrong port and confirm:
    - revision fails health checks
    - error surfaces in Cloud Run + logs
 
-3) **Performance regression**  
+3) **Performance regression**
    Add an artificial delay and observe:
    - latency metrics rise
    - alert thresholds trigger

@@ -142,6 +142,13 @@ class Settings:
     analytics_export_gcs_prefix: str
     analytics_export_max_rows: int
 
+    # Media storage lane (camera snapshots/clips)
+    media_storage_backend: Literal["local", "gcs"]
+    media_local_root: str
+    media_gcs_bucket: str | None
+    media_gcs_prefix: str
+    media_max_upload_bytes: int
+
     # Data retention / compaction (usually run via Cloud Run Job)
     retention_enabled: bool
     telemetry_retention_days: int
@@ -177,7 +184,7 @@ def load_settings() -> Settings:
     enable_ingest_routes = _get_bool("ENABLE_INGEST_ROUTES", True)
     enable_read_routes = _get_bool("ENABLE_READ_ROUTES", True)
 
-    admin_auth_mode_raw = (os.getenv("ADMIN_AUTH_MODE", "key").strip().lower() or "key")
+    admin_auth_mode_raw = os.getenv("ADMIN_AUTH_MODE", "key").strip().lower() or "key"
     if admin_auth_mode_raw not in {"key", "none"}:
         raise RuntimeError("ADMIN_AUTH_MODE must be one of: key, none")
     admin_auth_mode: AdminAuthMode = admin_auth_mode_raw  # type: ignore[assignment]
@@ -216,7 +223,9 @@ def load_settings() -> Settings:
     type_mismatch_mode_raw = _get_optional_str("TELEMETRY_CONTRACT_TYPE_MISMATCH_MODE")
     if type_mismatch_mode_raw is None:
         # Backward-compatible behavior: old boolean controls reject/quarantine.
-        type_mismatch_mode_raw = "reject" if _get_bool("TELEMETRY_CONTRACT_ENFORCE_TYPES", True) else "quarantine"
+        type_mismatch_mode_raw = (
+            "reject" if _get_bool("TELEMETRY_CONTRACT_ENFORCE_TYPES", True) else "quarantine"
+        )
     type_mismatch_mode = type_mismatch_mode_raw.strip().lower()
     if type_mismatch_mode not in {"reject", "quarantine"}:
         raise RuntimeError("TELEMETRY_CONTRACT_TYPE_MISMATCH_MODE must be one of: reject, quarantine")
@@ -228,6 +237,18 @@ def load_settings() -> Settings:
     ingest_pipeline_mode = os.getenv("INGEST_PIPELINE_MODE", "direct").strip().lower() or "direct"
     if ingest_pipeline_mode not in {"direct", "pubsub"}:
         raise RuntimeError("INGEST_PIPELINE_MODE must be one of: direct, pubsub")
+
+    media_storage_backend_raw = os.getenv("MEDIA_STORAGE_BACKEND", "local").strip().lower() or "local"
+    if media_storage_backend_raw not in {"local", "gcs"}:
+        raise RuntimeError("MEDIA_STORAGE_BACKEND must be one of: local, gcs")
+    media_storage_backend: Literal["local", "gcs"] = media_storage_backend_raw  # type: ignore[assignment]
+
+    media_local_root = os.getenv("MEDIA_LOCAL_ROOT", "./data/media").strip() or "./data/media"
+    media_gcs_bucket = _get_optional_str("MEDIA_GCS_BUCKET")
+    media_gcs_prefix = os.getenv("MEDIA_GCS_PREFIX", "media").strip() or "media"
+    media_max_upload_bytes = _get_int("MEDIA_MAX_UPLOAD_BYTES", 20_000_000)
+    if media_storage_backend == "gcs" and not media_gcs_bucket:
+        raise RuntimeError("MEDIA_GCS_BUCKET is required when MEDIA_STORAGE_BACKEND=gcs")
 
     # Project id is used for log/trace correlation in Cloud Logging.
     # Prefer explicit env vars, fall back to the Pub/Sub project when set.
@@ -302,14 +323,27 @@ def load_settings() -> Settings:
         alert_webhook_timeout_s=_get_float("ALERT_WEBHOOK_TIMEOUT_S", 5.0),
         ingest_pipeline_mode=ingest_pipeline_mode,  # type: ignore[arg-type]
         ingest_pubsub_project_id=ingest_pubsub_project_id,
-        ingest_pubsub_topic=(os.getenv("INGEST_PUBSUB_TOPIC", "edgewatch-telemetry-raw").strip() or "edgewatch-telemetry-raw"),
+        ingest_pubsub_topic=(
+            os.getenv("INGEST_PUBSUB_TOPIC", "edgewatch-telemetry-raw").strip() or "edgewatch-telemetry-raw"
+        ),
         ingest_pubsub_push_shared_token=_get_optional_str("INGEST_PUBSUB_PUSH_SHARED_TOKEN"),
         analytics_export_enabled=_get_bool("ANALYTICS_EXPORT_ENABLED", False),
         analytics_export_bucket=_get_optional_str("ANALYTICS_EXPORT_BUCKET"),
-        analytics_export_dataset=(os.getenv("ANALYTICS_EXPORT_DATASET", "edgewatch_analytics").strip() or "edgewatch_analytics"),
-        analytics_export_table=(os.getenv("ANALYTICS_EXPORT_TABLE", "telemetry_points").strip() or "telemetry_points"),
-        analytics_export_gcs_prefix=(os.getenv("ANALYTICS_EXPORT_GCS_PREFIX", "telemetry").strip() or "telemetry"),
+        analytics_export_dataset=(
+            os.getenv("ANALYTICS_EXPORT_DATASET", "edgewatch_analytics").strip() or "edgewatch_analytics"
+        ),
+        analytics_export_table=(
+            os.getenv("ANALYTICS_EXPORT_TABLE", "telemetry_points").strip() or "telemetry_points"
+        ),
+        analytics_export_gcs_prefix=(
+            os.getenv("ANALYTICS_EXPORT_GCS_PREFIX", "telemetry").strip() or "telemetry"
+        ),
         analytics_export_max_rows=_get_int("ANALYTICS_EXPORT_MAX_ROWS", 50000),
+        media_storage_backend=media_storage_backend,
+        media_local_root=media_local_root,
+        media_gcs_bucket=media_gcs_bucket,
+        media_gcs_prefix=media_gcs_prefix,
+        media_max_upload_bytes=media_max_upload_bytes,
         retention_enabled=retention_enabled,
         telemetry_retention_days=telemetry_retention_days,
         quarantine_retention_days=quarantine_retention_days,

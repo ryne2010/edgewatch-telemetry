@@ -17,12 +17,12 @@ data "google_project" "project" {
 
 locals {
   enable_any_scheduler      = var.enable_scheduled_jobs || var.enable_analytics_export || var.enable_simulation || var.enable_retention_job
-  offline_job_name         = "edgewatch-offline-check-${var.env}"
-  offline_scheduler_name   = "edgewatch-offline-check-${var.env}"
-  migrate_job_name         = "edgewatch-migrate-${var.env}"
-  analytics_job_name       = "edgewatch-analytics-export-${var.env}"
-  analytics_scheduler_name = "edgewatch-analytics-export-${var.env}"
-  simulation_job_name      = "edgewatch-simulate-telemetry-${var.env}"
+  offline_job_name          = "edgewatch-offline-check-${var.env}"
+  offline_scheduler_name    = "edgewatch-offline-check-${var.env}"
+  migrate_job_name          = "edgewatch-migrate-${var.env}"
+  analytics_job_name        = "edgewatch-analytics-export-${var.env}"
+  analytics_scheduler_name  = "edgewatch-analytics-export-${var.env}"
+  simulation_job_name       = "edgewatch-simulate-telemetry-${var.env}"
   simulation_scheduler_name = "edgewatch-simulate-telemetry-${var.env}"
   retention_job_name        = "edgewatch-retention-${var.env}"
   retention_scheduler_name  = "edgewatch-retention-${var.env}"
@@ -461,4 +461,3 @@ resource "google_cloud_scheduler_job" "retention" {
     google_artifact_registry_repository_iam_member.scheduler_artifact_reader,
   ]
 }
-

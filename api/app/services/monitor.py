@@ -159,7 +159,9 @@ def ensure_water_pressure_alerts(
             )
 
 
-def ensure_oil_pressure_alerts(session: Session, device_id: str, oil_pressure_psi: float, now: datetime) -> None:
+def ensure_oil_pressure_alerts(
+    session: Session, device_id: str, oil_pressure_psi: float, now: datetime
+) -> None:
     """Oil pressure threshold alert with hysteresis."""
 
     policy = load_edge_policy(settings.edge_policy_version)
@@ -253,7 +255,9 @@ def ensure_oil_level_alerts(session: Session, device_id: str, oil_level_pct: flo
             )
 
 
-def ensure_drip_oil_level_alerts(session: Session, device_id: str, drip_oil_level_pct: float, now: datetime) -> None:
+def ensure_drip_oil_level_alerts(
+    session: Session, device_id: str, drip_oil_level_pct: float, now: datetime
+) -> None:
     """Drip oiler reservoir level threshold alert with hysteresis."""
 
     policy = load_edge_policy(settings.edge_policy_version)
@@ -461,6 +465,7 @@ def ensure_signal_alerts(session: Session, device_id: str, signal_rssi_dbm: floa
                 ),
                 now=now,
             )
+
 
 def _create_alert(session: Session, alert: Alert, *, now: datetime) -> None:
     session.add(alert)

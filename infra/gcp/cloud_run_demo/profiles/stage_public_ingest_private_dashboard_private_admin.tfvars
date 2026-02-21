@@ -11,20 +11,20 @@ allow_unauthenticated   = true
 allow_public_in_non_dev = true
 
 # Harden the public surface: ingest only.
-enable_ui           = false
-enable_read_routes  = false
+enable_ui            = false
+enable_read_routes   = false
 enable_ingest_routes = true
 
 # No admin endpoints on the public surface.
 enable_admin_routes = false
 
 # --- Staging defaults --------------------------------------------------------
-bootstrap_demo_device   = false
-enable_simulation   = true
+bootstrap_demo_device = false
+enable_simulation     = true
 
 # --- Private dashboard service ----------------------------------------------
-enable_dashboard_service       = true
-dashboard_service_name         = "edgewatch-stage-dashboard"
+enable_dashboard_service        = true
+dashboard_service_name          = "edgewatch-stage-dashboard"
 dashboard_allow_unauthenticated = false
 
 # --- Private admin service ---------------------------------------------------

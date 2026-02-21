@@ -93,6 +93,7 @@ def _require_float(obj: Mapping[str, Any], key: str) -> float:
         return float(v)
     raise ValueError(f"'{key}' must be a number")
 
+
 def _validate_recover_gt_low(name: str, low: float, recover: float) -> None:
     if recover <= low:
         raise ValueError(f"Invalid alert thresholds for {name}: recover ({recover}) must be > low ({low})")
@@ -112,7 +113,6 @@ def _validate_delta_thresholds(delta_thresholds: dict[str, float]) -> None:
     for k, v in delta_thresholds.items():
         if v <= 0:
             raise ValueError(f"Invalid delta threshold for {k}: {v} (must be > 0)")
-
 
 
 def _require_mapping(obj: Mapping[str, Any], key: str) -> Mapping[str, Any]:

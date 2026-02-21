@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Request size / safety limits.
 
 These are *defense-in-depth* controls to reduce accidental abuse (or intentional
@@ -11,6 +9,8 @@ Notes
 - For ingest specifically, we already constrain `points` to <= 500 per request.
   This middleware focuses on total request body size.
 """
+
+from __future__ import annotations
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request

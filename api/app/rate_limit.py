@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Lightweight in-app rate limiting.
 
 Edge deployments often rely on perimeter controls (API Gateway / Cloud Armor).
@@ -15,9 +13,11 @@ Caveats
 - It is still useful as defense-in-depth and to prevent accidental overload.
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
+
 import threading
 import time
+from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 from .config import settings

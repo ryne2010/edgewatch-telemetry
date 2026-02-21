@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException, Request
@@ -25,8 +27,14 @@ from .routes.alerts import router as alerts_router
 from .routes.admin import router as admin_router
 from .routes.contracts import router as contracts_router
 from .routes.device_policy import router as device_policy_router
+from .routes.media import router as media_router
 from .routes.pubsub_worker import router as pubsub_worker_router
-from .observability import RequestContextMiddleware, configure_logging, get_request_id, maybe_instrument_opentelemetry
+from .observability import (
+    RequestContextMiddleware,
+    configure_logging,
+    get_request_id,
+    maybe_instrument_opentelemetry,
+)
 from .version import __version__
 from .demo_fleet import derive_nth as _derive_nth
 
@@ -111,6 +119,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
             },
             "ingest": {"pipeline_mode": str(settings.ingest_pipeline_mode)},
             "analytics_export": {"enabled": bool(settings.analytics_export_enabled)},
+            "media": {"storage_backend": str(settings.media_storage_backend)},
             "retention": {"enabled": bool(settings.retention_enabled)},
             "limits": {
                 "max_request_body_bytes": int(settings.max_request_body_bytes),
@@ -132,7 +141,9 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
         # for client-side routes (deep links) instead of returning a JSON 404.
         if settings.enable_ui and exc.status_code == 404:
             req_path = request.url.path
-            is_api = req_path.startswith("/api") or req_path.startswith("/openapi") or req_path.startswith("/docs")
+            is_api = (
+                req_path.startswith("/api") or req_path.startswith("/openapi") or req_path.startswith("/docs")
+            )
             looks_like_asset = "." in (req_path.rsplit("/", 1)[-1])
             if (not is_api) and (not looks_like_asset):
                 root_dir = Path(__file__).resolve().parents[2]
@@ -141,13 +152,15 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
                     return FileResponse(index_path)
 
         # Preserve explicit error envelopes when callers supply them.
+        payload: dict[str, Any]
         if isinstance(exc.detail, dict) and "error" in exc.detail:
             payload = exc.detail
         else:
             payload = {"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}}
 
-        if isinstance(payload.get("error"), dict):
-            payload["error"].setdefault("request_id", rid)
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            error_obj.setdefault("request_id", rid)
 
         headers = dict(exc.headers or {})
         headers.setdefault("X-Request-ID", rid)
@@ -264,6 +277,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
     if settings.enable_ingest_routes:
         app.include_router(ingest_router)
         app.include_router(device_policy_router)
+        app.include_router(media_router)
         app.include_router(pubsub_worker_router)
     else:
         logger.info("Ingest routes disabled (ENABLE_INGEST_ROUTES=false)")

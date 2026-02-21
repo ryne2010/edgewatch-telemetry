@@ -22,11 +22,11 @@ that matches the requested scope:
 
 ## Decisions captured as ADRs
 
-- **Camera strategy:** switched multi-camera capture (one camera active at a time)  
+- **Camera strategy:** switched multi-camera capture (one camera active at a time)
   See `docs/DECISIONS/ADR-20260220-camera-switching.md`.
-- **Pressure ranges:** default to **0–100 psi** for water and oil  
+- **Pressure ranges:** default to **0–100 psi** for water and oil
   See `docs/DECISIONS/ADR-20260220-pressure-range.md`.
-- **Oil life model:** runtime-derived with **manual reset**  
+- **Oil life model:** runtime-derived with **manual reset**
   See `docs/DECISIONS/ADR-20260220-oil-life-manual-reset.md`.
 
 ## Recommended base platform

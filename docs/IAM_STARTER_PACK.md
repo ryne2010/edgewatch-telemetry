@@ -21,11 +21,11 @@ Why this is staff-level relevant:
 
 This repo supports both modes:
 
-1) **Recommended (team / multi-repo):**  
+1) **Recommended (team / multi-repo):**
    - Project IAM is managed centrally in the platform repo.
    - This repo only grants *app-scoped* IAM (e.g., Cloud Run invoker + client log view access).
 
-2) **Standalone demo mode:**  
+2) **Standalone demo mode:**
    - Set `enable_project_iam = true` to let this repo manage project-level IAM too.
 
 ---

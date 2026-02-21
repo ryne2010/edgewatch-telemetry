@@ -14,16 +14,29 @@ so extraction is tidy.
 
 from __future__ import annotations
 
-from pathlib import Path
+import importlib.util
 import subprocess
 import zipfile
-import sys
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
-
-from api.app.version import __version__
 DIST_DIR = REPO_ROOT / "dist"
+
+
+def _load_version() -> str:
+    version_py = REPO_ROOT / "api" / "app" / "version.py"
+    spec = importlib.util.spec_from_file_location("edgewatch_version", version_py)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load version from {version_py}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    version = getattr(module, "__version__", None)
+    if not isinstance(version, str) or not version:
+        raise RuntimeError(f"Missing __version__ in {version_py}")
+    return version
+
+
+__version__ = _load_version()
 
 ZIP_NAME = f"edgewatch-telemetry_v{__version__}.zip"
 BASE_FOLDER = f"edgewatch-telemetry_v{__version__}"
