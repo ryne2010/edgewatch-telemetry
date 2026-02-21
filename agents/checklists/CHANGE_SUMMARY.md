@@ -884,6 +884,80 @@
 
 - [ ] Complete remaining Task 14 work for IAP operator posture UX after Task 18 lands.
 
+## Task 18 — IAP identity perimeter (2026-02-21)
+
+### What changed
+
+- Added app-level IAP defense-in-depth and admin attribution:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/config.py`
+    - new `IAP_AUTH_ENABLED` setting
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/security.py`
+    - `require_admin` now accepts `X-Goog-Authenticated-User-Email`
+    - when `IAP_AUTH_ENABLED=true`, admin requests without an IAP identity header return `401`
+    - returns normalized acting principal for audit attribution
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+    - device create/update mutations now persist admin audit events with acting principal + request id
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/admin_audit.py`
+    - centralized admin audit persistence + structured `admin_event` logs
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+    - added `admin_events` model/table mapping
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0008_admin_events.py`
+    - Alembic migration for `admin_events`
+- Added Terraform IAP perimeter support for split dashboard/admin Cloud Run services:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/iap.tf`
+    - serverless NEGs + HTTPS LB resources + IAP backend config + allowlist IAM bindings
+    - Cloud Run invoker binding for IAP service account
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/variables.tf`
+    - new `enable_{dashboard,admin}_iap` controls
+    - domain, OAuth client, and allowlist variables + validation guardrails
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/main.tf`
+    - stable service-name locals
+    - admin service sets `IAP_AUTH_ENABLED=true` when admin IAP is enabled
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/iam_bindings.tf`
+    - avoids direct group `run.invoker` grants on services when IAP is enabled
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/outputs.tf`
+    - new `dashboard_iap_url` and `admin_iap_url` outputs
+  - profile examples updated with commented IAP variable blocks.
+- Updated docs and task tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_GCP.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/security.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/PRODUCTION_POSTURE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/18-iap-identity-perimeter.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CODEX_HANDOFF.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+
+### Why it changed
+
+- Completes Task 18 acceptance criteria:
+  - supports Google-login IAP perimeter for dashboard/admin services
+  - supports principal/group allowlists
+  - records acting principal on admin mutations with structured auditability
+  - adds app-level checks so admin routes fail closed when IAP identity headers are absent
+
+### How it was validated
+
+- Focused validation:
+  - `uv run --locked ruff check api/app/config.py api/app/security.py api/app/main.py api/app/models.py api/app/routes/admin.py api/app/services/admin_audit.py tests/test_security.py tests/test_migrations_sqlite.py tests/test_admin_audit.py migrations/versions/0008_admin_events.py` ✅
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: uv run --locked pytest -q tests/test_security.py tests/test_migrations_sqlite.py tests/test_admin_audit.py` ✅
+  - `terraform -chdir=infra/gcp/cloud_run_demo fmt -recursive` ✅
+- Full-repo validation:
+  - `make harness` (see PR notes for result)
+  - `make tf-fmt`
+  - `make tf-validate`
+
+### Risks / rollout notes
+
+- IAP requires DNS and a valid OAuth client for each enabled service before users can log in successfully.
+- Enabling IAP while leaving direct Cloud Run invoker grants in place can bypass the IAP layer; this change avoids that for dashboard/admin service group bindings.
+- `IAP_AUTH_ENABLED` currently guards admin endpoints; dashboard/read endpoints remain perimeter-only (IAP + IAM) without additional app header enforcement, which is expected for Task 18.
+
+### Follow-ups / tech debt
+
+- [ ] Task 15: expand admin attribution from `actor_email` to richer RBAC subject/role model and surface audit events in UI.
+
 ## Task 16 — OpenTelemetry SQLAlchemy + Metrics (2026-02-21)
 
 ### What changed

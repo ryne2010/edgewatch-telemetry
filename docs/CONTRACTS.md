@@ -114,6 +114,10 @@ A request includes:
 - Creating media metadata with a previously-seen `(device_id, message_id, camera_id)` must not create duplicates.
 - Object paths are deterministic: `<device_id>/<camera_id>/<YYYY-MM-DD>/<message_id>.<ext>`.
 
+8) **Admin mutation attribution**
+- Admin device mutations are recorded in `admin_events`.
+- Each event includes acting principal (`actor_email`) and request correlation (`request_id`).
+
 ## Compatibility policy
 
 - **Backwards compatible changes:**

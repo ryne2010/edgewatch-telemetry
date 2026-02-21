@@ -48,6 +48,7 @@ make deploy-gcp-prod  PROJECT_ID=... REGION=us-central1
 
 - `prod_public_ingest_private_dashboard_private_admin.tfvars`
   - Same as the staging least-privilege IoT posture, but for production.
+  - Includes commented examples for optional IAP perimeter variables on dashboard/admin services.
 
 ## Notes
 
@@ -55,3 +56,4 @@ make deploy-gcp-prod  PROJECT_ID=... REGION=us-central1
 - `ADMIN_API_KEY` is only required by the app when `ADMIN_AUTH_MODE=key`. Terraform still creates and passes the secret by default, which is fine.
 - If you use `enable_admin_service=true`, the module outputs `admin_service_url` in addition to `service_url`.
 - If you use `enable_dashboard_service=true`, the module outputs `dashboard_service_url`.
+- If you enable IAP, use `admin_iap_url` / `dashboard_iap_url` outputs as operator entrypoints.

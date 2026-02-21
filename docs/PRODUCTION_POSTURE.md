@@ -104,7 +104,11 @@ make url-gcp-dashboard PROJECT_ID=... REGION=us-central1 TFVARS=infra/gcp/cloud_
 
 **Recommended additions (infrastructure perimeter)**
 - Cloud Armor / WAF + basic rate limits
-- Optional: put the **dashboard/admin UI** behind IAP (Load Balancer + IAP) while keeping ingest public
+- Optional: put the **dashboard/admin UI** behind IAP (HTTPS Load Balancer + IAP) while keeping ingest public
+  - `enable_dashboard_iap=true` / `enable_admin_iap=true`
+  - configure `*_iap_domain`, `*_iap_oauth2_client_id`, `*_iap_oauth2_client_secret`
+  - configure principal/group allowlists: `*_iap_allowlist_members`
+  - app defense-in-depth for admin service is enabled automatically (`IAP_AUTH_ENABLED=true`)
 
 ---
 

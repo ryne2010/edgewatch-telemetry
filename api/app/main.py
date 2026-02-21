@@ -112,6 +112,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
             "admin": {
                 "enabled": bool(settings.enable_admin_routes),
                 "auth_mode": str(settings.admin_auth_mode),
+                "iap_auth_enabled": bool(settings.iap_auth_enabled),
             },
             "docs": {"enabled": bool(settings.enable_docs)},
             "otel": {"enabled": bool(settings.enable_otel)},

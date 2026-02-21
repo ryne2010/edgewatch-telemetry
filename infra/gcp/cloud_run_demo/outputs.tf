@@ -13,6 +13,16 @@ output "dashboard_service_url" {
   value       = try(module.cloud_run_dashboard[0].service_url, null)
 }
 
+output "dashboard_iap_url" {
+  description = "Dashboard IAP URL (if enable_dashboard_iap=true)."
+  value       = var.enable_dashboard_iap ? "https://${var.dashboard_iap_domain}" : null
+}
+
+output "admin_iap_url" {
+  description = "Admin IAP URL (if enable_admin_iap=true)."
+  value       = var.enable_admin_iap ? "https://${var.admin_iap_domain}" : null
+}
+
 output "runtime_service_account" {
   description = "Cloud Run runtime service account email."
   value       = module.service_accounts.runtime_service_account_email

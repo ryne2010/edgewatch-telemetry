@@ -80,6 +80,7 @@ class Settings:
 
     # Auth posture
     admin_auth_mode: AdminAuthMode
+    iap_auth_enabled: bool
 
     # Crypto / auth
     token_pbkdf2_iterations: int
@@ -291,6 +292,7 @@ def load_settings() -> Settings:
         enable_ingest_routes=enable_ingest_routes,
         enable_read_routes=enable_read_routes,
         admin_auth_mode=admin_auth_mode,
+        iap_auth_enabled=_get_bool("IAP_AUTH_ENABLED", False),
         token_pbkdf2_iterations=_get_int("TOKEN_PBKDF2_ITERATIONS", 210_000),
         offline_check_interval_s=_get_int("OFFLINE_CHECK_INTERVAL_S", 30),
         # Deprecated: prefer contracts/edge_policy/* for thresholds.

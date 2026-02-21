@@ -8,6 +8,7 @@ from sqlalchemy import desc
 
 from ..db import db_session
 from ..models import Device, DriftEvent, ExportBatch, IngestionBatch, NotificationEvent
+from ..observability import get_request_id
 from ..schemas import (
     AdminDeviceCreate,
     AdminDeviceUpdate,
@@ -18,13 +19,14 @@ from ..schemas import (
     NotificationEventOut,
 )
 from ..security import hash_token, require_admin, token_fingerprint
+from ..services.admin_audit import record_admin_event
 from ..services.monitor import compute_status
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
-@router.post("/devices", dependencies=[Depends(require_admin)], response_model=DeviceOut)
-def create_device(req: AdminDeviceCreate) -> DeviceOut:
+@router.post("/devices", response_model=DeviceOut)
+def create_device(req: AdminDeviceCreate, actor_email: str = Depends(require_admin)) -> DeviceOut:
     with db_session() as session:
         existing = session.query(Device).filter(Device.device_id == req.device_id).one_or_none()
         if existing:
@@ -40,6 +42,19 @@ def create_device(req: AdminDeviceCreate) -> DeviceOut:
             enabled=True,
         )
         session.add(d)
+        record_admin_event(
+            session,
+            actor_email=actor_email,
+            action="device.create",
+            target_type="device",
+            target_device_id=d.device_id,
+            details={
+                "enabled": True,
+                "heartbeat_interval_s": req.heartbeat_interval_s,
+                "offline_after_s": req.offline_after_s,
+            },
+            request_id=get_request_id(),
+        )
 
         now = datetime.now(timezone.utc)
         status_str, seconds = compute_status(d, now)
@@ -55,24 +70,43 @@ def create_device(req: AdminDeviceCreate) -> DeviceOut:
         )
 
 
-@router.patch("/devices/{device_id}", dependencies=[Depends(require_admin)], response_model=DeviceOut)
-def update_device(device_id: str, req: AdminDeviceUpdate) -> DeviceOut:
+@router.patch("/devices/{device_id}", response_model=DeviceOut)
+def update_device(
+    device_id: str, req: AdminDeviceUpdate, actor_email: str = Depends(require_admin)
+) -> DeviceOut:
     with db_session() as session:
         d = session.query(Device).filter(Device.device_id == device_id).one_or_none()
         if not d:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
 
+        changed_fields: list[str] = []
         if req.display_name is not None:
             d.display_name = req.display_name
+            changed_fields.append("display_name")
         if req.token is not None:
             d.token_fingerprint = token_fingerprint(req.token)
             d.token_hash = hash_token(req.token)
+            changed_fields.append("token")
         if req.heartbeat_interval_s is not None:
             d.heartbeat_interval_s = req.heartbeat_interval_s
+            changed_fields.append("heartbeat_interval_s")
         if req.offline_after_s is not None:
             d.offline_after_s = req.offline_after_s
+            changed_fields.append("offline_after_s")
         if req.enabled is not None:
             d.enabled = req.enabled
+            changed_fields.append("enabled")
+
+        if changed_fields:
+            record_admin_event(
+                session,
+                actor_email=actor_email,
+                action="device.update",
+                target_type="device",
+                target_device_id=d.device_id,
+                details={"changed_fields": changed_fields},
+                request_id=get_request_id(),
+            )
 
         now = datetime.now(timezone.utc)
         status_str, seconds = compute_status(d, now)

@@ -4,6 +4,12 @@ locals {
     env = var.env
   }
 
+  admin_service_name_effective = coalesce(var.admin_service_name, "${var.service_name}-admin")
+  dashboard_service_name_effective = coalesce(
+    var.dashboard_service_name,
+    "${var.service_name}-dashboard",
+  )
+
   cloudsql_instance_name = coalesce(var.cloudsql_instance_name, "${var.service_name}-pg")
 
   analytics_export_bucket = coalesce(
@@ -27,6 +33,7 @@ locals {
     # Admin surface toggles (see docs/PRODUCTION_POSTURE.md)
     ENABLE_ADMIN_ROUTES = var.enable_admin_routes ? "true" : "false"
     ADMIN_AUTH_MODE     = var.admin_auth_mode
+    IAP_AUTH_ENABLED    = "false"
 
     # Route surface toggles (see docs/PRODUCTION_POSTURE.md)
     ENABLE_UI            = var.enable_ui ? "true" : "false"
@@ -265,7 +272,7 @@ module "cloud_run_admin" {
 
   project_id            = var.project_id
   region                = var.region
-  service_name          = coalesce(var.admin_service_name, "${var.service_name}-admin")
+  service_name          = local.admin_service_name_effective
   image                 = var.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
@@ -280,6 +287,7 @@ module "cloud_run_admin" {
     # Ensure admin surface is present
     ENABLE_ADMIN_ROUTES = "true"
     ADMIN_AUTH_MODE     = var.admin_service_admin_auth_mode
+    IAP_AUTH_ENABLED    = var.enable_admin_iap ? "true" : "false"
 
     # Admin UI should be reachable on this service
     ENABLE_UI            = "true"
@@ -310,7 +318,7 @@ module "cloud_run_dashboard" {
 
   project_id            = var.project_id
   region                = var.region
-  service_name          = coalesce(var.dashboard_service_name, "${var.service_name}-dashboard")
+  service_name          = local.dashboard_service_name_effective
   image                 = var.image
   service_account_email = module.service_accounts.runtime_service_account_email
 

@@ -1,6 +1,6 @@
 # Task 18 — IAP identity perimeter for dashboard/admin (Terraform + app verification)
 
-🟡 **Status: Planned**
+✅ **Status: Implemented**
 
 ## Objective
 

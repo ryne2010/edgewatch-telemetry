@@ -72,7 +72,26 @@ def verify_token(token: str, token_hash: str) -> bool:
 # -----------------------------------------------------------------------------
 
 
-def require_admin(x_admin_key: str | None = Header(default=None, alias="X-Admin-Key")) -> None:
+def _normalize_iap_email(raw: object) -> str | None:
+    if raw is None or not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+    if ":" in value:
+        _, value = value.split(":", 1)
+    email = value.strip().lower()
+    if "@" not in email:
+        return None
+    return email
+
+
+def require_admin(
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+    x_goog_authenticated_user_email: str | None = Header(
+        default=None, alias="X-Goog-Authenticated-User-Email"
+    ),
+) -> str:
     """Admin authorization gate.
 
     Modes
@@ -84,8 +103,15 @@ def require_admin(x_admin_key: str | None = Header(default=None, alias="X-Admin-
     """
 
     mode = getattr(settings, "admin_auth_mode", "key")
+    actor_email = _normalize_iap_email(x_goog_authenticated_user_email)
+    if settings.iap_auth_enabled and not actor_email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing IAP authenticated user email",
+        )
+
     if mode == "none":
-        return
+        return actor_email or "perimeter"
 
     # Default: shared admin key (local/dev).
     if (
@@ -94,6 +120,7 @@ def require_admin(x_admin_key: str | None = Header(default=None, alias="X-Admin-
         or not hmac.compare_digest(x_admin_key, settings.admin_api_key)
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin key")
+    return actor_email or "admin-key"
 
 
 def require_device_auth(authorization: str | None = Header(default=None, alias="Authorization")) -> Device:
