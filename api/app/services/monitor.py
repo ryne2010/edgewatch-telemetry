@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..edge_policy import load_edge_policy
 from ..models import Device, Alert
+from ..observability import record_alert_transition_metric
 from .notifications import process_alert_notification
 
 
@@ -81,7 +82,7 @@ def _resolve_offline_alert_if_any(session: Session, device: Device, now: datetim
         .all()
     )
     for a in open_alerts:
-        a.resolved_at = now
+        _resolve_alert(a, now=now)
 
     # Optional: create an explicit online event when it returns
     if open_alerts:
@@ -145,7 +146,7 @@ def ensure_water_pressure_alerts(
             )
     else:
         if open_alert and water_pressure_psi >= recover:
-            open_alert.resolved_at = now
+            _resolve_alert(open_alert, now=now)
             _create_alert(
                 session,
                 Alert(
@@ -194,7 +195,7 @@ def ensure_oil_pressure_alerts(
             )
     else:
         if open_alert and oil_pressure_psi >= recover:
-            open_alert.resolved_at = now
+            _resolve_alert(open_alert, now=now)
             _create_alert(
                 session,
                 Alert(
@@ -241,7 +242,7 @@ def ensure_oil_level_alerts(session: Session, device_id: str, oil_level_pct: flo
             )
     else:
         if open_alert and oil_level_pct >= recover:
-            open_alert.resolved_at = now
+            _resolve_alert(open_alert, now=now)
             _create_alert(
                 session,
                 Alert(
@@ -290,7 +291,7 @@ def ensure_drip_oil_level_alerts(
             )
     else:
         if open_alert and drip_oil_level_pct >= recover:
-            open_alert.resolved_at = now
+            _resolve_alert(open_alert, now=now)
             _create_alert(
                 session,
                 Alert(
@@ -340,7 +341,7 @@ def ensure_oil_life_alerts(session: Session, device_id: str, oil_life_pct: float
             )
     else:
         if open_alert and oil_life_pct >= recover:
-            open_alert.resolved_at = now
+            _resolve_alert(open_alert, now=now)
             _create_alert(
                 session,
                 Alert(
@@ -397,7 +398,7 @@ def ensure_battery_alerts(session: Session, device_id: str, battery_v: float, no
             )
     else:
         if open_alert and battery_v >= recover:
-            open_alert.resolved_at = now
+            _resolve_alert(open_alert, now=now)
             _create_alert(
                 session,
                 Alert(
@@ -453,7 +454,7 @@ def ensure_signal_alerts(session: Session, device_id: str, signal_rssi_dbm: floa
             )
     else:
         if open_alert and signal_rssi_dbm >= recover:
-            open_alert.resolved_at = now
+            _resolve_alert(open_alert, now=now)
             _create_alert(
                 session,
                 Alert(
@@ -467,9 +468,30 @@ def ensure_signal_alerts(session: Session, device_id: str, signal_rssi_dbm: floa
             )
 
 
+def _is_resolution_event(alert_type: str) -> bool:
+    return alert_type == "DEVICE_ONLINE" or alert_type.endswith("_OK")
+
+
+def _resolve_alert(alert: Alert, *, now: datetime) -> None:
+    if alert.resolved_at is not None:
+        return
+    alert.resolved_at = now
+    record_alert_transition_metric(
+        state="close",
+        alert_type=alert.alert_type,
+        severity=alert.severity,
+    )
+
+
 def _create_alert(session: Session, alert: Alert, *, now: datetime) -> None:
     session.add(alert)
     session.flush()
+    if not _is_resolution_event(alert.alert_type):
+        record_alert_transition_metric(
+            state="open",
+            alert_type=alert.alert_type,
+            severity=alert.severity,
+        )
     try:
         process_alert_notification(session, alert, now=now)
     except Exception:

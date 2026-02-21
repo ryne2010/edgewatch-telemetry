@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from .observability import (
     configure_logging,
     get_request_id,
     maybe_instrument_opentelemetry,
+    record_monitor_loop_metric,
 )
 from .version import __version__
 from .demo_fleet import derive_nth as _derive_nth
@@ -99,6 +101,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
     maybe_instrument_opentelemetry(
         enabled=settings.enable_otel,
         app=app,
+        sqlalchemy_engine=engine,
         service_name=os.getenv("OTEL_SERVICE_NAME") or "edgewatch-telemetry",
         service_version=__version__,
         environment=settings.app_env,
@@ -424,11 +427,17 @@ def _stop_scheduler() -> None:
 
 
 def _offline_job() -> None:
+    start = time.perf_counter()
+    success = False
     try:
         with db_session() as session:
             ensure_offline_alerts(session)
+        success = True
     except Exception:
         logger.exception("offline_check failed")
+    finally:
+        duration_ms = (time.perf_counter() - start) * 1000.0
+        record_monitor_loop_metric(duration_ms=duration_ms, success=success)
 
 
 # ASGI entrypoint

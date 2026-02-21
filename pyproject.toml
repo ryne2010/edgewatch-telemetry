@@ -39,6 +39,7 @@ otel = [
   "opentelemetry-api>=1.28.0",
   "opentelemetry-sdk>=1.28.0",
   "opentelemetry-instrumentation-fastapi>=0.49b0",
+  "opentelemetry-instrumentation-sqlalchemy>=0.49b0",
   "opentelemetry-exporter-otlp>=1.28.0",
 ]
 

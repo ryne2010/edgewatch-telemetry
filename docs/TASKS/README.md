@@ -65,11 +65,11 @@ python scripts/harness.py lint --only node
 - `13a-cellular-runbook.md`
 - `13b-agent-cellular-metrics-watchdog.md`
 - `13c-cost-caps-policy.md`
+- `16-opentelemetry.md`
 
 ### In progress / partial
 
 - `14-ui-ux-polish.md` (core UX shipped; remaining items tracked inside)
-- `16-opentelemetry.md` (FastAPI tracing is present; SQLAlchemy + metrics remain)
 
 ### Planned
 

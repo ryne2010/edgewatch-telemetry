@@ -884,6 +884,51 @@
 
 - [ ] Complete remaining Task 14 work for IAP operator posture UX after Task 18 lands.
 
+## Task 16 — OpenTelemetry SQLAlchemy + Metrics (2026-02-21)
+
+### What changed
+
+- Expanded OTEL wiring with SQLAlchemy instrumentation and metric export:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/observability.py`
+  - added SQLAlchemy span instrumentation (`opentelemetry-instrumentation-sqlalchemy`)
+  - added request correlation attributes on HTTP + DB spans (`edgewatch.request_id`)
+  - added OTEL metrics instruments for:
+    - HTTP request count/latency by endpoint
+    - ingest points accepted/rejected
+    - alert open/close transitions
+    - monitor loop duration
+- Wired monitor loop metric emission:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/main.py`
+- Wired ingest accepted/rejected point metrics:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/ingest.py`
+- Wired alert lifecycle transition metrics:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/monitor.py`
+- Added OTEL dependency for SQLAlchemy instrumentation:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pyproject.toml`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/uv.lock`
+- Updated observability/task docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/OBSERVABILITY.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/OBSERVABILITY_OTEL.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/16-opentelemetry.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 16 so OTEL-enabled deployments include both request and DB spans plus actionable service-level metrics for incident triage.
+
+### How it was validated
+
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- OTEL remains opt-in (`ENABLE_OTEL=1`); when disabled, metric and instrumentation paths are no-ops.
+- In non-dev environments, metrics/traces require OTLP endpoint configuration (`OTEL_EXPORTER_OTLP_*`) to leave the process.
+
+### Follow-ups / tech debt
+
+- [ ] Consider adding explicit OTEL collector Terraform module/task for a turnkey Cloud Run deployment path.
+
 ## Task 14 (Iteration) — Alerts Timeline + Routing Audit (2026-02-21)
 
 ### What changed
