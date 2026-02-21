@@ -801,8 +801,7 @@ tf-lint: ## tflint (falls back to docker)
 	  echo "tflint not found; running via Docker"; \
 	  tf_parent=$$(dirname "$(TF_DIR)"); \
 	  tf_leaf=$$(basename "$(TF_DIR)"); \
-	  docker run --rm -v "$$(pwd)/$$tf_parent:/workspace" -w "/workspace/$$tf_leaf" ghcr.io/terraform-linters/tflint:latest --init && \
-	  docker run --rm -v "$$(pwd)/$$tf_parent:/workspace" -w "/workspace/$$tf_leaf" ghcr.io/terraform-linters/tflint:latest; \
+	  docker run --rm --entrypoint sh -v "$$(pwd)/$$tf_parent:/workspace" -w "/workspace/$$tf_leaf" ghcr.io/terraform-linters/tflint:latest -lc 'tflint --init && tflint'; \
 	fi
 
 tf-sec: ## tfsec (falls back to docker)

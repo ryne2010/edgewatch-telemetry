@@ -581,6 +581,7 @@
 - Fixed Terraform hygiene Docker fallback pathing:
   - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile`
   - `tf-lint` now mounts `infra/gcp` (parent) and runs in `cloud_run_demo` so `../modules/*` resolves correctly when `tflint` is run via Docker in CI.
+  - Docker fallback now runs `tflint --init && tflint` in a single container invocation so plugin initialization is available to the lint step.
 - Fixed Node typecheck blockers reached once Python/Terraform gates were green:
   - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx` (severity type narrowing)
   - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx` (missing `fmtAlertType` import)
