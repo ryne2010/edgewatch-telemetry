@@ -62,6 +62,7 @@ python scripts/harness.py lint --only node
 - `12b-api-media-metadata-storage.md`
 - `12c-web-media-gallery.md`
 - `13a-cellular-runbook.md`
+- `13b-agent-cellular-metrics-watchdog.md`
 
 ### In progress / partial
 
@@ -77,7 +78,6 @@ python scripts/harness.py lint --only node
 - `12-camera-capture-upload.md` (epic)
 
 - `13-cellular-connectivity.md` (epic)
-  - `13b-agent-cellular-metrics-watchdog.md`
   - `13c-cost-caps-policy.md`
 
 #### Production upgrades

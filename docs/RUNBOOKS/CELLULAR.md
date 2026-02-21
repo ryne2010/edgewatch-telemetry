@@ -165,10 +165,20 @@ Expected:
 - no repeated ingest/auth failures
 - successful policy fetch and ingest posts
 
+If Task 13b cellular observability is enabled, verify agent env includes:
+
+- `CELLULAR_METRICS_ENABLED=true`
+- `CELLULAR_WATCHDOG_ENABLED=true`
+
 Validate telemetry fields in UI/API:
 
 - device remains online
 - `signal_rssi_dbm` appears in telemetry stream
+- `cellular_registration_state` appears and is typically `home` or `roaming`
+- `link_ok` toggles based on real connectivity checks
+- `link_last_ok_at` updates when connectivity succeeds
+- when modem supports them: `cellular_rsrp_dbm`, `cellular_rsrq_db`, `cellular_sinr_db`
+- daily counters increment: `cellular_bytes_sent_today`, `cellular_bytes_received_today`
 - local buffer is not continuously growing
 
 ## 7) Common failures (with commands + expected output)
@@ -310,6 +320,7 @@ Most likely causes:
 - IP + default route + DNS + HTTPS egress verified.
 - Agent running under `systemd` with clean logs for at least 10-15 minutes.
 - `signal_rssi_dbm` visible in EdgeWatch telemetry.
+- `link_ok` and `link_last_ok_at` visible in telemetry (if watchdog enabled).
 - Reboot test completed and LTE reconnects automatically.
 - Device can reach API and ingest points after reboot.
 
