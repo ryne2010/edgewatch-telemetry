@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     String,
     Integer,
+    Float,
     DateTime,
     Boolean,
     JSON,
@@ -88,6 +89,45 @@ class TelemetryPoint(Base):
         UniqueConstraint("device_id", "message_id", name="uq_telemetry_device_message_id"),
         Index("ix_telemetry_device_ts", "device_id", "ts"),
         Index("ix_telemetry_batch_id", "batch_id"),
+    )
+
+
+class TelemetryIngestDedupe(Base):
+    __tablename__ = "telemetry_ingest_dedupe"
+
+    device_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("devices.device_id"),
+        primary_key=True,
+        nullable=False,
+    )
+    message_id: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False)
+    point_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    __table_args__ = (Index("ix_telemetry_ingest_dedupe_point_ts", "point_ts"),)
+
+
+class TelemetryRollupHourly(Base):
+    __tablename__ = "telemetry_rollups_hourly"
+
+    device_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("devices.device_id"),
+        primary_key=True,
+        nullable=False,
+    )
+    metric_key: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False)
+    bucket_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True, nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_value: Mapped[float] = mapped_column(Float, nullable=False)
+    max_value: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_value: Mapped[float] = mapped_column(Float, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    __table_args__ = (
+        Index("ix_telemetry_rollups_hourly_bucket_ts", "bucket_ts"),
+        Index("ix_telemetry_rollups_hourly_metric_bucket", "metric_key", "bucket_ts"),
     )
 
 

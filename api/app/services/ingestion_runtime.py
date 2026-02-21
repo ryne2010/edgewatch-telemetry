@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence
 
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from ..models import Device, DriftEvent, IngestionBatch, QuarantinedTelemetry, TelemetryPoint
+from ..models import (
+    Device,
+    DriftEvent,
+    IngestionBatch,
+    QuarantinedTelemetry,
+    TelemetryIngestDedupe,
+    TelemetryPoint,
+)
 from .ingest_pipeline import CandidatePoint, QuarantinedPoint, candidate_rows
 from .monitor import (
     ensure_battery_alerts,
@@ -17,6 +25,16 @@ from .monitor import (
     ensure_signal_alerts,
     ensure_water_pressure_alerts,
 )
+
+
+def _dialect_insert(
+    session: Session,
+    model: type[TelemetryPoint] | type[TelemetryIngestDedupe],
+):
+    dialect = (session.bind.dialect.name if session.bind is not None else "").strip().lower()
+    if dialect == "sqlite":
+        return sqlite_insert(model)
+    return pg_insert(model)
 
 
 def persist_points_for_batch(
@@ -36,14 +54,32 @@ def persist_points_for_batch(
         if point.message_id not in point_by_message_id:
             point_by_message_id[point.message_id] = point
 
-    stmt = (
-        insert(TelemetryPoint)
-        .values(rows)
+    unique_points = list(point_by_message_id.values())
+    unique_rows = candidate_rows(device_id=device_id, batch_id=batch_id, points=unique_points)
+    dedupe_rows = [
+        {
+            "device_id": device_id,
+            "message_id": row["message_id"],
+            "point_ts": row["ts"],
+        }
+        for row in unique_rows
+    ]
+
+    dedupe_stmt = (
+        _dialect_insert(session, TelemetryIngestDedupe)
+        .values(dedupe_rows)
         .on_conflict_do_nothing(index_elements=["device_id", "message_id"])
-        .returning(TelemetryPoint.message_id)
+        .returning(TelemetryIngestDedupe.message_id)
     )
 
-    inserted_message_ids = list(session.execute(stmt).scalars().all())
+    inserted_message_ids = list(session.execute(dedupe_stmt).scalars().all())
+    accepted_message_ids = set(inserted_message_ids)
+
+    telemetry_rows = [row for row in unique_rows if row["message_id"] in accepted_message_ids]
+    if telemetry_rows:
+        telemetry_stmt = _dialect_insert(session, TelemetryPoint).values(telemetry_rows)
+        session.execute(telemetry_stmt)
+
     accepted = len(inserted_message_ids)
     duplicates = len(rows) - accepted
 
@@ -87,8 +123,12 @@ def persist_points_for_batch(
 
     if newest_ts is not None:
         device = session.query(Device).filter(Device.device_id == device_id).one_or_none()
-        if device is not None and (device.last_seen_at is None or newest_ts > device.last_seen_at):
-            device.last_seen_at = newest_ts
+        if device is not None:
+            last_seen_at = device.last_seen_at
+            if last_seen_at is not None and last_seen_at.tzinfo is None:
+                last_seen_at = last_seen_at.replace(tzinfo=timezone.utc)
+            if last_seen_at is None or newest_ts > last_seen_at:
+                device.last_seen_at = newest_ts
 
     return accepted, duplicates, newest_ts
 

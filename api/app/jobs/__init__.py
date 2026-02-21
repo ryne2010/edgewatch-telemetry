@@ -6,6 +6,7 @@ These modules are designed to run as:
   python -m api.app.jobs.analytics_export
   python -m api.app.jobs.simulate_telemetry
   python -m api.app.jobs.retention
+  python -m api.app.jobs.partition_manager
 
 In production (GCP), they can be executed via Cloud Run Jobs.
 """

@@ -1150,3 +1150,68 @@
 ### Follow-ups / tech debt
 
 - [ ] Complete remaining Task 14 work for IAP operator posture UX after Task 18 lands.
+
+## Task 17 — Telemetry Partitioning + Rollups (2026-02-21)
+
+### What changed
+
+- Added Postgres scale-path migration:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0010_telemetry_partition_rollups.py`
+  - creates `telemetry_ingest_dedupe` and `telemetry_rollups_hourly`
+  - converts Postgres `telemetry_points` to monthly range partitions on `ts`
+  - keeps non-Postgres lanes portable (no partition conversion on SQLite)
+- Updated ingest runtime to preserve idempotency independent of partitioned-table unique constraints:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/ingestion_runtime.py`
+  - reserves `(device_id, message_id)` in `telemetry_ingest_dedupe` before inserting telemetry rows
+- Added partition/rollup services + scheduled job:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/telemetry_partitions.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/telemetry_rollups.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/jobs/partition_manager.py`
+- Enhanced retention to drop old partitions first (when enabled) and prune dedupe/rollup tables:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/jobs/retention.py`
+- Added optional rollup-backed reads for hourly timeseries:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/devices.py`
+- Terraform + ops wiring for partition manager Cloud Run Job + Scheduler:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/jobs.tf`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/variables.tf`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/stage_private_iam.tfvars`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles/prod_private_iam.tfvars`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile` (`partition-manager-gcp`)
+- Added/updated tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_ingestion_runtime.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_telemetry_scale_services.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_migrations_sqlite.py`
+- Updated task/docs/changelog/version:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/17-telemetry-partitioning-rollups.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CODEX_HANDOFF.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/RETENTION.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_GCP.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/PRODUCTION_POSTURE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/CHANGELOG.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pyproject.toml`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/version.py`
+
+### Why it changed
+
+- Task 17 requires a production-ready Postgres scale path: partitioned telemetry storage, scheduled partition management, retention via partition drops, and optional hourly rollups for long-range chart workloads.
+- Postgres partitioned tables cannot directly preserve the prior `(device_id, message_id)` unique enforcement pattern, so ingest idempotency was moved to a dedicated dedupe table while preserving the same external contract.
+
+### How it was validated
+
+- `make fmt` ✅
+- `make harness` ✅
+- `make db-up` ✅
+- `make db-migrate` ✅
+- `make tf-check` ✅ (with existing soft-fail checkov findings in baseline posture)
+
+### Risks / rollout notes
+
+- **Migration ordering is mandatory**: deploys must run Alembic `0010_telemetry_partition_rollups` before app code that depends on new tables/jobs.
+- Rollup reads are only used when `TELEMETRY_ROLLUPS_ENABLED=true` and bucket is hourly; otherwise the API remains on raw telemetry aggregation.
+- `make tf-check` still reports known policy findings in this repo’s current baseline (soft-fail enabled); no new hard failures were introduced by Task 17 wiring.
+
+### Follow-ups / tech debt
+
+- [ ] Add a Postgres migration integration test lane that asserts partitioned table plans directly (for example, `EXPLAIN` partition pruning checks in CI).

@@ -46,3 +46,11 @@ enable_retention_job      = true
 retention_job_schedule    = "30 3 * * *"
 telemetry_retention_days  = 7
 quarantine_retention_days = 7
+
+# Postgres scale path (partition manager + hourly rollups)
+enable_partition_manager_job        = true
+partition_manager_job_schedule      = "0 */6 * * *"
+telemetry_partition_lookback_months = 1
+telemetry_partition_prewarm_months  = 2
+telemetry_rollups_enabled           = true
+telemetry_rollup_backfill_hours     = 168

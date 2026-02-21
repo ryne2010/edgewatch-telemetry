@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.15.0 (2026-02-21)
+
+### Added
+
+- Postgres scale-path schema migration (`0010_telemetry_partition_rollups`):
+  - monthly range partitions for `telemetry_points`
+  - ingestion idempotency registry table (`telemetry_ingest_dedupe`)
+  - hourly rollups table (`telemetry_rollups_hourly`)
+- Partition manager Cloud Run job + scheduler wiring:
+  - app job entrypoint: `python -m api.app.jobs.partition_manager`
+  - Terraform variables/profile defaults and Make target `partition-manager-gcp`
+- Retention hardening:
+  - drops expired monthly telemetry partitions when partitioning is enabled
+  - prunes dedupe + rollup tables by retention horizon
+- New tests for ingest dedupe runtime and telemetry scale helpers.
+
+### Changed
+
+- Ingest runtime now reserves `(device_id, message_id)` idempotency keys in `telemetry_ingest_dedupe` before inserting telemetry rows.
+- Docs updated for production posture, retention, deploy steps, and task queue status.
+
 ## v0.14.1 (2026-02-21)
 
 ### Added

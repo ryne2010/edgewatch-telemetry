@@ -166,6 +166,13 @@ class Settings:
     retention_batch_size: int
     retention_max_batches: int
 
+    # Postgres scale path (time partitions + optional rollups)
+    telemetry_partitioning_enabled: bool
+    telemetry_partition_lookback_months: int
+    telemetry_partition_prewarm_months: int
+    telemetry_rollups_enabled: bool
+    telemetry_rollup_backfill_hours: int
+
 
 def load_settings() -> Settings:
     app_env = (os.getenv("APP_ENV", "dev").strip() or "dev").lower()
@@ -294,6 +301,11 @@ def load_settings() -> Settings:
     retention_enabled = _get_bool("RETENTION_ENABLED", False)
     retention_batch_size = _get_int("RETENTION_BATCH_SIZE", 5000)
     retention_max_batches = _get_int("RETENTION_MAX_BATCHES", 50)
+    telemetry_partitioning_enabled = _get_bool("TELEMETRY_PARTITIONING_ENABLED", False)
+    telemetry_partition_lookback_months = max(0, _get_int("TELEMETRY_PARTITION_LOOKBACK_MONTHS", 1))
+    telemetry_partition_prewarm_months = max(0, _get_int("TELEMETRY_PARTITION_PREWARM_MONTHS", 2))
+    telemetry_rollups_enabled = _get_bool("TELEMETRY_ROLLUPS_ENABLED", False)
+    telemetry_rollup_backfill_hours = max(1, _get_int("TELEMETRY_ROLLUP_BACKFILL_HOURS", 24 * 7))
 
     return Settings(
         app_env=app_env,
@@ -381,6 +393,11 @@ def load_settings() -> Settings:
         quarantine_retention_days=quarantine_retention_days,
         retention_batch_size=retention_batch_size,
         retention_max_batches=retention_max_batches,
+        telemetry_partitioning_enabled=telemetry_partitioning_enabled,
+        telemetry_partition_lookback_months=telemetry_partition_lookback_months,
+        telemetry_partition_prewarm_months=telemetry_partition_prewarm_months,
+        telemetry_rollups_enabled=telemetry_rollups_enabled,
+        telemetry_rollup_backfill_hours=telemetry_rollup_backfill_hours,
     )
 
 
