@@ -22,6 +22,8 @@ backends:
     derived:
       oil_life_max_run_hours: 300
       state_path: ./agent/state/oil_life_state.json
+      run_on_threshold: 25
+      run_off_threshold: 20
 
 # Channel mapping for ADS1115 analog lanes.
 channels:

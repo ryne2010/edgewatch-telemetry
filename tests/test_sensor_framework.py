@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent.sensors.backends.derived import DerivedOilLifeBackend
 from agent.sensors.backends.composite import CompositeSensorBackend
 from agent.sensors.backends.rpi_adc import RpiAdcSensorBackend
 from agent.sensors.base import Metrics
@@ -139,3 +140,47 @@ def test_composite_config_requires_backends_list(
     with pytest.raises(SensorConfigError) as exc:
         load_sensor_config_from_env()
     assert "requires non-empty 'backends' list" in str(exc.value)
+
+
+def test_derived_backend_builds_from_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "derived.yaml"
+    _write_yaml(
+        config_path,
+        f"""
+        backend: derived
+        derived:
+          oil_life_max_run_hours: 300
+          state_path: "{tmp_path / "oil_life_state.json"}"
+          run_on_threshold: 28
+          run_off_threshold: 22
+        """,
+    )
+    monkeypatch.setenv("SENSOR_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("SENSOR_BACKEND", raising=False)
+
+    cfg = load_sensor_config_from_env()
+    backend = build_sensor_backend(device_id="demo-well-001", config=cfg)
+    assert isinstance(backend.backend, DerivedOilLifeBackend)
+
+
+def test_derived_config_rejects_invalid_hysteresis(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "bad-derived.yaml"
+    _write_yaml(
+        config_path,
+        """
+        backend: derived
+        derived:
+          oil_life_max_run_hours: 250
+          run_on_threshold: 20
+          run_off_threshold: 25
+        """,
+    )
+    monkeypatch.setenv("SENSOR_CONFIG_PATH", str(config_path))
+    monkeypatch.delenv("SENSOR_BACKEND", raising=False)
+
+    cfg = load_sensor_config_from_env()
+    with pytest.raises(SensorConfigError):
+        build_sensor_backend(device_id="demo-well-001", config=cfg)

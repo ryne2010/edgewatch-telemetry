@@ -68,7 +68,7 @@ Supported backend names in this stage:
 - `composite`
 - `rpi_i2c` (BME280 temperature + humidity via I2C; requires `smbus2` on Pi)
 - `rpi_adc` (ADS1115 pressures/levels via I2C; requires `smbus2` on Pi)
-- `derived` (placeholder, emits `None` metrics until Task 11d lands)
+- `derived` (runtime oil-life model with durable local state + manual reset)
 
 For Raspberry Pi I2C:
 
@@ -82,6 +82,13 @@ For Raspberry Pi ADC (ADS1115):
 ```bash
 pip install smbus2
 SENSOR_BACKEND=rpi_adc uv run python agent/edgewatch_agent.py
+```
+
+Oil life reset tool (device-local):
+
+```bash
+python -m agent.tools.oil_life reset --state ./agent/state/oil_life_state.json
+python -m agent.tools.oil_life show --state ./agent/state/oil_life_state.json
 ```
 
 ## Simulator

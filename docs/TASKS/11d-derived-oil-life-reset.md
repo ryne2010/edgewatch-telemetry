@@ -1,6 +1,6 @@
 # Task 11d — Derived oil life (%), durable state + manual reset
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 

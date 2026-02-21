@@ -341,3 +341,77 @@
 
 - [ ] Add a dedicated optional dependency group for hardware sensor packages once lockfile/tooling drift is resolved.
 - [ ] Consider per-metric warning throttles if field deployments need finer-grained channel diagnostics.
+
+## Task 11d — Derived Oil Life + Reset CLI (2026-02-21)
+
+### What changed
+
+- Added durable oil-life state primitives:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/derived/oil_life.py`
+  - state fields:
+    - `oil_life_runtime_s`
+    - `oil_life_reset_at`
+    - `oil_life_last_seen_running_at`
+    - `is_running`
+  - atomic persistence with temp file + fsync + rename
+  - reset helper + running-state inference + linear oil-life function
+- Added derived backend implementation:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/derived.py`
+  - computes `oil_life_pct` from durable runtime state
+  - running detection order:
+    - `pump_on` boolean when present
+    - fallback to `oil_pressure_psi` hysteresis (`run_on_threshold`, `run_off_threshold`)
+  - warning logs are rate-limited
+- Enabled context-aware composition for derived metrics:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/composite.py`
+  - composite now passes accumulated upstream metrics to backends that implement `read_metrics_with_context(...)`
+- Wired `derived` backend into config builder:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/config.py`
+  - supports config keys:
+    - `oil_life_max_run_hours`
+    - `state_path`
+    - `run_on_threshold`
+    - `run_off_threshold`
+    - `warning_interval_s`
+- Added reset/show CLI tool:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/tools/oil_life.py`
+  - runnable as:
+    - `python -m agent.tools.oil_life reset --state ...`
+    - `python -m agent.tools.oil_life show --state ...`
+- Updated exports/docs/examples:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/__init__.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/derived/__init__.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/config/example.sensors.yaml`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SENSORS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/11d-derived-oil-life-reset.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+- Added deterministic tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_derived.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_oil_life_tool.py`
+  - updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_framework.py`
+
+### Why it changed
+
+- Completes Task 11d by implementing a local-first, reboot-safe, manual-reset oil-life model aligned to ADR-20260220.
+- Keeps derived logic composable with existing mock/I2C/ADC pipelines without changing route/service boundaries.
+
+### How it was validated
+
+- Required full-gate run:
+  - `make harness` (fails on pre-existing repo-wide issues unrelated to this task, including existing API lint/type/test failures and repo hygiene `.DS_Store`)
+- Task-focused validation:
+  - `ruff check agent/sensors/backends/composite.py agent/sensors/backends/derived.py agent/sensors/derived/oil_life.py agent/sensors/config.py agent/tools/oil_life.py tests/test_sensor_derived.py tests/test_oil_life_tool.py tests/test_sensor_framework.py` (pass)
+  - `pyright agent/sensors/backends/composite.py agent/sensors/backends/derived.py agent/sensors/derived/oil_life.py agent/sensors/config.py agent/tools/oil_life.py tests/test_sensor_derived.py tests/test_oil_life_tool.py tests/test_sensor_framework.py` (pass)
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: pytest -q tests/test_sensor_derived.py tests/test_oil_life_tool.py tests/test_sensor_scaling.py tests/test_sensor_rpi_adc.py tests/test_sensor_rpi_i2c.py tests/test_sensor_framework.py` (pass)
+
+### Risks / rollout notes
+
+- Oil-life state path must be writable by the agent process.
+- Runtime accumulation between samples is interval-based; long sample intervals can smooth short run/stop cycles.
+
+### Follow-ups / tech debt
+
+- [ ] Consider emitting a local audit event when reset is invoked (for optional future upload).
+- [ ] Evaluate whether oil-life runtime should be checkpointed less frequently for flash-wear-sensitive deployments.
