@@ -206,6 +206,7 @@ class AdminEvent(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     actor_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    actor_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     target_type: Mapped[str] = mapped_column(String(64), nullable=False, default="device")
     target_device_id: Mapped[str | None] = mapped_column(

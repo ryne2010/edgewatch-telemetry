@@ -27,3 +27,6 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     assert "notification_events" in tables
     assert "media_objects" in tables
     assert "admin_events" in tables
+
+    admin_columns = {col["name"] for col in inspector.get_columns("admin_events")}
+    assert "actor_subject" in admin_columns

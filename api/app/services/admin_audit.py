@@ -15,6 +15,7 @@ def record_admin_event(
     session: Session,
     *,
     actor_email: str,
+    actor_subject: str | None,
     action: str,
     target_type: str,
     target_device_id: str | None,
@@ -23,6 +24,7 @@ def record_admin_event(
 ) -> AdminEvent:
     event = AdminEvent(
         actor_email=actor_email,
+        actor_subject=actor_subject,
         action=action,
         target_type=target_type,
         target_device_id=target_device_id,
@@ -35,6 +37,7 @@ def record_admin_event(
         extra={
             "fields": {
                 "actor_email": actor_email,
+                "actor_subject": actor_subject,
                 "action": action,
                 "target_type": target_type,
                 "target_device_id": target_device_id,

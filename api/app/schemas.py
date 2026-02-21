@@ -168,6 +168,18 @@ class NotificationEventOut(BaseModel):
     created_at: datetime
 
 
+class AdminEventOut(BaseModel):
+    id: str
+    actor_email: str
+    actor_subject: Optional[str]
+    action: str
+    target_type: str
+    target_device_id: Optional[str]
+    details: Dict[str, Any]
+    request_id: Optional[str]
+    created_at: datetime
+
+
 class ExportBatchOut(BaseModel):
     id: str
     started_at: datetime

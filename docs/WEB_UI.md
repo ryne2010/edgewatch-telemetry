@@ -7,7 +7,7 @@ The EdgeWatch UI is a single-page React app (Vite + TanStack Router/Query/Table)
 - Device drill-down with charts + raw points + oil life gauge
 - Alert feed + timeline grouping + routing audit visibility
 - Contract visibility (telemetry keys/types/units + edge policy cadence/thresholds)
-- Admin audit lanes (ingestions, drift, notifications, exports)
+- Admin audit lanes (events, ingestions, drift, notifications, exports)
 
 The UI is served by the API in production (same origin), and by Vite in the fast dev lane.
 
@@ -43,7 +43,7 @@ The left sidebar (desktop) / drawer (mobile) includes:
 - **Devices**: searchable fleet table with quick filters (`online/offline/unknown/open alerts`), health explanations, and latest vitals chips.
 - **Alerts**: alert feed with severity/device/type/open filters, volume sparklines, grouped timeline views, and routing decision audit details (when admin notifications are enabled).
 - **Contracts**: telemetry contract + edge policy contract (cadence/thresholds).
-- **Admin**: audit console (only shown when the backend enables admin routes).
+- **Admin**: audit console (only shown when the backend enables admin routes), including principal-attributed mutation events.
 - **Settings**: theme + admin access configuration.
 - **System**: API health + contract metadata + links to docs.
 
@@ -72,7 +72,7 @@ If the backend is running with `ADMIN_AUTH_MODE=key`, set an admin key via envir
 #### Storage behavior
 
 - **Save (session)** stores the key in `sessionStorage` (cleared when the browser closes)
-- **Save + persist** stores the key in `localStorage`
+- **Save + persist** stores the key in `localStorage` only for localhost/dev posture
 
 For production deployments, do **not** expose the admin key to browsers unless you also have a proper auth boundary.
 Prefer Cloud Run IAM/IAP and `ADMIN_AUTH_MODE=none`, or deploy a separate private admin service.
@@ -83,7 +83,7 @@ The device page provides:
 
 - **Overview**: heartbeat status + curated “latest telemetry” panel + quick chart + oil life service gauge + vitals sparklines
 - **Telemetry**: metric selector + chart (numeric metrics) + raw point explorer
-- **Admin tabs** (if enabled): ingestions, drift events, notification audits
+- **Admin tabs** (if enabled): events, ingestions, drift events, notification audits
 - **Media**:
   - device-scoped media gallery (`/api/v1/devices/{device_id}/media`) with camera filter (`cam1..cam4`)
   - “latest by camera” cards for quick operator scanning

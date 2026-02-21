@@ -142,6 +142,11 @@ Notes:
 - IAP requires DNS for the configured domain(s) and an OAuth client for IAP.
 - When `enable_admin_iap=true`, Terraform sets `IAP_AUTH_ENABLED=true` on the admin service so admin routes reject requests that do not include `X-Goog-Authenticated-User-Email`.
 
+Optional in-app RBAC (Task 15):
+- set `AUTHZ_ENABLED=1`
+- set role allowlists (`AUTHZ_VIEWER_EMAILS`, `AUTHZ_OPERATOR_EMAILS`, `AUTHZ_ADMIN_EMAILS`)
+- keep `AUTHZ_IAP_DEFAULT_ROLE=viewer` unless you intentionally want broader default access
+
 > Under the hood these targets set `TFVARS=...` and call `deploy-gcp-safe`.
 
 ### Recommended deploy lane

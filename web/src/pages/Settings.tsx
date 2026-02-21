@@ -12,6 +12,8 @@ export function SettingsPage() {
 
   const adminEnabled = Boolean(healthQ.data?.features?.admin?.enabled)
   const adminAuthMode = String(healthQ.data?.features?.admin?.auth_mode ?? 'key').toLowerCase()
+  const envName = String(healthQ.data?.env ?? '').toLowerCase()
+  const allowPersist = envName === 'dev'
 
   const [draftKey, setDraftKey] = React.useState(adminKey)
 
@@ -93,7 +95,7 @@ export function SettingsPage() {
                     placeholder="X-Admin-Key"
                   />
                   <div className="text-xs text-muted-foreground">
-                    Stored in session by default. Persist only on trusted developer machines.
+                    Stored in session by default. Persistence is available only in local dev posture.
                   </div>
                 </div>
 
@@ -108,6 +110,7 @@ export function SettingsPage() {
                   </Button>
                   <Button
                     variant="outline"
+                    disabled={!allowPersist}
                     onClick={() => {
                       setAdminKey(draftKey, { persist: true })
                       toast({
@@ -144,6 +147,13 @@ export function SettingsPage() {
                   Tip: Start with <code className="font-mono">.env.example</code> → <code className="font-mono">ADMIN_API_KEY</code>.
                   You can create a demo device via <code className="font-mono">make demo-device</code>.
                 </div>
+
+                {!allowPersist ? (
+                  <div className="text-xs text-muted-foreground">
+                    Persistent browser storage for admin keys is disabled when <code className="font-mono">APP_ENV</code> is not
+                    <code className="font-mono"> dev</code>.
+                  </div>
+                ) : null}
 
                 <div className="text-xs text-muted-foreground">
                   If you are deploying publicly, do not expose the admin key to browsers. Instead, keep admin endpoints

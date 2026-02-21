@@ -20,6 +20,7 @@ def test_record_admin_event_persists_actor_email() -> None:
         record_admin_event(
             session,
             actor_email="operator@example.com",
+            actor_subject="accounts.google.com:subject-123",
             action="device.create",
             target_type="device",
             target_device_id=None,
@@ -30,6 +31,7 @@ def test_record_admin_event_persists_actor_email() -> None:
 
         row = session.query(AdminEvent).one()
         assert row.actor_email == "operator@example.com"
+        assert row.actor_subject == "accounts.google.com:subject-123"
         assert row.action == "device.create"
         assert row.details == {"enabled": True}
         assert row.request_id == "req-123"

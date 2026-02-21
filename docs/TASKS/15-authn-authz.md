@@ -1,6 +1,6 @@
 # Task 15 — AuthN/AuthZ hardening (RBAC + audit attribution)
 
-🟡 **Status: Planned (identity perimeter is tracked in Task 18)**
+✅ **Status: Implemented**
 
 ## Objective
 

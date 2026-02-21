@@ -29,11 +29,15 @@ Base: `/api/v1`
 - `GET  /admin/drift-events` — drift audit events (admin surface; optional)
 - `GET  /admin/notifications` — notification routing/delivery audit events (admin surface; optional)
 - `GET  /admin/exports` — analytics export batch audit (admin surface; optional)
+- `GET  /admin/events` — admin mutation audit events (actor attribution)
 
 
 Admin surface controls:
 - `ENABLE_ADMIN_ROUTES=0` removes `/api/v1/admin/*` entirely
 - `ADMIN_AUTH_MODE=key|none` controls whether admin routes require `X-Admin-Key` or trust a perimeter
+- Optional RBAC controls:
+  - `AUTHZ_ENABLED=0|1`
+  - `AUTHZ_*_EMAILS` role allowlists
 
 **Compatibility:**
 - Endpoints under `/api/v1` are intended to be stable for the public demo.
@@ -116,7 +120,7 @@ A request includes:
 
 8) **Admin mutation attribution**
 - Admin device mutations are recorded in `admin_events`.
-- Each event includes acting principal (`actor_email`) and request correlation (`request_id`).
+- Each event includes acting principal (`actor_email`, optional `actor_subject`) and request correlation (`request_id`).
 
 ## Compatibility policy
 
