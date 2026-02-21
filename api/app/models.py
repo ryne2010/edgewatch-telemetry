@@ -55,6 +55,7 @@ class Device(Base):
     notification_events: Mapped[list["NotificationEvent"]] = relationship(back_populates="device")
     drift_events: Mapped[list["DriftEvent"]] = relationship(back_populates="device")
     quarantined_telemetry: Mapped[list["QuarantinedTelemetry"]] = relationship(back_populates="device")
+    media_objects: Mapped[list["MediaObject"]] = relationship(back_populates="device")
 
     __table_args__ = (Index("ix_devices_token_fingerprint", "token_fingerprint", unique=True),)
 
@@ -254,3 +255,30 @@ class ExportBatch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     __table_args__ = (Index("ix_export_batches_status_started", "status", "started_at"),)
+
+
+class MediaObject(Base):
+    __tablename__ = "media_objects"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String(128), ForeignKey("devices.device_id"), nullable=False)
+    camera_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    message_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    object_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    gcs_uri: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    local_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device: Mapped["Device"] = relationship(back_populates="media_objects")
+
+    __table_args__ = (
+        UniqueConstraint("device_id", "message_id", "camera_id", name="uq_media_device_message_camera"),
+        Index("ix_media_objects_device_captured", "device_id", "captured_at"),
+        Index("ix_media_objects_device_camera_captured", "device_id", "camera_id", "captured_at"),
+    )

@@ -80,10 +80,66 @@ python -m agent.tools.camera cam1 \
 
 This prints JSON containing `asset_path`, `sidecar_path`, and persisted metadata.
 
-## 5) Field diagnostics to collect
+## 5) EdgeWatch 12b validation (API metadata + upload + view)
+
+Task 12b adds API media endpoints:
+
+- `POST /api/v1/media`
+- `PUT /api/v1/media/{media_id}/upload`
+- `GET /api/v1/devices/{device_id}/media`
+- `GET /api/v1/media/{media_id}`
+- `GET /api/v1/media/{media_id}/download`
+
+Storage backend config:
+
+- local dev / compose:
+  - `MEDIA_STORAGE_BACKEND=local`
+  - `MEDIA_LOCAL_ROOT=/app/data/media` (compose volume-backed)
+- Cloud Run + GCS:
+  - `MEDIA_STORAGE_BACKEND=gcs`
+  - `MEDIA_GCS_BUCKET=<bucket>`
+  - optional `MEDIA_GCS_PREFIX=media`
+
+Example local validation flow:
+
+```bash
+export EDGEWATCH_API_URL=http://localhost:8082
+export DEVICE_TOKEN=dev-device-token-001
+export DEVICE_ID=demo-well-001
+export CAMERA_ID=cam1
+
+ASSET_PATH="$(python -m agent.tools.camera "$CAMERA_ID" --device-id "$DEVICE_ID" --reason manual | jq -r '.asset_path')"
+SIDECAR_PATH="${ASSET_PATH}.json"
+
+MEDIA_ID="$(curl -sS \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -c '. + {message_id: ("media-" + .sha256[0:24])}' "${SIDECAR_PATH}")" \
+  "${EDGEWATCH_API_URL}/api/v1/media" | jq -r '.media.id')"
+
+curl -sS -X PUT \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @"${ASSET_PATH}" \
+  "${EDGEWATCH_API_URL}/api/v1/media/${MEDIA_ID}/upload" | jq
+
+curl -sS \
+  -H "Authorization: Bearer ${DEVICE_TOKEN}" \
+  "${EDGEWATCH_API_URL}/api/v1/devices/${DEVICE_ID}/media?limit=5" | jq
+```
+
+Expected behavior:
+
+- metadata creation is idempotent by `(device_id, message_id, camera_id)`
+- upload validates byte length + SHA-256 integrity
+- media list is ordered by latest `captured_at`
+- downloads require device auth and return original media bytes
+
+## 6) Field diagnostics to collect
 
 If captures fail:
 - camera stack test output
 - adapter selection method used
 - agent logs (capture exceptions, retries)
 - disk usage and ring buffer status
+- API responses for metadata/upload/list/download

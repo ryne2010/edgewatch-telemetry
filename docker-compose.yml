@@ -40,6 +40,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - edgewatch_media:/app/data/media
 
 volumes:
   edgewatch_pgdata:
+  edgewatch_media:

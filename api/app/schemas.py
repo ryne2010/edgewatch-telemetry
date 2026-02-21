@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -74,6 +74,44 @@ class IngestResponse(BaseModel):
     accepted: int
     duplicates: int
     quarantined: int = 0
+
+
+class MediaCreateRequest(BaseModel):
+    message_id: str = Field(..., min_length=8, max_length=64)
+    camera_id: str = Field(..., min_length=1, max_length=32)
+    captured_at: datetime
+    reason: Literal["scheduled", "alert_transition", "manual"]
+    sha256: str = Field(..., min_length=64, max_length=64)
+    bytes: int = Field(..., gt=0)
+    mime_type: str = Field(..., min_length=3, max_length=128)
+
+
+class MediaUploadInstructionOut(BaseModel):
+    method: Literal["PUT"]
+    url: str
+    headers: Dict[str, str] = Field(default_factory=dict)
+
+
+class MediaObjectOut(BaseModel):
+    id: str
+    device_id: str
+    camera_id: str
+    message_id: str
+    captured_at: datetime
+    reason: str
+    sha256: str
+    bytes: int
+    mime_type: str
+    object_path: str
+    gcs_uri: Optional[str]
+    local_path: Optional[str]
+    uploaded_at: Optional[datetime]
+    created_at: datetime
+
+
+class MediaCreateResponse(BaseModel):
+    media: MediaObjectOut
+    upload: MediaUploadInstructionOut
 
 
 class TelemetryContractMetricOut(BaseModel):

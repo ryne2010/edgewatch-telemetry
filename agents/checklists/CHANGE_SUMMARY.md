@@ -485,3 +485,76 @@
 
 - [ ] Task 12b: wire this media lane into API metadata + upload flow.
 - [ ] Add integration tests that exercise end-to-end capture on Raspberry Pi hardware in CI-adjacent smoke lanes.
+
+## Task 12b — API Media Metadata + Storage (2026-02-21)
+
+### What changed
+
+- Added media persistence model + migration:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0007_media_objects.py`
+  - new `media_objects` table with idempotency key `(device_id, message_id, camera_id)`, metadata fields, storage pointers, and upload timestamp.
+- Added media storage config surface:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/config.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/.env.example`
+  - supports `MEDIA_STORAGE_BACKEND=local|gcs`, local root path, GCS bucket/prefix, and max upload bytes.
+- Added media service layer (business logic kept out of routes):
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/media.py`
+  - deterministic object pathing (`<device>/<camera>/<YYYY-MM-DD>/<message>.<ext>`)
+  - idempotent metadata create/get with conflict detection
+  - payload integrity checks (declared bytes, SHA-256, content type)
+  - local filesystem store and GCS store adapters.
+- Added API route surface:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/media.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/main.py`
+  - endpoints:
+    - `POST /api/v1/media`
+    - `PUT /api/v1/media/{media_id}/upload`
+    - `GET /api/v1/devices/{device_id}/media`
+    - `GET /api/v1/media/{media_id}`
+    - `GET /api/v1/media/{media_id}/download`
+  - device-auth scoped; device cannot access other device media.
+- Added schemas/tests/docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_media_service.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_models.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_migrations_sqlite.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CAMERA.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docker-compose.yml` now mounts `/app/data/media` via `edgewatch_media` volume.
+- Added runtime dependency for cloud storage:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pyproject.toml`
+  - lock refresh in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/uv.lock`.
+- Updated task tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/12b-api-media-metadata-storage.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 12b by shipping the API-side media lane needed for camera capture workflows:
+  - durable metadata,
+  - idempotent create semantics,
+  - configurable local/GCS storage backends,
+  - authenticated listing and retrieval for downstream UI work (Task 12c).
+
+### How it was validated
+
+- Required full-gate run:
+  - `make harness` (fails on existing repo-wide baseline issues unrelated to Task 12b; also auto-edits unrelated files, which were reverted before commit)
+- Task-focused validation:
+  - `ruff format api/app/config.py api/app/main.py api/app/models.py api/app/schemas.py api/app/routes/media.py api/app/services/media.py tests/test_media_service.py tests/test_models.py tests/test_migrations_sqlite.py migrations/versions/0007_media_objects.py` (pass)
+  - `ruff check api/app/routes/media.py api/app/services/media.py api/app/models.py api/app/schemas.py tests/test_media_service.py tests/test_models.py tests/test_migrations_sqlite.py migrations/versions/0007_media_objects.py` (pass)
+  - `pyright api/app/routes/media.py api/app/services/media.py api/app/models.py api/app/schemas.py tests/test_media_service.py tests/test_models.py tests/test_migrations_sqlite.py migrations/versions/0007_media_objects.py` (pass)
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: pytest -q tests/test_media_service.py tests/test_models.py tests/test_migrations_sqlite.py` (pass)
+  - `uv sync --all-groups --locked` (pass after lock refresh)
+
+### Risks / rollout notes
+
+- `make harness` currently remains red on pre-existing repo-wide failures outside this task scope (including existing API/infra files not modified by 12b).
+- For Cloud Run deployments with `MEDIA_STORAGE_BACKEND=gcs`, runtime identity must have bucket write/read permissions for the configured `MEDIA_GCS_BUCKET`.
+- Current download behavior proxies bytes through the API; signed URL optimization can be layered later if needed.
+
+### Follow-ups / tech debt
+
+- [ ] Task 12c: implement dashboard media gallery against the new `/api/v1/media` endpoints.
+- [ ] Add route-level integration tests for media endpoints (auth matrix + response envelopes) once baseline main-route test lane is stabilized.

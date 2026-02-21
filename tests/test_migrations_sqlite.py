@@ -25,3 +25,4 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     assert "telemetry_points" in tables
     assert "ingestion_batches" in tables
     assert "notification_events" in tables
+    assert "media_objects" in tables
