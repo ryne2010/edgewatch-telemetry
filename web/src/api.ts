@@ -160,6 +160,18 @@ export type NotificationEventOut = {
   created_at: string
 }
 
+export type AdminEventOut = {
+  id: string
+  actor_email: string
+  actor_subject: string | null
+  action: string
+  target_type: string
+  target_device_id: string | null
+  details: Record<string, unknown>
+  request_id: string | null
+  created_at: string
+}
+
 export type ExportBatchOut = {
   id: string
   started_at: string
@@ -280,7 +292,8 @@ export const api = {
       env: string
       version?: string
       features?: {
-        admin?: { enabled?: boolean; auth_mode?: string }
+        admin?: { enabled?: boolean; auth_mode?: string; iap_auth_enabled?: boolean }
+        authz?: { enabled?: boolean; iap_default_role?: string; dev_principal_enabled?: boolean }
         docs?: { enabled?: boolean }
         otel?: { enabled?: boolean }
         ui?: { enabled?: boolean }
@@ -418,6 +431,13 @@ export const api = {
       if (opts?.device_id) params.set('device_id', opts.device_id)
       params.set('limit', String(opts?.limit ?? 200))
       return getJSON<NotificationEventOut[]>(`/api/v1/admin/notifications?${params.toString()}`, {
+        headers: adminHeaders(adminKey),
+      })
+    },
+    events: (adminKey: string, opts?: { limit?: number }) => {
+      const params = new URLSearchParams()
+      params.set('limit', String(opts?.limit ?? 300))
+      return getJSON<AdminEventOut[]>(`/api/v1/admin/events?${params.toString()}`, {
         headers: adminHeaders(adminKey),
       })
     },

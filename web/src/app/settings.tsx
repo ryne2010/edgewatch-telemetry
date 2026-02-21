@@ -7,6 +7,15 @@ const ADMIN_KEY_SESSION = 'edgewatch_admin_key'
 const ADMIN_KEY_PERSIST = 'edgewatch_admin_key_persist'
 const ADMIN_KEY_LOCAL = 'edgewatch_admin_key_local'
 
+function canPersistAdminKeyLocally(): boolean {
+  try {
+    const host = (globalThis.location?.hostname ?? '').toLowerCase()
+    return host === 'localhost' || host === '127.0.0.1'
+  } catch {
+    return false
+  }
+}
+
 export type AppSettings = {
   theme: Theme
   setTheme: (t: Theme) => void
@@ -56,6 +65,10 @@ function getInitialAdminKey(): { key: string; persisted: boolean } {
   const sessionKey = safeGet(sessionStorage, ADMIN_KEY_SESSION)
   if (sessionKey) return { key: sessionKey, persisted: false }
 
+  if (!canPersistAdminKeyLocally()) {
+    return { key: '', persisted: false }
+  }
+
   const persist = safeGet(localStorage, ADMIN_KEY_PERSIST)
   if (persist === '1') {
     const localKey = safeGet(localStorage, ADMIN_KEY_LOCAL)
@@ -78,7 +91,7 @@ export function AppSettingsProvider(props: { children: React.ReactNode }) {
 
   const setAdminKey = React.useCallback((key: string, opts?: { persist?: boolean }) => {
     const k = (key ?? '').trim()
-    const persist = Boolean(opts?.persist)
+    const persist = Boolean(opts?.persist) && canPersistAdminKeyLocally()
 
     if (!k) {
       // Treat blank as a clear.

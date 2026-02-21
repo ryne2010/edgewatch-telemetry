@@ -7,9 +7,10 @@ import secrets
 from fastapi import Header, HTTPException, status
 from sqlalchemy.exc import MultipleResultsFound
 
-from .config import settings
+from .auth.principal import require_admin_principal
 from .db import db_session
 from .models import Device
+from .config import settings
 
 
 # -----------------------------------------------------------------------------
@@ -67,60 +68,25 @@ def verify_token(token: str, token_hash: str) -> bool:
         return False
 
 
-# -----------------------------------------------------------------------------
-# Auth dependencies
-# -----------------------------------------------------------------------------
-
-
-def _normalize_iap_email(raw: object) -> str | None:
-    if raw is None or not isinstance(raw, str):
-        return None
-    value = raw.strip()
-    if not value:
-        return None
-    if ":" in value:
-        _, value = value.split(":", 1)
-    email = value.strip().lower()
-    if "@" not in email:
-        return None
-    return email
-
-
 def require_admin(
     x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
     x_goog_authenticated_user_email: str | None = Header(
         default=None, alias="X-Goog-Authenticated-User-Email"
     ),
+    x_goog_authenticated_user_id: str | None = Header(default=None, alias="X-Goog-Authenticated-User-Id"),
+    x_edgewatch_dev_principal_email: str | None = Header(
+        default=None, alias="X-EdgeWatch-Dev-Principal-Email"
+    ),
+    x_edgewatch_dev_principal_role: str | None = Header(default=None, alias="X-EdgeWatch-Dev-Principal-Role"),
 ) -> str:
-    """Admin authorization gate.
-
-    Modes
-    - ADMIN_AUTH_MODE=key  (default): require X-Admin-Key and compare with ADMIN_API_KEY
-    - ADMIN_AUTH_MODE=none           : trust perimeter (Cloud Run IAM / IAP / VPN)
-
-    NOTE: If ENABLE_ADMIN_ROUTES=false, the admin router is not mounted, so this
-    dependency should never be invoked.
-    """
-
-    mode = getattr(settings, "admin_auth_mode", "key")
-    actor_email = _normalize_iap_email(x_goog_authenticated_user_email)
-    if settings.iap_auth_enabled and not actor_email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing IAP authenticated user email",
-        )
-
-    if mode == "none":
-        return actor_email or "perimeter"
-
-    # Default: shared admin key (local/dev).
-    if (
-        not x_admin_key
-        or not settings.admin_api_key
-        or not hmac.compare_digest(x_admin_key, settings.admin_api_key)
-    ):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin key")
-    return actor_email or "admin-key"
+    principal = require_admin_principal(
+        x_admin_key=x_admin_key,
+        x_goog_authenticated_user_email=x_goog_authenticated_user_email,
+        x_goog_authenticated_user_id=x_goog_authenticated_user_id,
+        x_edgewatch_dev_principal_email=x_edgewatch_dev_principal_email,
+        x_edgewatch_dev_principal_role=x_edgewatch_dev_principal_role,
+    )
+    return principal.email
 
 
 def require_device_auth(authorization: str | None = Header(default=None, alias="Authorization")) -> Device:

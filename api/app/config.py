@@ -49,6 +49,7 @@ def _get_optional_str(name: str) -> str | None:
 
 
 AdminAuthMode = Literal["key", "none"]
+AuthzRole = Literal["viewer", "operator", "admin"]
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,14 @@ class Settings:
     # Auth posture
     admin_auth_mode: AdminAuthMode
     iap_auth_enabled: bool
+    authz_enabled: bool
+    authz_iap_default_role: AuthzRole
+    authz_viewer_emails: List[str]
+    authz_operator_emails: List[str]
+    authz_admin_emails: List[str]
+    authz_dev_principal_enabled: bool
+    authz_dev_principal_email: str
+    authz_dev_principal_role: AuthzRole
 
     # Crypto / auth
     token_pbkdf2_iterations: int
@@ -213,6 +222,16 @@ def load_settings() -> Settings:
         # In perimeter-protected mode, this is unused.
         admin_api_key = admin_api_key or ""
 
+    authz_iap_default_role_raw = os.getenv("AUTHZ_IAP_DEFAULT_ROLE", "viewer").strip().lower() or "viewer"
+    if authz_iap_default_role_raw not in {"viewer", "operator", "admin"}:
+        raise RuntimeError("AUTHZ_IAP_DEFAULT_ROLE must be one of: viewer, operator, admin")
+    authz_iap_default_role: AuthzRole = authz_iap_default_role_raw  # type: ignore[assignment]
+
+    authz_dev_principal_role_raw = os.getenv("AUTHZ_DEV_PRINCIPAL_ROLE", "admin").strip().lower() or "admin"
+    if authz_dev_principal_role_raw not in {"viewer", "operator", "admin"}:
+        raise RuntimeError("AUTHZ_DEV_PRINCIPAL_ROLE must be one of: viewer, operator, admin")
+    authz_dev_principal_role: AuthzRole = authz_dev_principal_role_raw  # type: ignore[assignment]
+
     # --- Safer defaults ---
     cors_default = ["*"] if app_env == "dev" else []
     bootstrap_demo_default = app_env == "dev"
@@ -293,6 +312,17 @@ def load_settings() -> Settings:
         enable_read_routes=enable_read_routes,
         admin_auth_mode=admin_auth_mode,
         iap_auth_enabled=_get_bool("IAP_AUTH_ENABLED", False),
+        authz_enabled=_get_bool("AUTHZ_ENABLED", app_env != "dev"),
+        authz_iap_default_role=authz_iap_default_role,
+        authz_viewer_emails=[s.lower() for s in _get_list("AUTHZ_VIEWER_EMAILS", [])],
+        authz_operator_emails=[s.lower() for s in _get_list("AUTHZ_OPERATOR_EMAILS", [])],
+        authz_admin_emails=[s.lower() for s in _get_list("AUTHZ_ADMIN_EMAILS", [])],
+        authz_dev_principal_enabled=_get_bool("AUTHZ_DEV_PRINCIPAL_ENABLED", app_env == "dev"),
+        authz_dev_principal_email=(
+            os.getenv("AUTHZ_DEV_PRINCIPAL_EMAIL", "dev-admin@local.edgewatch").strip().lower()
+            or "dev-admin@local.edgewatch"
+        ),
+        authz_dev_principal_role=authz_dev_principal_role,
         token_pbkdf2_iterations=_get_int("TOKEN_PBKDF2_ITERATIONS", 210_000),
         offline_check_interval_s=_get_int("OFFLINE_CHECK_INTERVAL_S", 30),
         # Deprecated: prefer contracts/edge_policy/* for thresholds.

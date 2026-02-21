@@ -6,10 +6,14 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc
 
+from ..auth.audit import audit_actor_from_principal
+from ..auth.principal import Principal
+from ..auth.rbac import require_admin_role
 from ..db import db_session
-from ..models import Device, DriftEvent, ExportBatch, IngestionBatch, NotificationEvent
+from ..models import AdminEvent, Device, DriftEvent, ExportBatch, IngestionBatch, NotificationEvent
 from ..observability import get_request_id
 from ..schemas import (
+    AdminEventOut,
     AdminDeviceCreate,
     AdminDeviceUpdate,
     DeviceOut,
@@ -18,15 +22,16 @@ from ..schemas import (
     IngestionBatchOut,
     NotificationEventOut,
 )
-from ..security import hash_token, require_admin, token_fingerprint
+from ..security import hash_token, token_fingerprint
 from ..services.admin_audit import record_admin_event
 from ..services.monitor import compute_status
 
-router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+router = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin_role)])
 
 
 @router.post("/devices", response_model=DeviceOut)
-def create_device(req: AdminDeviceCreate, actor_email: str = Depends(require_admin)) -> DeviceOut:
+def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require_admin_role)) -> DeviceOut:
+    actor = audit_actor_from_principal(principal)
     with db_session() as session:
         existing = session.query(Device).filter(Device.device_id == req.device_id).one_or_none()
         if existing:
@@ -44,7 +49,8 @@ def create_device(req: AdminDeviceCreate, actor_email: str = Depends(require_adm
         session.add(d)
         record_admin_event(
             session,
-            actor_email=actor_email,
+            actor_email=actor.email,
+            actor_subject=actor.subject,
             action="device.create",
             target_type="device",
             target_device_id=d.device_id,
@@ -52,6 +58,8 @@ def create_device(req: AdminDeviceCreate, actor_email: str = Depends(require_adm
                 "enabled": True,
                 "heartbeat_interval_s": req.heartbeat_interval_s,
                 "offline_after_s": req.offline_after_s,
+                "actor_role": actor.role,
+                "actor_source": actor.source,
             },
             request_id=get_request_id(),
         )
@@ -72,8 +80,9 @@ def create_device(req: AdminDeviceCreate, actor_email: str = Depends(require_adm
 
 @router.patch("/devices/{device_id}", response_model=DeviceOut)
 def update_device(
-    device_id: str, req: AdminDeviceUpdate, actor_email: str = Depends(require_admin)
+    device_id: str, req: AdminDeviceUpdate, principal: Principal = Depends(require_admin_role)
 ) -> DeviceOut:
+    actor = audit_actor_from_principal(principal)
     with db_session() as session:
         d = session.query(Device).filter(Device.device_id == device_id).one_or_none()
         if not d:
@@ -100,11 +109,16 @@ def update_device(
         if changed_fields:
             record_admin_event(
                 session,
-                actor_email=actor_email,
+                actor_email=actor.email,
+                actor_subject=actor.subject,
                 action="device.update",
                 target_type="device",
                 target_device_id=d.device_id,
-                details={"changed_fields": changed_fields},
+                details={
+                    "changed_fields": changed_fields,
+                    "actor_role": actor.role,
+                    "actor_source": actor.source,
+                },
                 request_id=get_request_id(),
             )
 
@@ -122,7 +136,7 @@ def update_device(
         )
 
 
-@router.get("/devices", dependencies=[Depends(require_admin)], response_model=List[DeviceOut])
+@router.get("/devices", response_model=List[DeviceOut])
 def list_devices_admin() -> List[DeviceOut]:
     now = datetime.now(timezone.utc)
     with db_session() as session:
@@ -145,7 +159,27 @@ def list_devices_admin() -> List[DeviceOut]:
         return out
 
 
-@router.get("/ingestions", dependencies=[Depends(require_admin)], response_model=List[IngestionBatchOut])
+@router.get("/events", response_model=List[AdminEventOut])
+def list_admin_events(limit: int = Query(default=200, ge=1, le=2000)) -> List[AdminEventOut]:
+    with db_session() as session:
+        rows = session.query(AdminEvent).order_by(desc(AdminEvent.created_at)).limit(limit).all()
+        return [
+            AdminEventOut(
+                id=row.id,
+                actor_email=row.actor_email,
+                actor_subject=row.actor_subject,
+                action=row.action,
+                target_type=row.target_type,
+                target_device_id=row.target_device_id,
+                details=dict(row.details or {}),
+                request_id=row.request_id,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+
+
+@router.get("/ingestions", response_model=List[IngestionBatchOut])
 def list_ingestions_admin(
     device_id: Optional[str] = Query(default=None, description="Optional device_id filter"),
     limit: int = Query(default=200, ge=1, le=2000),
@@ -191,7 +225,6 @@ def list_ingestions_admin(
 
 @router.get(
     "/drift-events",
-    dependencies=[Depends(require_admin)],
     response_model=List[DriftEventOut],
 )
 def list_drift_events_admin(
@@ -219,7 +252,6 @@ def list_drift_events_admin(
 
 @router.get(
     "/notifications",
-    dependencies=[Depends(require_admin)],
     response_model=List[NotificationEventOut],
 )
 def list_notifications_admin(
@@ -249,7 +281,6 @@ def list_notifications_admin(
 
 @router.get(
     "/exports",
-    dependencies=[Depends(require_admin)],
     response_model=List[ExportBatchOut],
 )
 def list_exports_admin(

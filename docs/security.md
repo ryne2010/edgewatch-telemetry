@@ -70,12 +70,37 @@ Recommended production guidance:
   - **private dashboard** (optional, least privilege): `ENABLE_UI=1`, `ENABLE_READ_ROUTES=1`, `ENABLE_INGEST_ROUTES=0`, `ENABLE_ADMIN_ROUTES=0`
   - **private admin**: `ENABLE_UI=1`, `ENABLE_READ_ROUTES=1`, `ENABLE_INGEST_ROUTES=0`, `ENABLE_ADMIN_ROUTES=1`, `ADMIN_AUTH_MODE=none`
 
+### In-app RBAC (optional hardening)
+
+When `AUTHZ_ENABLED=1`, the API enforces role-based authorization:
+
+- `viewer`: read routes (`/api/v1/devices`, `/api/v1/alerts`, `/api/v1/contracts/*`)
+- `operator`: reserved for non-destructive operations
+- `admin`: admin routes (`/api/v1/admin/*`)
+
+Role assignment sources:
+- IAP identity headers (`X-Goog-Authenticated-User-Email`, `X-Goog-Authenticated-User-Id`)
+- allowlists:
+  - `AUTHZ_VIEWER_EMAILS`
+  - `AUTHZ_OPERATOR_EMAILS`
+  - `AUTHZ_ADMIN_EMAILS`
+- fallback for unmatched IAP identities via `AUTHZ_IAP_DEFAULT_ROLE` (default `viewer`)
+
+Local RBAC testing:
+- `AUTHZ_DEV_PRINCIPAL_ENABLED=1` in `APP_ENV=dev`
+- optional request headers:
+  - `X-EdgeWatch-Dev-Principal-Email`
+  - `X-EdgeWatch-Dev-Principal-Role`
+
 Admin mutations (`POST /api/v1/admin/devices`, `PATCH /api/v1/admin/devices/{device_id}`) are persisted to `admin_events` with:
 - `actor_email`
+- `actor_subject` (when available from IAP)
 - action (`device.create` / `device.update`)
 - target device and request correlation id
 
 The API also emits structured `admin_event` logs for centralized audit trails.
+
+In production posture, UI-side admin-key persistence is disabled outside localhost to avoid storing admin secrets in `localStorage`.
 
 ## Defense-in-depth controls
 

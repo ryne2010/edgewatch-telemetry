@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -37,6 +37,7 @@ from .observability import (
     maybe_instrument_opentelemetry,
     record_monitor_loop_metric,
 )
+from .auth.rbac import require_viewer_role
 from .version import __version__
 from .demo_fleet import derive_nth as _derive_nth
 
@@ -113,6 +114,11 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
                 "enabled": bool(settings.enable_admin_routes),
                 "auth_mode": str(settings.admin_auth_mode),
                 "iap_auth_enabled": bool(settings.iap_auth_enabled),
+            },
+            "authz": {
+                "enabled": bool(settings.authz_enabled),
+                "iap_default_role": str(settings.authz_iap_default_role),
+                "dev_principal_enabled": bool(settings.authz_dev_principal_enabled),
             },
             "docs": {"enabled": bool(settings.enable_docs)},
             "otel": {"enabled": bool(settings.enable_otel)},
@@ -288,9 +294,9 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
 
     # Read surface (dashboard)
     if settings.enable_read_routes:
-        app.include_router(devices_router)
-        app.include_router(alerts_router)
-        app.include_router(contracts_router)
+        app.include_router(devices_router, dependencies=[Depends(require_viewer_role)])
+        app.include_router(alerts_router, dependencies=[Depends(require_viewer_role)])
+        app.include_router(contracts_router, dependencies=[Depends(require_viewer_role)])
     else:
         logger.info("Read routes disabled (ENABLE_READ_ROUTES=false)")
 

@@ -958,6 +958,79 @@
 
 - [ ] Task 15: expand admin attribution from `actor_email` to richer RBAC subject/role model and surface audit events in UI.
 
+## Task 15 — AuthN/AuthZ hardening (2026-02-21)
+
+### What changed
+
+- Added in-app auth/authz modules under `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/auth/`:
+  - `principal.py`: principal extraction from IAP headers, admin-key mode, and local dev principal mode
+  - `rbac.py`: role enforcement helpers (`viewer`, `operator`, `admin`)
+  - `audit.py`: normalized audit actor attribution helper
+- Added RBAC settings and defaults:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/config.py`
+  - new env vars: `AUTHZ_ENABLED`, `AUTHZ_IAP_DEFAULT_ROLE`, role allowlists, and local dev principal controls
+- Enforced route-level ACLs:
+  - read routes now require `viewer` when RBAC is enabled (mounted via dependency in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/main.py`)
+  - admin routes now require `admin` role (`/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`)
+- Extended admin audit attribution:
+  - added `actor_subject` on `admin_events` model and migration
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0009_admin_events_actor_subject.py`
+  - updated admin audit persistence to include `actor_subject`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/admin_audit.py`
+- Added admin mutation audit visibility in UI:
+  - new `GET /api/v1/admin/events` endpoint
+  - new Admin UI Events tab showing actor email/subject/action/target/request id/details
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+- Hardened browser secret handling in production posture:
+  - admin-key localStorage persistence is now limited to localhost/dev usage
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/app/settings.tsx`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+- Updated docs and task status:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/security.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_GCP.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/15-authn-authz.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CODEX_HANDOFF.md`
+
+### Why it changed
+
+- Completes Task 15 acceptance:
+  - admin actions are blocked without `admin` role (when RBAC is enabled)
+  - acting principal attribution includes `actor_email` and optional `actor_subject`
+  - attribution is visible in the admin audit UI
+  - production posture avoids persisting admin secrets to browser localStorage
+- Preserves local-first/dev convenience:
+  - default dev key path still works
+  - local dev principal mode supports RBAC testing without external identity infrastructure
+
+### How it was validated
+
+- `make fmt` ✅
+- `make lint` ✅
+- `make typecheck` ✅
+- `make test` ✅
+- `make harness` ✅
+- Targeted checks during implementation:
+  - `uv run --locked ruff check ...` ✅
+  - `uv run --locked pyright` ✅
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: uv run --locked pytest -q tests/test_authz.py tests/test_security.py tests/test_admin_audit.py tests/test_migrations_sqlite.py` ✅
+
+### Risks / rollout notes
+
+- RBAC defaults:
+  - `AUTHZ_ENABLED` defaults to `false` in `dev`, `true` in `stage/prod`.
+  - In non-dev environments, ensure identity headers and role allowlists are configured before enabling broad operator access.
+- Admin key mode remains supported for local/dev; production should prefer perimeter identity (`ADMIN_AUTH_MODE=none` + IAP/IAM).
+- New migration `0009_admin_events_actor_subject` must be applied before deploying code that reads/writes `actor_subject`.
+
+### Follow-ups / tech debt
+
+- [ ] Expand RBAC usage to additional mutation surfaces as they are introduced (policy overrides/destructive endpoints).
+
 ## Task 16 — OpenTelemetry SQLAlchemy + Metrics (2026-02-21)
 
 ### What changed

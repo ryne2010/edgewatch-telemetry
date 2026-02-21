@@ -65,6 +65,7 @@ python scripts/harness.py lint --only node
 - `13a-cellular-runbook.md`
 - `13b-agent-cellular-metrics-watchdog.md`
 - `13c-cost-caps-policy.md`
+- `15-authn-authz.md`
 - `16-opentelemetry.md`
 - `18-iap-identity-perimeter.md`
 
@@ -82,7 +83,6 @@ python scripts/harness.py lint --only node
 
 #### Production upgrades
 
-- `15-authn-authz.md` (IAP / identity perimeter + RBAC)
 - `17-telemetry-partitioning-rollups.md` (Postgres scale path)
 - `19-agent-buffer-hardening.md` (WAL mode, disk quota, corruption recovery)
 - `20-edge-protection-cloud-armor.md` (Cloud Armor / API Gateway posture for public ingest)

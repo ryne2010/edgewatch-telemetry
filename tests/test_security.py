@@ -25,12 +25,22 @@ def test_hash_and_verify_roundtrip() -> None:
 
 def _set_security_settings(monkeypatch, **overrides) -> None:
     state = {
+        "app_env": "dev",
         "admin_auth_mode": "key",
         "admin_api_key": "dev-admin",
         "iap_auth_enabled": False,
+        "authz_enabled": False,
+        "authz_iap_default_role": "viewer",
+        "authz_viewer_emails": [],
+        "authz_operator_emails": [],
+        "authz_admin_emails": [],
+        "authz_dev_principal_enabled": True,
+        "authz_dev_principal_email": "dev-admin@local.edgewatch",
+        "authz_dev_principal_role": "admin",
     }
     state.update(overrides)
     monkeypatch.setattr("api.app.security.settings", SimpleNamespace(**state))
+    monkeypatch.setattr("api.app.auth.principal.settings", SimpleNamespace(**state))
 
 
 def test_require_admin_needs_iap_email_when_enabled(monkeypatch) -> None:
@@ -53,4 +63,4 @@ def test_require_admin_key_mode_uses_admin_key_fallback_actor(monkeypatch) -> No
     _set_security_settings(monkeypatch, admin_auth_mode="key", admin_api_key="top-secret")
 
     actor = require_admin(x_admin_key="top-secret")
-    assert actor == "admin-key"
+    assert actor == "dev-admin@local.edgewatch"
