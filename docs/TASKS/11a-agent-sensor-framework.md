@@ -1,6 +1,6 @@
 # Task 11a — Agent sensor framework + config
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 

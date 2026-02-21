@@ -1,0 +1,31 @@
+backend: composite
+backends:
+  - backend: mock
+  - backend: derived
+    derived:
+      oil_life_max_run_hours: 300
+      state_path: ./agent/state/oil_life_state.json
+
+# Channel mappings and scaling constants are optional now, but this shape is
+# intentionally aligned with planned ADC work.
+channels:
+  water_pressure_psi:
+    channel: 0
+    kind: current_4_20ma
+    unit: psi
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+  oil_pressure_psi:
+    channel: 1
+    kind: current_4_20ma
+    unit: psi
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+
+scaling:
+  pressure_clamp_min: 0.0
+  pressure_clamp_max: 100.0

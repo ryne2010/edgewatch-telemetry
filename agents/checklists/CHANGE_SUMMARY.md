@@ -167,3 +167,53 @@
 ### Remaining follow-up
 
 - [ ] For production, set an explicit strong DB password via `TF_VAR_cloudsql_user_password` instead of relying on the derived fallback.
+
+## Task 11a — Agent Sensor Framework + Config (2026-02-21)
+
+### What changed
+
+- Added a pluggable sensor framework under `agent/sensors/`:
+  - `agent/sensors/base.py` defines the backend protocol and a safe wrapper that prevents sensor exceptions from crashing the agent loop.
+  - `agent/sensors/config.py` adds YAML/env config parsing + validation and backend construction.
+  - `agent/sensors/backends/mock.py` wraps the existing mock behavior behind the new interface.
+  - `agent/sensors/backends/composite.py` supports backend composition and per-child graceful fallback.
+  - `agent/sensors/backends/placeholder.py` provides explicit `None`-emitting placeholders for `rpi_i2c`, `rpi_adc`, and `derived` until Tasks 11b/11c/11d land.
+- Wired `agent/edgewatch_agent.py` to the framework:
+  - reads `SENSOR_CONFIG_PATH` and optional `SENSOR_BACKEND` override
+  - fails fast on invalid config with a clear startup error
+  - uses backend reads in the telemetry loop
+- Added sensor config example:
+  - `agent/config/example.sensors.yaml`
+- Updated docs:
+  - `agent/README.md` sensors section
+  - `agent/.env.example` sensor env vars
+  - task status updates in `docs/TASKS/11a-agent-sensor-framework.md` and `docs/TASKS/README.md`
+- Added deterministic tests:
+  - `tests/test_sensor_framework.py`
+
+### Why it changed
+
+- Establishes the required foundation for real Raspberry Pi backends without coupling hardware-specific reads to buffering/ingest logic.
+- Preserves local-first behavior (`mock` default) while introducing validated, portable configuration.
+
+### How it was validated
+
+- Baseline before task (required by process):
+  - `make doctor-dev` (pass)
+  - `make harness` (fails on pre-existing repo-wide issues unrelated to Task 11a; see risks)
+- Task-focused validation:
+  - `python scripts/harness.py lint --only python`
+  - `python scripts/harness.py typecheck --only python`
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: uv run --locked pytest tests/test_sensor_framework.py`
+  - `make harness` (rerun after changes; still blocked by existing unrelated failures)
+
+### Risks / rollout notes
+
+- `rpi_i2c`, `rpi_adc`, and `derived` are intentionally placeholders in this task and emit `None` metrics until their dedicated tasks land.
+- Full-repo `make harness` is currently red due pre-existing unrelated failures in API and tooling paths; Task 11a changes are isolated to agent sensor framework scope.
+
+### Follow-ups / tech debt
+
+- [ ] Task 11b: replace `rpi_i2c` placeholder with real BME280 implementation.
+- [ ] Task 11c: replace `rpi_adc` placeholder and use channel/scaling config in real conversions.
+- [ ] Task 11d: replace `derived` placeholder with durable oil-life model + reset CLI.
