@@ -1,6 +1,6 @@
 # Task 14 — UI/UX polish (production-grade operator dashboard)
 
-🟡 **Status: In progress (core UX shipped; keep iterating)**
+🟡 **Status: In progress (core UX shipped; alerts timeline/audit done; oil-life gauge + IAP polish remain)**
 
 ## Intent
 
@@ -61,16 +61,16 @@ The UI reads `/api/v1/health` feature flags and:
 
 ### Device detail
 
-- Multi-metric “small multiples” view for key metrics.
+- ✅ Multi-metric “small multiples” view for key metrics.
 - Oil life gauge (after Task 11d ships).
 
 ### Alerts
 
-- Timeline grouping and filters by:
+- ✅ Timeline grouping and filters by:
   - device
   - type
   - severity
-- Show routing decisions (dedupe/throttle/quiet hours) as an audit trail.
+- ✅ Show routing decisions (dedupe/throttle/quiet hours) as an audit trail.
 
 ### Media
 

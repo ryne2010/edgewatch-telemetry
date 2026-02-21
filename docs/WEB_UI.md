@@ -5,7 +5,7 @@ The EdgeWatch UI is a single-page React app (Vite + TanStack Router/Query/Table)
 - Fleet status at a glance (online/offline/unknown)
 - Fleet vitals (pressure/battery/signal) driven by the **edge policy contract**
 - Device drill-down with charts + raw points
-- Alert feed + quick volume sparklines
+- Alert feed + timeline grouping + routing audit visibility
 - Contract visibility (telemetry keys/types/units + edge policy cadence/thresholds)
 - Admin audit lanes (ingestions, drift, notifications, exports)
 
@@ -41,7 +41,7 @@ The left sidebar (desktop) / drawer (mobile) includes:
   - Uses `GET /api/v1/devices/summary` to avoid N+1 calls.
   - Uses `GET /api/v1/contracts/edge_policy` for thresholds.
 - **Devices**: searchable fleet table with quick filters (`online/offline/unknown/open alerts`), health explanations, and latest vitals chips.
-- **Alerts**: alert feed with severity + open/resolved filters + volume sparklines.
+- **Alerts**: alert feed with severity/device/type/open filters, volume sparklines, grouped timeline views, and routing decision audit details (when admin notifications are enabled).
 - **Contracts**: telemetry contract + edge policy contract (cadence/thresholds).
 - **Admin**: audit console (only shown when the backend enables admin routes).
 - **Settings**: theme + admin access configuration.
