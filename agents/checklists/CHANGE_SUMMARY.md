@@ -578,6 +578,9 @@
 - Fixed CI environment gap for Terraform hook:
   - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/.github/workflows/ci.yml`
   - added `hashicorp/setup-terraform@v3` (`1.14.5`) before running `python scripts/harness.py all --strict`
+- Fixed Terraform hygiene Docker fallback pathing:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile`
+  - `tf-lint` now mounts `infra/gcp` (parent) and runs in `cloud_run_demo` so `../modules/*` resolves correctly when `tflint` is run via Docker in CI.
 - Fixed Node typecheck blockers reached once Python/Terraform gates were green:
   - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx` (severity type narrowing)
   - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx` (missing `fmtAlertType` import)
@@ -592,6 +595,7 @@
 ### How it was validated
 
 - `uv run --locked pre-commit run --all-files` ✅
+- `make tf-lint` ✅
 - `pnpm -r --if-present typecheck` ✅
 - `make harness` ✅
   - includes:
