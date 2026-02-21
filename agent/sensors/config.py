@@ -10,25 +10,20 @@ import yaml
 
 from .base import SafeSensorBackend, SensorBackend
 from .backends import (
+    AdcMetricChannel,
     CompositeSensorBackend,
     MockSensorBackend,
     PlaceholderSensorBackend,
+    RpiAdcSensorBackend,
     RpiI2CSensorBackend,
 )
 
 _VALID_BACKENDS = {"mock", "rpi_i2c", "rpi_adc", "derived", "composite"}
 _METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ALLOWED_UNITS = {"pct", "psi", "c", "v", "dbm", "gpm", "bool"}
+_ADC_KINDS = {"current_4_20ma", "voltage"}
 
 _PLACEHOLDER_KEYS: dict[str, frozenset[str]] = {
-    "rpi_adc": frozenset(
-        {
-            "water_pressure_psi",
-            "oil_pressure_psi",
-            "oil_level_pct",
-            "drip_oil_level_pct",
-        }
-    ),
     "derived": frozenset({"oil_life_pct"}),
 }
 
@@ -46,6 +41,7 @@ class ChannelConfig:
     shunt_ohms: float | None = None
     scale_from: tuple[float, float] | None = None
     scale_to: tuple[float, float] | None = None
+    median_samples: int | None = None
 
 
 @dataclass(frozen=True)
@@ -119,7 +115,7 @@ def parse_sensor_config(raw: Mapping[str, Any], *, origin: str) -> SensorConfig:
     )
 
 
-def build_sensor_backend(*, device_id: str, config: SensorConfig) -> SensorBackend:
+def build_sensor_backend(*, device_id: str, config: SensorConfig) -> SafeSensorBackend:
     backend = _build_backend(device_id=device_id, config=config)
     return SafeSensorBackend(backend_name=config.backend, backend=backend)
 
@@ -130,6 +126,9 @@ def _build_backend(*, device_id: str, config: SensorConfig) -> SensorBackend:
 
     if config.backend == "rpi_i2c":
         return _build_rpi_i2c_backend(config=config)
+
+    if config.backend == "rpi_adc":
+        return _build_rpi_adc_backend(config=config)
 
     if config.backend == "composite":
         children = [_build_backend(device_id=device_id, config=child) for child in config.backends]
@@ -202,6 +201,16 @@ def _parse_channels(raw_channels: Any, *, origin: str) -> Mapping[str, ChannelCo
         if kind_raw is not None and not isinstance(kind_raw, str):
             raise SensorConfigError(f"{origin}: channels.{raw_key}.kind must be a string")
 
+        median_samples_raw = raw_value.get("median_samples")
+        if median_samples_raw is None:
+            median_samples = None
+        elif isinstance(median_samples_raw, bool) or not isinstance(median_samples_raw, int):
+            raise SensorConfigError(f"{origin}: channels.{raw_key}.median_samples must be an integer")
+        elif median_samples_raw < 1:
+            raise SensorConfigError(f"{origin}: channels.{raw_key}.median_samples must be >= 1")
+        else:
+            median_samples = median_samples_raw
+
         channels[raw_key] = ChannelConfig(
             metric_key=raw_key,
             channel=channel,
@@ -210,6 +219,7 @@ def _parse_channels(raw_channels: Any, *, origin: str) -> Mapping[str, ChannelCo
             shunt_ohms=shunt_ohms,
             scale_from=scale_from,
             scale_to=scale_to,
+            median_samples=median_samples,
         )
     return channels
 
@@ -295,23 +305,11 @@ def _build_rpi_i2c_backend(*, config: SensorConfig) -> RpiI2CSensorBackend:
 
 
 def _parse_i2c_address(value: Any) -> int:
-    if isinstance(value, int):
-        parsed = value
-    elif isinstance(value, str):
-        raw = value.strip().lower()
-        try:
-            if raw.startswith("0x"):
-                parsed = int(raw, 16)
-            else:
-                parsed = int(raw, 10)
-        except ValueError as exc:
-            raise SensorConfigError("rpi_i2c address must be an integer or hex string") from exc
-    else:
-        raise SensorConfigError("rpi_i2c address must be an integer or hex string")
-
-    if parsed < 0 or parsed > 0x7F:
-        raise SensorConfigError("rpi_i2c address must be between 0x00 and 0x7f")
-    return parsed
+    return _parse_i2c_address_value(
+        value,
+        type_message="rpi_i2c address must be an integer or hex string",
+        range_message="rpi_i2c address must be between 0x00 and 0x7f",
+    )
 
 
 def _as_int(value: Any, *, message: str) -> int:
@@ -332,3 +330,218 @@ def _mapping_value(value: Any) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return value
     return {}
+
+
+def _build_rpi_adc_backend(*, config: SensorConfig) -> RpiAdcSensorBackend:
+    adc_config = _mapping_value(config.backend_settings.get("adc"))
+    adc_backend_config = _mapping_value(config.backend_settings.get("rpi_adc"))
+
+    adc_type = _as_string(
+        _first_value(
+            config.backend_settings.get("type"),
+            adc_backend_config.get("type"),
+            adc_config.get("type"),
+            "ads1115",
+        ),
+        message="rpi_adc type must be a string",
+    ).strip()
+
+    bus_number = _as_int(
+        _first_value(
+            config.backend_settings.get("bus"),
+            adc_backend_config.get("bus"),
+            adc_config.get("bus"),
+            1,
+        ),
+        message="rpi_adc bus must be an integer",
+    )
+    if bus_number < 0:
+        raise SensorConfigError("rpi_adc bus must be >= 0")
+
+    address = _parse_i2c_address_value(
+        _first_value(
+            config.backend_settings.get("address"),
+            adc_backend_config.get("address"),
+            adc_config.get("address"),
+            0x48,
+        ),
+        type_message="rpi_adc address must be an integer or hex string",
+        range_message="rpi_adc address must be between 0x00 and 0x7f",
+    )
+
+    gain = _as_float(
+        _first_value(
+            config.backend_settings.get("gain"),
+            adc_backend_config.get("gain"),
+            adc_config.get("gain"),
+            1.0,
+        ),
+        message="rpi_adc gain must be numeric",
+    )
+
+    data_rate = _as_int(
+        _first_value(
+            config.backend_settings.get("data_rate"),
+            adc_backend_config.get("data_rate"),
+            adc_config.get("data_rate"),
+            128,
+        ),
+        message="rpi_adc data_rate must be an integer",
+    )
+
+    warning_interval_s = _as_float(
+        _first_value(
+            config.backend_settings.get("warning_interval_s"),
+            adc_backend_config.get("warning_interval_s"),
+            adc_config.get("warning_interval_s"),
+            300.0,
+        ),
+        message="rpi_adc warning_interval_s must be numeric",
+    )
+    if warning_interval_s < 0:
+        raise SensorConfigError("rpi_adc warning_interval_s must be >= 0")
+
+    default_median_samples = _as_int(
+        _first_value(
+            config.backend_settings.get("median_samples"),
+            adc_backend_config.get("median_samples"),
+            adc_config.get("median_samples"),
+            1,
+        ),
+        message="rpi_adc median_samples must be an integer",
+    )
+    if default_median_samples < 1:
+        raise SensorConfigError("rpi_adc median_samples must be >= 1")
+
+    channels = _build_adc_channels(
+        channel_configs=config.channels,
+        default_median_samples=default_median_samples,
+    )
+
+    return RpiAdcSensorBackend(
+        adc_type=adc_type,
+        bus_number=bus_number,
+        address=address,
+        gain=gain,
+        data_rate=data_rate,
+        warning_interval_s=warning_interval_s,
+        channels=channels,
+    )
+
+
+def _build_adc_channels(
+    *,
+    channel_configs: Mapping[str, ChannelConfig],
+    default_median_samples: int,
+) -> tuple[AdcMetricChannel, ...]:
+    if channel_configs:
+        source = channel_configs
+    else:
+        source = _default_adc_channel_configs()
+
+    channels: list[AdcMetricChannel] = []
+    for metric_key, cfg in source.items():
+        if cfg.channel is None:
+            raise SensorConfigError(f"rpi_adc channels.{metric_key}.channel is required")
+        if cfg.channel not in {0, 1, 2, 3}:
+            raise SensorConfigError(f"rpi_adc channels.{metric_key}.channel must be one of 0,1,2,3")
+
+        kind = (cfg.kind or "current_4_20ma").strip()
+        if kind not in _ADC_KINDS:
+            allowed = ", ".join(sorted(_ADC_KINDS))
+            raise SensorConfigError(f"rpi_adc channels.{metric_key}.kind must be one of: {allowed}")
+
+        shunt_ohms = cfg.shunt_ohms
+        if kind == "current_4_20ma":
+            shunt_ohms = 165.0 if shunt_ohms is None else shunt_ohms
+            if shunt_ohms <= 0:
+                raise SensorConfigError(f"rpi_adc channels.{metric_key}.shunt_ohms must be > 0")
+
+        scale_from = cfg.scale_from or ((4.0, 20.0) if kind == "current_4_20ma" else (0.0, 3.3))
+        scale_to = cfg.scale_to or (0.0, 100.0)
+
+        median_samples = cfg.median_samples if cfg.median_samples is not None else default_median_samples
+        if median_samples < 1:
+            raise SensorConfigError(f"rpi_adc channels.{metric_key}.median_samples must be >= 1")
+
+        channels.append(
+            AdcMetricChannel(
+                metric_key=metric_key,
+                channel=cfg.channel,
+                kind=kind,
+                shunt_ohms=shunt_ohms,
+                scale_from=scale_from,
+                scale_to=scale_to,
+                median_samples=median_samples,
+            )
+        )
+
+    return tuple(channels)
+
+
+def _default_adc_channel_configs() -> Mapping[str, ChannelConfig]:
+    return {
+        "water_pressure_psi": ChannelConfig(
+            metric_key="water_pressure_psi",
+            channel=0,
+            kind="current_4_20ma",
+            shunt_ohms=165.0,
+            scale_from=(4.0, 20.0),
+            scale_to=(0.0, 100.0),
+            median_samples=1,
+        ),
+        "oil_pressure_psi": ChannelConfig(
+            metric_key="oil_pressure_psi",
+            channel=1,
+            kind="current_4_20ma",
+            shunt_ohms=165.0,
+            scale_from=(4.0, 20.0),
+            scale_to=(0.0, 100.0),
+            median_samples=1,
+        ),
+        "oil_level_pct": ChannelConfig(
+            metric_key="oil_level_pct",
+            channel=2,
+            kind="current_4_20ma",
+            shunt_ohms=165.0,
+            scale_from=(4.0, 20.0),
+            scale_to=(0.0, 100.0),
+            median_samples=1,
+        ),
+        "drip_oil_level_pct": ChannelConfig(
+            metric_key="drip_oil_level_pct",
+            channel=3,
+            kind="current_4_20ma",
+            shunt_ohms=165.0,
+            scale_from=(4.0, 20.0),
+            scale_to=(0.0, 100.0),
+            median_samples=1,
+        ),
+    }
+
+
+def _parse_i2c_address_value(value: Any, *, type_message: str, range_message: str) -> int:
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, str):
+        raw = value.strip().lower()
+        try:
+            if raw.startswith("0x"):
+                parsed = int(raw, 16)
+            else:
+                parsed = int(raw, 10)
+        except ValueError as exc:
+            raise SensorConfigError(type_message) from exc
+    else:
+        raise SensorConfigError(type_message)
+
+    if parsed < 0 or parsed > 0x7F:
+        raise SensorConfigError(range_message)
+    return parsed
+
+
+def _first_value(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None

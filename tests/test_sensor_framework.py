@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent.sensors.backends.composite import CompositeSensorBackend
+from agent.sensors.backends.rpi_adc import RpiAdcSensorBackend
 from agent.sensors.base import Metrics
 from agent.sensors.config import SensorConfigError, build_sensor_backend, load_sensor_config_from_env
 
@@ -94,7 +95,7 @@ def test_composite_backend_returns_none_for_failed_child_reads() -> None:
     assert metrics["temperature_c"] is None
 
 
-def test_placeholder_backend_uses_configured_channel_keys(
+def test_rpi_adc_backend_uses_configured_channel_keys(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -114,10 +115,11 @@ def test_placeholder_backend_uses_configured_channel_keys(
 
     cfg = load_sensor_config_from_env()
     backend = build_sensor_backend(device_id="demo-well-001", config=cfg)
+    assert isinstance(backend.backend, RpiAdcSensorBackend)
     metrics = backend.read_metrics()
 
     assert metrics["custom_pressure_psi"] is None
-    assert metrics["water_pressure_psi"] is None
+    assert "water_pressure_psi" not in metrics
 
 
 def test_composite_config_requires_backends_list(

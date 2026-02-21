@@ -278,3 +278,66 @@
 
 - [ ] Add an explicit optional dependency group for Pi sensor runtime packages (`smbus2`) once lockfile/tooling drift is resolved.
 - [ ] Extend `rpi_i2c` to support additional sensor families (for example SHT31) behind the same backend contract.
+
+## Task 11c — Raspberry Pi ADC (ADS1115 pressures + levels) (2026-02-21)
+
+### What changed
+
+- Added pure scaling helpers for analog conversions:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/scaling.py`
+  - includes linear mapping, clamp, current/voltage conversion, and reusable scaling config
+- Added `rpi_adc` backend implementation:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/rpi_adc.py`
+  - ADS1115 single-ended channel reads over I2C
+  - per-channel conversion modes:
+    - `current_4_20ma` (with shunt resistor)
+    - `voltage`
+  - per-channel scale mapping (`from` -> `to`) with clamping
+  - optional median smoothing via `median_samples`
+  - graceful degradation: failed channels return `None` while other channels continue
+  - warning logs are rate-limited to avoid spam
+- Wired `rpi_adc` into backend construction:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/config.py`
+  - supports config keys:
+    - `adc.type`, `adc.bus`, `adc.address`, `adc.gain`, `adc.data_rate`, `adc.median_samples`, `adc.warning_interval_s`
+    - `channels.<metric>.channel/kind/shunt_ohms/scale/median_samples`
+  - added default canonical channel map when `channels` is omitted:
+    - `water_pressure_psi`, `oil_pressure_psi`, `oil_level_pct`, `drip_oil_level_pct`
+- Updated backend exports:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/__init__.py`
+- Added deterministic tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_scaling.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_rpi_adc.py`
+  - updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_framework.py` for real `rpi_adc` backend behavior
+- Updated operator/dev docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SENSORS.md` (ADS1115 config and run commands)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md` (`rpi_adc` support note)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example` (`SENSOR_BACKEND=rpi_adc` usage)
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/config/example.sensors.yaml` (full ADC channel mapping example)
+- Updated task status docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/11c-rpi-adc-pressures-levels.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 11c by delivering testable, configuration-driven ADS1115 ingestion for pressure/level metrics while keeping local non-Pi environments safe.
+- Keeps conversion logic pure and unit-tested so scaling math can be verified without hardware.
+
+### How it was validated
+
+- Required full-gate run:
+  - `make harness` (fails on pre-existing repo-wide issues unrelated to this task, including existing API lint/type/test failures and repo hygiene `.DS_Store`)
+- Task-focused validation:
+  - `ruff check agent/sensors/config.py agent/sensors/scaling.py agent/sensors/backends/rpi_adc.py tests/test_sensor_rpi_adc.py tests/test_sensor_scaling.py tests/test_sensor_framework.py agent/sensors/backends/__init__.py` (pass)
+  - `pyright agent/sensors/config.py agent/sensors/scaling.py agent/sensors/backends/rpi_adc.py tests/test_sensor_rpi_adc.py tests/test_sensor_scaling.py tests/test_sensor_framework.py agent/sensors/backends/__init__.py` (pass)
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: pytest -q tests/test_sensor_scaling.py tests/test_sensor_rpi_adc.py tests/test_sensor_rpi_i2c.py tests/test_sensor_framework.py` (pass)
+
+### Risks / rollout notes
+
+- Runtime on Raspberry Pi requires `smbus2` to access ADS1115.
+- The backend currently targets ADS1115 only; other ADC models remain future work.
+
+### Follow-ups / tech debt
+
+- [ ] Add a dedicated optional dependency group for hardware sensor packages once lockfile/tooling drift is resolved.
+- [ ] Consider per-metric warning throttles if field deployments need finer-grained channel diagnostics.
