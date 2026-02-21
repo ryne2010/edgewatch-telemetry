@@ -96,9 +96,11 @@ Drip oiler (small reservoir):
 
 ### Cellular
 
-- Sixfab LTE Base HAT + mini PCIe LTE modem module (Quectel EC25/EG25 class)
+- LTE HAT option: Sixfab LTE Base HAT + mini PCIe modem (Quectel EC25/EG25 class)
+- USB modem option: carrier-compatible USB LTE modem (Quectel/Huawei/Sierra class)
+- External router option: industrial LTE router with Ethernet handoff to the Pi
 - LTE antenna(s) (and GNSS antenna if your module supports it)
-- Optional: external router if you need Wi-Fi AP sharing or stronger LTE management
+- Keep modem firmware and carrier profile support aligned with your deployed SIM plan
 
 ## Sensors
 
@@ -186,6 +188,12 @@ Recommended patterns:
 - Expose `signal_rssi_dbm` (already supported) and optionally add:
   - `cellular_rsrp_dbm`, `cellular_rsrq_db`, `cellular_sinr_db`
   - data usage counters per day (for cost hygiene)
+
+Practical selection guidance:
+
+- Choose **LTE HAT** when you want compact, integrated installs inside a single enclosure.
+- Choose **USB modem** when you want fastest replacement and easiest field swap workflow.
+- Choose **external router** when you need stronger remote network management, dual-SIM/failover, or Wi-Fi/LAN sharing.
 
 See runbook: `docs/RUNBOOKS/CELLULAR.md`.
 

@@ -1,6 +1,6 @@
 # Task 13a — Cellular runbook (LTE modem + SIM bring-up)
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 
