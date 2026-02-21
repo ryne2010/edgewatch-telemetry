@@ -53,6 +53,7 @@ class Device(Base):
     ingestion_batches: Mapped[list[IngestionBatch]] = relationship(back_populates="device")
     alert_policy: Mapped["AlertPolicy | None"] = relationship(back_populates="device", uselist=False)
     notification_events: Mapped[list["NotificationEvent"]] = relationship(back_populates="device")
+    admin_events: Mapped[list["AdminEvent"]] = relationship(back_populates="device")
     drift_events: Mapped[list["DriftEvent"]] = relationship(back_populates="device")
     quarantined_telemetry: Mapped[list["QuarantinedTelemetry"]] = relationship(back_populates="device")
     media_objects: Mapped[list["MediaObject"]] = relationship(back_populates="device")
@@ -197,6 +198,29 @@ class NotificationEvent(Base):
     __table_args__ = (
         Index("ix_notification_events_device_created", "device_id", "created_at"),
         Index("ix_notification_events_device_alert_created", "device_id", "alert_type", "created_at"),
+    )
+
+
+class AdminEvent(Base):
+    __tablename__ = "admin_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    actor_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False, default="device")
+    target_device_id: Mapped[str | None] = mapped_column(
+        String(128), ForeignKey("devices.device_id"), nullable=True
+    )
+    details: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device: Mapped["Device | None"] = relationship(back_populates="admin_events")
+
+    __table_args__ = (
+        Index("ix_admin_events_created", "created_at"),
+        Index("ix_admin_events_actor_created", "actor_email", "created_at"),
+        Index("ix_admin_events_target_created", "target_type", "target_device_id", "created_at"),
     )
 
 

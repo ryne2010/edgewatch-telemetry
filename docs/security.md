@@ -57,6 +57,10 @@ This enables a production “public ingest” service posture that does not expo
   - Admin endpoints do **not** require an admin key.
   - Intended for deployments protected by an infrastructure perimeter (Cloud Run IAM, IAP, VPN).
 
+- `IAP_AUTH_ENABLED=1`
+  - Admin endpoints require `X-Goog-Authenticated-User-Email`.
+  - Enables defense-in-depth for IAP-protected admin services by rejecting requests without an authenticated IAP identity header.
+
 Recommended production guidance:
 
 - Prefer **identity-based perimeters** (Cloud Run IAM / IAP) for admin operations.
@@ -65,6 +69,13 @@ Recommended production guidance:
   - **public ingest**: `ENABLE_UI=0`, `ENABLE_READ_ROUTES=0`, `ENABLE_INGEST_ROUTES=1`, `ENABLE_ADMIN_ROUTES=0`
   - **private dashboard** (optional, least privilege): `ENABLE_UI=1`, `ENABLE_READ_ROUTES=1`, `ENABLE_INGEST_ROUTES=0`, `ENABLE_ADMIN_ROUTES=0`
   - **private admin**: `ENABLE_UI=1`, `ENABLE_READ_ROUTES=1`, `ENABLE_INGEST_ROUTES=0`, `ENABLE_ADMIN_ROUTES=1`, `ADMIN_AUTH_MODE=none`
+
+Admin mutations (`POST /api/v1/admin/devices`, `PATCH /api/v1/admin/devices/{device_id}`) are persisted to `admin_events` with:
+- `actor_email`
+- action (`device.create` / `device.update`)
+- target device and request correlation id
+
+The API also emits structured `admin_event` logs for centralized audit trails.
 
 ## Defense-in-depth controls
 

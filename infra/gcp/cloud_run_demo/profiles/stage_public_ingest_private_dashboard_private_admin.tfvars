@@ -33,6 +33,25 @@ admin_service_name            = "edgewatch-stage-admin"
 admin_allow_unauthenticated   = false
 admin_service_admin_auth_mode = "none"
 
+# Optional: put dashboard/admin behind IAP (requires domains + OAuth clients + allowlists).
+# enable_dashboard_iap               = true
+# dashboard_iap_domain               = "dashboard-stage.example.com"
+# dashboard_iap_oauth2_client_id     = "REPLACE_ME"
+# dashboard_iap_oauth2_client_secret = "REPLACE_ME"
+# dashboard_iap_allowlist_members = [
+#   "group:gkp-engineers@example.com",
+#   "group:gkp-clients-observers@example.com",
+# ]
+#
+# enable_admin_iap               = true
+# admin_iap_domain               = "admin-stage.example.com"
+# admin_iap_oauth2_client_id     = "REPLACE_ME"
+# admin_iap_oauth2_client_secret = "REPLACE_ME"
+# admin_iap_allowlist_members = [
+#   "group:gkp-engineers@example.com",
+#   "group:gkp-engineers-min@example.com",
+# ]
+
 # Recommended: use Workspace group-based IAM.
 # workspace_domain = "example.com"
 # group_prefix     = "gkp"

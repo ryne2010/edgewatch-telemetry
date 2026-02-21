@@ -5,6 +5,7 @@ This repository includes an **optional** Terraform + Cloud Build demo deployment
 - Cloud Run service for the API (+ optional UI assets)
 - Secret Manager for `DATABASE_URL` and `ADMIN_API_KEY`
 - Optional observability resources (dashboards/alerts)
+- Optional IAP perimeter for dashboard/admin services (HTTPS LB + Google login + allowlists)
 - **Cloud Run Jobs** for:
   - DB migrations (`edgewatch-migrate-<env>`)
   - offline checks (`edgewatch-offline-check-<env>`)
@@ -116,6 +117,30 @@ Route surface hardening (IoT posture): the provided IoT profiles set these app e
 - `ENABLE_INGEST_ROUTES=1`
 
 This keeps the public surface minimal while still allowing operators to use the private dashboard/admin services.
+
+### Optional: IAP perimeter for dashboard/admin
+
+When you deploy split services (`enable_dashboard_service=true` and/or `enable_admin_service=true`), you can put those services behind IAP:
+
+- `enable_dashboard_iap=true`
+- `dashboard_iap_domain`
+- `dashboard_iap_oauth2_client_id`
+- `dashboard_iap_oauth2_client_secret`
+- `dashboard_iap_allowlist_members` (for example: `group:ops@example.com`)
+
+- `enable_admin_iap=true`
+- `admin_iap_domain`
+- `admin_iap_oauth2_client_id`
+- `admin_iap_oauth2_client_secret`
+- `admin_iap_allowlist_members`
+
+Terraform outputs:
+- `dashboard_iap_url`
+- `admin_iap_url`
+
+Notes:
+- IAP requires DNS for the configured domain(s) and an OAuth client for IAP.
+- When `enable_admin_iap=true`, Terraform sets `IAP_AUTH_ENABLED=true` on the admin service so admin routes reject requests that do not include `X-Goog-Authenticated-User-Email`.
 
 > Under the hood these targets set `TFVARS=...` and call `deploy-gcp-safe`.
 

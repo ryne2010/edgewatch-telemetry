@@ -59,7 +59,7 @@ resource "google_cloud_run_v2_service_iam_member" "engineers_min_invoker" {
 
 # Admin service invoker bindings (only when enable_admin_service=true)
 resource "google_cloud_run_v2_service_iam_member" "engineers_admin_invoker" {
-  count = (local.has_workspace && var.enable_admin_service && !var.admin_allow_unauthenticated) ? 1 : 0
+  count = (local.has_workspace && var.enable_admin_service && !var.admin_allow_unauthenticated && !var.enable_admin_iap) ? 1 : 0
 
   project  = var.project_id
   location = var.region
@@ -70,7 +70,7 @@ resource "google_cloud_run_v2_service_iam_member" "engineers_admin_invoker" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "engineers_min_admin_invoker" {
-  count = (local.has_workspace && var.enable_admin_service && !var.admin_allow_unauthenticated) ? 1 : 0
+  count = (local.has_workspace && var.enable_admin_service && !var.admin_allow_unauthenticated && !var.enable_admin_iap) ? 1 : 0
 
   project  = var.project_id
   location = var.region
@@ -83,7 +83,7 @@ resource "google_cloud_run_v2_service_iam_member" "engineers_min_admin_invoker" 
 
 # Dashboard service invoker bindings (only when enable_dashboard_service=true)
 resource "google_cloud_run_v2_service_iam_member" "engineers_dashboard_invoker" {
-  count = (local.has_workspace && var.enable_dashboard_service && !var.dashboard_allow_unauthenticated) ? 1 : 0
+  count = (local.has_workspace && var.enable_dashboard_service && !var.dashboard_allow_unauthenticated && !var.enable_dashboard_iap) ? 1 : 0
 
   project  = var.project_id
   location = var.region
@@ -94,7 +94,7 @@ resource "google_cloud_run_v2_service_iam_member" "engineers_dashboard_invoker" 
 }
 
 resource "google_cloud_run_v2_service_iam_member" "engineers_min_dashboard_invoker" {
-  count = (local.has_workspace && var.enable_dashboard_service && !var.dashboard_allow_unauthenticated) ? 1 : 0
+  count = (local.has_workspace && var.enable_dashboard_service && !var.dashboard_allow_unauthenticated && !var.enable_dashboard_iap) ? 1 : 0
 
   project  = var.project_id
   location = var.region

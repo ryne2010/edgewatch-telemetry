@@ -85,6 +85,13 @@ Optional dashboard service (read-only UI):
 - `dashboard_service_name` — optional name override
 - `dashboard_allow_unauthenticated` — default `false` (keep dashboard private in stage/prod)
 
+Optional IAP perimeter (dashboard/admin):
+- `enable_dashboard_iap` / `enable_admin_iap` — create HTTPS LB + IAP for dashboard/admin services
+- `dashboard_iap_domain` / `admin_iap_domain` — FQDNs fronted by managed certs
+- `dashboard_iap_oauth2_client_id` / `admin_iap_oauth2_client_id`
+- `dashboard_iap_oauth2_client_secret` / `admin_iap_oauth2_client_secret`
+- `dashboard_iap_allowlist_members` / `admin_iap_allowlist_members` — users/groups allowed by IAP
+
 
 
 Scheduled jobs:
@@ -139,3 +146,9 @@ Demo bootstrap:
 TF_VAR_enable_vpc_connector=true make plan-gcp ENV=dev
 TF_VAR_enable_vpc_connector=true make apply-gcp ENV=dev
 ```
+
+### IAP outputs
+
+When enabled, Terraform outputs:
+- `dashboard_iap_url`
+- `admin_iap_url`

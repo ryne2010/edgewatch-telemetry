@@ -63,8 +63,7 @@ If you want the fastest path to “real field node”:
 
 If you want the fastest path to “enterprise operator posture”:
 
-- Identity perimeter + RBAC
-  - `docs/TASKS/18-iap-identity-perimeter.md`
+- RBAC + admin authorization hardening
   - `docs/TASKS/15-authn-authz.md`
 
 - Observability
@@ -91,7 +90,7 @@ These can be developed in parallel if PRs are rebased/merged carefully:
 - Stream A (sensors): `11a` → `11b` / `11c` → `11d`
 - Stream B (media): `12a` (device) in parallel with `12b` (API) until the upload handshake needs integration
 - Stream C (cellular): `13a` docs can be written anytime; `13b` agent + `13c` policy changes should be coordinated
-- Stream D (platform): IAP (`18`) + OTEL (`16`) + partitioning (`17`) can proceed independently
+- Stream D (platform): RBAC (`15`) + OTEL (`16`) + partitioning (`17`) can proceed independently
 
 ## Deployment lanes
 

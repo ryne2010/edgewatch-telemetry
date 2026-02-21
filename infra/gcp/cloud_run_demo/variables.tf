@@ -208,6 +208,138 @@ variable "dashboard_allow_unauthenticated" {
   }
 }
 
+
+# --- Optional: IAP identity perimeter for dashboard/admin services ----------
+#
+# Design:
+# - Keep ingest public if needed (IoT), while operator surfaces require Google login.
+# - Put dashboard/admin behind HTTPS LB + IAP.
+# - Restrict access via IAP allowlists (users/groups).
+
+variable "enable_dashboard_iap" {
+  type        = bool
+  description = "If true, create HTTPS LB + IAP in front of the dashboard Cloud Run service."
+  default     = false
+
+  validation {
+    condition     = !var.enable_dashboard_iap || (var.enable_dashboard_service && !var.dashboard_allow_unauthenticated)
+    error_message = "enable_dashboard_iap=true requires enable_dashboard_service=true and dashboard_allow_unauthenticated=false."
+  }
+}
+
+variable "dashboard_iap_domain" {
+  type        = string
+  description = "FQDN for the dashboard IAP HTTPS load balancer (for example: dashboard.example.com)."
+  default     = null
+
+  validation {
+    condition     = !var.enable_dashboard_iap || (var.dashboard_iap_domain != null && trimspace(var.dashboard_iap_domain) != "")
+    error_message = "dashboard_iap_domain is required when enable_dashboard_iap=true."
+  }
+}
+
+variable "dashboard_iap_oauth2_client_id" {
+  type        = string
+  description = "OAuth2 client ID used by IAP for the dashboard backend."
+  default     = null
+
+  validation {
+    condition = !var.enable_dashboard_iap || (
+      var.dashboard_iap_oauth2_client_id != null
+      && trimspace(var.dashboard_iap_oauth2_client_id) != ""
+    )
+    error_message = "dashboard_iap_oauth2_client_id is required when enable_dashboard_iap=true."
+  }
+}
+
+variable "dashboard_iap_oauth2_client_secret" {
+  type        = string
+  description = "OAuth2 client secret used by IAP for the dashboard backend."
+  default     = null
+  sensitive   = true
+
+  validation {
+    condition = !var.enable_dashboard_iap || (
+      var.dashboard_iap_oauth2_client_secret != null
+      && trimspace(var.dashboard_iap_oauth2_client_secret) != ""
+    )
+    error_message = "dashboard_iap_oauth2_client_secret is required when enable_dashboard_iap=true."
+  }
+}
+
+variable "dashboard_iap_allowlist_members" {
+  type        = list(string)
+  description = "Members allowed by IAP to access the dashboard backend (user:alice@example.com, group:ops@example.com)."
+  default     = []
+
+  validation {
+    condition     = !var.enable_dashboard_iap || length(var.dashboard_iap_allowlist_members) > 0
+    error_message = "dashboard_iap_allowlist_members must include at least one user/group when enable_dashboard_iap=true."
+  }
+}
+
+variable "enable_admin_iap" {
+  type        = bool
+  description = "If true, create HTTPS LB + IAP in front of the admin Cloud Run service."
+  default     = false
+
+  validation {
+    condition     = !var.enable_admin_iap || (var.enable_admin_service && !var.admin_allow_unauthenticated)
+    error_message = "enable_admin_iap=true requires enable_admin_service=true and admin_allow_unauthenticated=false."
+  }
+}
+
+variable "admin_iap_domain" {
+  type        = string
+  description = "FQDN for the admin IAP HTTPS load balancer (for example: admin.example.com)."
+  default     = null
+
+  validation {
+    condition     = !var.enable_admin_iap || (var.admin_iap_domain != null && trimspace(var.admin_iap_domain) != "")
+    error_message = "admin_iap_domain is required when enable_admin_iap=true."
+  }
+}
+
+variable "admin_iap_oauth2_client_id" {
+  type        = string
+  description = "OAuth2 client ID used by IAP for the admin backend."
+  default     = null
+
+  validation {
+    condition = !var.enable_admin_iap || (
+      var.admin_iap_oauth2_client_id != null
+      && trimspace(var.admin_iap_oauth2_client_id) != ""
+    )
+    error_message = "admin_iap_oauth2_client_id is required when enable_admin_iap=true."
+  }
+}
+
+variable "admin_iap_oauth2_client_secret" {
+  type        = string
+  description = "OAuth2 client secret used by IAP for the admin backend."
+  default     = null
+  sensitive   = true
+
+  validation {
+    condition = !var.enable_admin_iap || (
+      var.admin_iap_oauth2_client_secret != null
+      && trimspace(var.admin_iap_oauth2_client_secret) != ""
+    )
+    error_message = "admin_iap_oauth2_client_secret is required when enable_admin_iap=true."
+  }
+}
+
+variable "admin_iap_allowlist_members" {
+  type        = list(string)
+  description = "Members allowed by IAP to access the admin backend (user:alice@example.com, group:ops@example.com)."
+  default     = []
+
+  validation {
+    condition     = !var.enable_admin_iap || length(var.admin_iap_allowlist_members) > 0
+    error_message = "admin_iap_allowlist_members must include at least one user/group when enable_admin_iap=true."
+  }
+}
+
 variable "cors_allow_origins_csv" {
   type        = string
   description = <<EOT
