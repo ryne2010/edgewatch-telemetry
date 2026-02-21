@@ -1,63 +1,327 @@
-# Cellular Runbook (LTE data SIM)
+# Cellular Runbook (LTE modem + data SIM)
 
-This runbook covers practical bring-up and troubleshooting when an EdgeWatch node
-uses a cellular modem + data SIM for internet.
+This runbook is for field bring-up and troubleshooting of Raspberry Pi EdgeWatch nodes using LTE.
 
-> Principle: the OS owns the modem connection; EdgeWatch observes + reports link health.
+Principle: Linux networking owns the link; EdgeWatch observes and reports link health.
 
-## 1) Bring-up checklist
+## 1) Hardware options
 
-1) Verify hardware
-- Modem powered (and gets adequate current)
-- SIM inserted
-- Antennas attached
+Use one of these patterns:
 
-2) Verify OS sees the modem
-- Check USB / PCIe device presence
-- If using ModemManager, confirm it discovers a modem
+- LTE HAT (for example Sixfab + Quectel): tight integration, clean enclosure fit, good for fixed installs.
+- USB LTE modem: fastest to prototype, easy swap in field, simplest replacement flow.
+- External LTE router (Ethernet handoff to Pi): best radio/admin features, easiest remote troubleshooting, extra hardware cost.
 
-3) Configure APN
-- Carrier APN varies (check your SIM provider)
-- Save configuration in NetworkManager/ModemManager
+Minimum physical checks before software setup:
 
-4) Confirm IP connectivity
-- Resolve DNS
-- Reach the EdgeWatch API URL
+- Stable power budget for Pi + modem + cameras (brownouts are common root cause).
+- SIM seated correctly and activated by carrier.
+- Main LTE antenna connected (and positioned away from metal shielding).
+- USB/PCIe cabling seated and strain-relieved.
 
-5) Verify EdgeWatch telemetry
-- Confirm `signal_rssi_dbm` is being reported
-- Confirm the device can ingest points (no buffering growth)
+## 2) Fresh Pi prerequisites
 
-## 2) Common failure modes
+Install and enable baseline modem tooling:
 
-### "No network" / "No service"
+```bash
+sudo apt-get update
+sudo apt-get install -y modemmanager network-manager usb-modeswitch dnsutils jq
+sudo systemctl enable --now ModemManager
+sudo systemctl enable --now NetworkManager
+```
 
-- Antenna missing / wrong band
+Expected:
+
+- `systemctl is-active ModemManager` returns `active`
+- `systemctl is-active NetworkManager` returns `active`
+
+## 3) Discover modem + SIM state
+
+Confirm hardware is detected:
+
+```bash
+lsusb
+```
+
+Expected: a modem vendor appears (for example Quectel/Huawei/Sierra/Fibocom/ZTE).
+
+List modems:
+
+```bash
+sudo mmcli -L
+```
+
+Expected: at least one modem path like `/org/freedesktop/ModemManager1/Modem/0`.
+
+Inspect modem summary:
+
+```bash
+sudo mmcli -m 0
+```
+
+Important fields:
+
+- `state`: should progress toward `registered`/`connected`
+- `sim`: should not be `none`
+- `access tech`: typically LTE/4G when attached
+
+Inspect SIM details:
+
+```bash
+sudo mmcli -i 0
+```
+
+Expected:
+
+- valid `imsi` and `operator id`
+- `active: yes`
+- lock state not requiring PIN/PUK
+
+If SIM PIN is required:
+
+```bash
+sudo mmcli -i 0 --pin=1234
+```
+
+## 4) Configure APN with NetworkManager
+
+Create a named LTE connection:
+
+```bash
+sudo nmcli con add type gsm ifname "*" con-name edgewatch-lte apn "<APN>"
+sudo nmcli con modify edgewatch-lte connection.autoconnect yes ipv4.method auto ipv6.method ignore
+```
+
+If carrier requires credentials:
+
+```bash
+sudo nmcli con modify edgewatch-lte gsm.username "<USER>" gsm.password "<PASS>"
+```
+
+Bring connection up:
+
+```bash
+sudo nmcli con up edgewatch-lte
+```
+
+Expected: `Connection successfully activated`.
+
+Verify connection status:
+
+```bash
+nmcli -f NAME,TYPE,DEVICE,STATE con show --active
+```
+
+Expected: `edgewatch-lte` in `activated` state on modem interface.
+
+## 5) Registration, signal, DNS, and egress checks
+
+Registration and signal:
+
+```bash
+sudo mmcli -m 0 --simple-status
+sudo mmcli -m 0 --signal-get
+```
+
+Expected:
+
+- `state: connected`
+- `m3gpp registration state: home|roaming`
+- usable signal metrics (quality and/or RSRP/RSRQ/SINR depending on modem support)
+
+IP + route:
+
+```bash
+ip -4 addr
+ip route
+```
+
+Expected: modem interface has IPv4 address and default route.
+
+DNS + internet reachability:
+
+```bash
+dig +short google.com
+ping -c 3 1.1.1.1
+curl -fsS https://www.gstatic.com/generate_204 -o /dev/null && echo "egress ok"
+```
+
+Expected:
+
+- `dig` returns an IP
+- `ping` receives replies
+- `egress ok` printed
+
+## 6) Validate EdgeWatch over LTE
+
+Check agent health:
+
+```bash
+journalctl -u edgewatch-agent -n 100 --no-pager
+```
+
+Expected:
+
+- no repeated ingest/auth failures
+- successful policy fetch and ingest posts
+
+Validate telemetry fields in UI/API:
+
+- device remains online
+- `signal_rssi_dbm` appears in telemetry stream
+- local buffer is not continuously growing
+
+## 7) Common failures (with commands + expected output)
+
+### A) Modem not detected
+
+Run:
+
+```bash
+lsusb
+sudo mmcli -L
+dmesg | tail -n 80
+```
+
+Healthy output:
+
+- modem appears in `lsusb`
+- `mmcli -L` lists modem(s)
+
+Failure indicators:
+
+- no modem in `lsusb` and `mmcli -L` returns `No modems were found`
+- kernel log shows USB resets/disconnect loops
+
+Most likely causes:
+
+- insufficient power
+- bad USB cable/port
+- modem not in data mode (usb-modeswitch issue)
+
+### B) SIM not ready
+
+Run:
+
+```bash
+sudo mmcli -m 0
+sudo mmcli -i 0
+```
+
+Healthy output:
+
+- `sim` path present
+- SIM `active: yes`
+
+Failure indicators:
+
+- SIM missing/unknown
+- PIN/PUK lock
+
+Most likely causes:
+
+- SIM not seated
 - SIM not activated
-- APN wrong
-- Insufficient power to modem
+- SIM locked by PIN
 
-### Works briefly, then drops
+### C) Registered but no data session
 
-- Brownout (power supply)
-- Thermal shutdown
-- Weak signal; consider higher-gain antenna or different placement
+Run:
 
-### High data usage
+```bash
+sudo mmcli -m 0 --simple-status
+nmcli con show edgewatch-lte
+```
 
-- Snapshot/video upload frequency too high
-- Telemetry cadence too frequent
-- Consider adding policy caps (see `docs/TASKS/13-cellular-connectivity.md`)
+Healthy output:
 
-## 3) Field diagnostics to collect
+- modem registered + connected
+- connection profile APN matches carrier requirement
 
-- Timestamp + location
-- Signal strength metrics (RSSI; optionally RSRP/RSRQ/SINR)
-- IP address / carrier
-- Any modem logs
-- EdgeWatch agent logs and buffer size
+Failure indicators:
 
-## 4) Escalation
+- `registration state: denied|searching`
+- connection repeatedly fails to activate
 
-- If multiple nodes fail in the same area, suspect carrier outage.
-- If a single node fails, suspect hardware/power/antenna.
+Most likely causes:
+
+- wrong APN
+- carrier plan missing data attach
+- weak/unsupported band coverage
+
+### D) Connected but no DNS/egress
+
+Run:
+
+```bash
+ip route
+cat /etc/resolv.conf
+dig +short google.com
+curl -I https://www.gstatic.com/generate_204
+```
+
+Healthy output:
+
+- default route exists
+- nameserver present
+- DNS lookup returns IP
+- HTTP 204/200 returned
+
+Failure indicators:
+
+- no default route
+- DNS lookup timeout
+- curl timeout despite link up
+
+Most likely causes:
+
+- DNS misconfiguration
+- captive/filtered carrier APN
+- upstream carrier outage
+
+### E) Link drops after a few minutes
+
+Run:
+
+```bash
+journalctl -u ModemManager -n 200 --no-pager
+vcgencmd get_throttled
+```
+
+Healthy output:
+
+- no repeated modem disconnect/reconnect churn
+- throttling state indicates no undervoltage events
+
+Failure indicators:
+
+- periodic modem resets in logs
+- undervoltage/throttling flags set
+
+Most likely causes:
+
+- brownouts/thermal constraints
+- poor RF placement (antenna/cabinet shielding)
+
+## 8) Field checklist (before leaving site)
+
+- Modem discovered and SIM active (`mmcli -L`, `mmcli -i 0`).
+- APN profile saved and autoconnect enabled (`nmcli con show edgewatch-lte`).
+- IP + default route + DNS + HTTPS egress verified.
+- Agent running under `systemd` with clean logs for at least 10-15 minutes.
+- `signal_rssi_dbm` visible in EdgeWatch telemetry.
+- Reboot test completed and LTE reconnects automatically.
+- Device can reach API and ingest points after reboot.
+
+## 9) Diagnostics to capture for escalation
+
+- Site name, timestamp, and modem model/firmware.
+- Output of:
+  - `sudo mmcli -m 0`
+  - `sudo mmcli -m 0 --simple-status`
+  - `sudo mmcli -m 0 --signal-get`
+  - `nmcli con show edgewatch-lte`
+  - `ip route`
+  - `journalctl -u ModemManager -n 200 --no-pager`
+  - `journalctl -u edgewatch-agent -n 200 --no-pager`
+- Whether issue reproduces after reboot and after relocating antenna.

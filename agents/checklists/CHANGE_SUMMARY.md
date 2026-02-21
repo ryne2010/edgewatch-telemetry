@@ -670,3 +670,44 @@
 
 - [ ] Add server-generated thumbnail derivatives for lower-bandwidth gallery rendering.
 - [ ] Add IAM/IAP-aware operator media access path to avoid browser-side device token handling in hardened production deployments.
+
+## Task 13a — Cellular Runbook (LTE modem + SIM bring-up) (2026-02-21)
+
+### What changed
+
+- Rewrote and expanded the cellular runbook into a field-ready technician procedure:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CELLULAR.md`
+  - includes:
+    - hardware option guidance (LTE HAT vs USB modem vs external router)
+    - fresh Pi prerequisites (`ModemManager`, `NetworkManager`, tooling)
+    - SIM/APN bring-up with concrete `mmcli`/`nmcli` commands
+    - registration/signal/DNS/egress verification commands
+    - EdgeWatch validation checks after link bring-up
+    - common failure playbook with command sets and expected healthy/failure outputs
+    - a field “before leaving site” checklist
+    - escalation diagnostics bundle to collect for support.
+- Updated hardware recommendations for LTE selection guidance:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+  - clarified LTE deployment options and when to choose each.
+- Updated task status tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/13a-cellular-runbook.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 13a by delivering a documentation-first, operator-executable LTE bring-up runbook with concrete diagnostics for real field failures.
+
+### How it was validated
+
+- `uv run --locked pre-commit run --all-files` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Commands in the runbook are intentionally carrier-agnostic; exact APN names and SIM provisioning rules remain carrier-specific.
+- Modem output fields can vary slightly across modem firmware versions; the runbook focuses on state/registration semantics that remain consistent.
+
+### Follow-ups / tech debt
+
+- [ ] Task 13b: wire additional cellular metrics + watchdog behavior into the agent runtime.
+- [ ] Task 13c: enforce policy-driven cellular cost caps for media + telemetry.
