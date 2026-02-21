@@ -1,6 +1,6 @@
 # Task 14 — UI/UX polish (production-grade operator dashboard)
 
-🟡 **Status: In progress (core UX shipped; alerts timeline/audit done; oil-life gauge + IAP polish remain)**
+🟡 **Status: In progress (core UX shipped; only IAP posture polish remains after Task 18)**
 
 ## Intent
 
@@ -62,7 +62,7 @@ The UI reads `/api/v1/health` feature flags and:
 ### Device detail
 
 - ✅ Multi-metric “small multiples” view for key metrics.
-- Oil life gauge (after Task 11d ships).
+- ✅ Oil life gauge (after Task 11d ships).
 
 ### Alerts
 

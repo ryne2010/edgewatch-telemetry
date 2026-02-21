@@ -882,7 +882,7 @@
 
 ### Follow-ups / tech debt
 
-- [ ] Complete remaining Task 14 work for Device Detail oil-life gauge UX enhancement.
+- [ ] Complete remaining Task 14 work for IAP operator posture UX after Task 18 lands.
 
 ## Task 14 (Iteration) — Alerts Timeline + Routing Audit (2026-02-21)
 
@@ -922,4 +922,39 @@
 
 ### Follow-ups / tech debt
 
-- [ ] Add a dedicated oil-life gauge to Device Detail to finish the remaining non-IAP Task 14 UX item.
+- [ ] Complete remaining Task 14 work for IAP operator posture UX after Task 18 lands.
+
+## Task 14 (Iteration) — Device Detail Oil-Life Gauge (2026-02-21)
+
+### What changed
+
+- Added a dedicated oil-life service gauge to the Device Detail Overview:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+  - added a radial gauge component driven by latest `oil_life_pct`
+  - added explicit health bands and service guidance:
+    - `Healthy` (50%+)
+    - `Watch` (20% to 49%)
+    - `Service now` (below 20%)
+  - handles missing-contract and missing-telemetry states with clear operator messaging.
+- Updated docs/task tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/14-ui-ux-polish.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+
+### Why it changed
+
+- Completes the remaining non-IAP Device Detail item in Task 14 so operators can quickly assess maintenance urgency from oil life without opening raw telemetry.
+
+### How it was validated
+
+- `pnpm -C web typecheck` ✅
+- `pnpm -r --if-present build` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Gauge availability depends on `oil_life_pct` being present in both the active telemetry contract and recent telemetry payloads.
+- Threshold bands are UI-side operator guidance; they are not yet policy-driven from server-side config.
+
+### Follow-ups / tech debt
+
+- [ ] Complete remaining Task 14 work for IAP operator posture UX after Task 18 lands.

@@ -175,6 +175,100 @@ function isImageMime(mimeType: string): boolean {
   return mimeType.toLowerCase().startsWith('image/')
 }
 
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value))
+}
+
+function oilLifeState(percent: number): {
+  label: string
+  note: string
+  variant: 'success' | 'warning' | 'destructive' | 'secondary'
+  strokeColor: string
+} {
+  if (percent >= 50) {
+    return {
+      label: 'Healthy',
+      note: 'No immediate service required.',
+      variant: 'success',
+      strokeColor: 'hsl(var(--primary))',
+    }
+  }
+  if (percent >= 20) {
+    return {
+      label: 'Watch',
+      note: 'Schedule maintenance soon.',
+      variant: 'warning',
+      strokeColor: 'hsl(38 92% 50%)',
+    }
+  }
+  return {
+    label: 'Service now',
+    note: 'Oil life is low and should be reset after service.',
+    variant: 'destructive',
+    strokeColor: 'hsl(var(--destructive))',
+  }
+}
+
+function OilLifeGauge(props: { percent: number | null; updatedAt?: string; hasMetric: boolean }) {
+  if (!props.hasMetric) {
+    return (
+      <div className="text-sm text-muted-foreground">
+        <span className="font-mono">oil_life_pct</span> is not defined in the active telemetry contract.
+      </div>
+    )
+  }
+  if (props.percent === null) {
+    return <div className="text-sm text-muted-foreground">No oil life value has been reported yet.</div>
+  }
+
+  const pct = clampPercent(props.percent)
+  const state = oilLifeState(pct)
+  const radius = 50
+  const circumference = 2 * Math.PI * radius
+  const filled = (pct / 100) * circumference
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-[13rem_1fr]">
+      <div className="mx-auto w-full max-w-[13rem]">
+        <div className="relative aspect-square">
+          <svg viewBox="0 0 120 120" className="h-full w-full" role="img" aria-label={`Oil life ${fmtNumber(pct, { digits: 0 })} percent`}>
+            <circle cx="60" cy="60" r={radius} fill="none" stroke="hsl(var(--muted))" strokeWidth="12" />
+            <circle
+              cx="60"
+              cy="60"
+              r={radius}
+              fill="none"
+              stroke={state.strokeColor}
+              strokeWidth="12"
+              strokeLinecap="round"
+              transform="rotate(-90 60 60)"
+              strokeDasharray={`${filled} ${circumference - filled}`}
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+            <div className="text-3xl font-semibold tracking-tight">{fmtNumber(pct, { digits: 0 })}%</div>
+            <Badge variant={state.variant}>{state.label}</Badge>
+          </div>
+        </div>
+      </div>
+      <div className="space-y-2 text-sm">
+        <div className="text-muted-foreground">{state.note}</div>
+        <div className="rounded-md border bg-muted/20 p-3">
+          <div className="font-medium">Service thresholds</div>
+          <div className="mt-1 text-xs text-muted-foreground">Healthy: 50%+</div>
+          <div className="text-xs text-muted-foreground">Watch: 20% to 49%</div>
+          <div className="text-xs text-muted-foreground">Service now: below 20%</div>
+        </div>
+        {props.updatedAt ? (
+          <div className="text-xs text-muted-foreground">
+            Last telemetry point: <span className="font-mono">{fmtDateTime(props.updatedAt)}</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function MediaThumbnail(props: { media: MediaObjectOut; token: string }) {
   const isImage = isImageMime(props.media.mime_type)
   const thumbQ = useQuery({
@@ -374,6 +468,11 @@ export function DeviceDetailPage() {
   })
 
   const latestMetrics = latestQ.data?.metrics ?? null
+  const oilLifePercent = React.useMemo(() => {
+    const value = (latestMetrics as Record<string, unknown> | null)?.oil_life_pct
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null
+    return clampPercent(value)
+  }, [latestMetrics])
 
   React.useEffect(() => {
     const stored = getStoredMediaToken(deviceId)
@@ -820,6 +919,26 @@ export function DeviceDetailPage() {
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Oil life</CardTitle>
+              <CardDescription>Derived runtime estimate from the edge model, shown as a service planning gauge.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {latestQ.isLoading ? (
+                <Skeleton className="h-52 w-full" />
+              ) : latestQ.isError ? (
+                <div className="text-sm text-destructive">Error: {(latestQ.error as Error).message}</div>
+              ) : (
+                <OilLifeGauge
+                  percent={oilLifePercent}
+                  updatedAt={latestQ.data?.ts}
+                  hasMetric={Boolean(contract?.metrics?.oil_life_pct)}
+                />
+              )}
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>
