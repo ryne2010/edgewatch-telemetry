@@ -84,4 +84,17 @@ The device page provides:
 - **Overview**: heartbeat status + curated “latest telemetry” panel + quick chart + vitals sparklines
 - **Telemetry**: metric selector + chart (numeric metrics) + raw point explorer
 - **Admin tabs** (if enabled): ingestions, drift events, notification audits
-- **Cameras**: UI placeholder for the capture pipeline (scope: one active camera at a time)
+- **Media**:
+  - device-scoped media gallery (`/api/v1/devices/{device_id}/media`) with camera filter (`cam1..cam4`)
+  - “latest by camera” cards for quick operator scanning
+  - preview thumbnails + full-resolution open modal
+  - capture metadata (timestamp, reason, MIME type, size)
+  - copyable asset link (`/api/v1/media/{media_id}/download`) for sharing within the operator perimeter
+
+### Media auth model
+
+Media API endpoints are device-auth scoped. The Device detail page includes a device media token field:
+
+- token is sent as `Authorization: Bearer <token>` for media list/download calls
+- token is stored locally per device in browser storage for convenience
+- when token is missing/invalid, the UI surfaces error toasts and actionable empty states

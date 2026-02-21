@@ -616,3 +616,57 @@
 
 - [ ] Consider splitting harness into language/tool lanes if future failures in one ecosystem should not block unrelated task PRs.
 - [ ] Consider pin-refresh for `pre-commit` hooks (`pre-commit-hooks` deprecation warning about legacy stages) in a dedicated maintenance PR.
+
+## Task 12c — Web Media Gallery (2026-02-21)
+
+### What changed
+
+- Added media API client surface for the web app:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+  - new `MediaObjectOut` type
+  - new media helpers:
+    - `api.media.list(deviceId, { token, limit })`
+    - `api.media.downloadPath(mediaId)`
+    - `api.media.downloadBlob(mediaId, token)`
+  - download requests use `cache: 'no-store'` to avoid stale signed/proxied URL behavior.
+- Implemented a production-ready **Media** tab in device detail:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+  - replaced the old camera placeholder tab with:
+    - per-device media token input (device-auth scoped API compatibility)
+    - camera filter (`all`, `cam1..cam4`, plus discovered camera IDs)
+    - latest-by-camera cards (`cam1..cam4`)
+    - media grid with preview thumbnails
+    - full-resolution open modal
+    - “Copy link” action for operator sharing
+    - skeleton loading states and error toasts
+    - empty-state messaging when token/media is absent
+- Updated web docs and task tracking:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/12c-web-media-gallery.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Completes Task 12c by connecting the shipped 12b media API to the operator UI with practical gallery workflows:
+  - latest capture visibility by camera,
+  - full-res asset inspection,
+  - operator-friendly filtering and sharing actions.
+
+### How it was validated
+
+- Task-specific validation from the spec:
+  - `pnpm -r --if-present build` ✅
+  - `pnpm -C web typecheck` ✅
+  - `make test` ✅
+- Required repo gate:
+  - `make harness` ✅
+
+### Risks / rollout notes
+
+- Media endpoints currently require device bearer tokens; the UI stores per-device token locally in the browser for operator convenience.
+- Thumbnail rendering currently uses downloaded blobs from the full media endpoint (no dedicated thumbnail service yet), so very large image sets can increase client bandwidth usage.
+
+### Follow-ups / tech debt
+
+- [ ] Add server-generated thumbnail derivatives for lower-bandwidth gallery rendering.
+- [ ] Add IAM/IAP-aware operator media access path to avoid browser-side device token handling in hardened production deployments.

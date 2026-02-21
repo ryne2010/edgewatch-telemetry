@@ -2,7 +2,16 @@ import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Link, useParams } from '@tanstack/react-router'
-import { api, type DriftEventOut, type IngestionBatchOut, type NotificationEventOut, type TelemetryContract, type TelemetryPoint, type TimeseriesMultiPoint } from '../api'
+import {
+  api,
+  type DriftEventOut,
+  type IngestionBatchOut,
+  type MediaObjectOut,
+  type NotificationEventOut,
+  type TelemetryContract,
+  type TelemetryPoint,
+  type TimeseriesMultiPoint,
+} from '../api'
 import { LineChart, type Point } from '../ui/LineChart'
 import { Sparkline } from '../ui/Sparkline'
 import {
@@ -17,12 +26,18 @@ import {
   Input,
   Label,
   Page,
+  Skeleton,
+  useToast,
 } from '../ui-kit'
 import { useAppSettings } from '../app/settings'
 import { fmtDateTime, fmtNumber } from '../utils/format'
 
 type Bucket = 'minute' | 'hour'
-type TabKey = 'overview' | 'telemetry' | 'ingestions' | 'drift' | 'notifications' | 'cameras'
+type TabKey = 'overview' | 'telemetry' | 'ingestions' | 'drift' | 'notifications' | 'media'
+type CameraFilter = 'all' | 'cam1' | 'cam2' | 'cam3' | 'cam4'
+
+const MEDIA_TOKEN_STORAGE_KEY = 'edgewatch_media_tokens_v1'
+const CAMERA_FILTERS: CameraFilter[] = ['all', 'cam1', 'cam2', 'cam3', 'cam4']
 
 function statusVariant(status: 'online' | 'offline' | 'unknown'): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'
@@ -107,9 +122,104 @@ function Callout(props: { title: string; children: React.ReactNode }) {
   )
 }
 
+function getStoredMediaToken(deviceId: string): string {
+  try {
+    const raw = localStorage.getItem(MEDIA_TOKEN_STORAGE_KEY)
+    if (!raw) return ''
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object') return ''
+    const v = (parsed as Record<string, unknown>)[deviceId]
+    return typeof v === 'string' ? v : ''
+  } catch {
+    return ''
+  }
+}
+
+function storeMediaToken(deviceId: string, token: string): void {
+  const normalized = token.trim()
+  try {
+    const raw = localStorage.getItem(MEDIA_TOKEN_STORAGE_KEY)
+    const parsed = raw ? (JSON.parse(raw) as unknown) : {}
+    const out: Record<string, string> = parsed && typeof parsed === 'object' ? { ...(parsed as Record<string, string>) } : {}
+    if (normalized) out[deviceId] = normalized
+    else delete out[deviceId]
+    localStorage.setItem(MEDIA_TOKEN_STORAGE_KEY, JSON.stringify(out))
+  } catch {
+    // best effort only
+  }
+}
+
+function reasonLabel(reason: string): string {
+  const r = reason.trim().toLowerCase()
+  if (r === 'scheduled') return 'Scheduled'
+  if (r === 'alert_transition') return 'Alert transition'
+  if (r === 'manual') return 'Manual'
+  return reason || '—'
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let amount = value
+  let unit = units[0]
+  for (const next of units) {
+    unit = next
+    if (amount < 1024 || next === units[units.length - 1]) break
+    amount /= 1024
+  }
+  const digits = amount >= 100 ? 0 : amount >= 10 ? 1 : 2
+  return `${amount.toFixed(digits)} ${unit}`
+}
+
+function isImageMime(mimeType: string): boolean {
+  return mimeType.toLowerCase().startsWith('image/')
+}
+
+function MediaThumbnail(props: { media: MediaObjectOut; token: string }) {
+  const isImage = isImageMime(props.media.mime_type)
+  const thumbQ = useQuery({
+    queryKey: ['mediaThumb', props.media.id, props.token],
+    queryFn: () => api.media.downloadBlob(props.media.id, props.token),
+    enabled: isImage && Boolean(props.token),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+
+  const [thumbUrl, setThumbUrl] = React.useState<string>('')
+  React.useEffect(() => {
+    if (!thumbQ.data) return
+    const url = URL.createObjectURL(thumbQ.data)
+    setThumbUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return url
+    })
+    return () => URL.revokeObjectURL(url)
+  }, [thumbQ.data])
+
+  if (!isImage) {
+    return (
+      <div className="flex h-32 items-center justify-center text-xs text-muted-foreground">
+        Preview unavailable ({props.media.mime_type})
+      </div>
+    )
+  }
+  if (thumbQ.isLoading) return <Skeleton className="h-32 w-full" />
+  if (thumbQ.isError) {
+    return (
+      <div className="flex h-32 items-center justify-center px-2 text-center text-xs text-muted-foreground">
+        Preview failed
+      </div>
+    )
+  }
+  if (!thumbUrl) return <Skeleton className="h-32 w-full" />
+
+  return <img src={thumbUrl} alt={`${props.media.camera_id} capture`} className="h-32 w-full object-cover" loading="lazy" />
+}
+
 export function DeviceDetailPage() {
   const { deviceId } = useParams({ from: '/devices/$deviceId' })
   const { adminKey } = useAppSettings()
+  const { toast } = useToast()
 
   const healthQ = useQuery({
     queryKey: ['health'],
@@ -129,6 +239,13 @@ export function DeviceDetailPage() {
   const [metric, setMetric] = React.useState<string>('water_pressure_psi')
   const [rawLimit, setRawLimit] = React.useState(100)
   const [rawSearch, setRawSearch] = React.useState('')
+  const [mediaFilter, setMediaFilter] = React.useState<string>('all')
+  const [mediaTokenInput, setMediaTokenInput] = React.useState<string>(() => getStoredMediaToken(deviceId))
+  const [mediaToken, setMediaToken] = React.useState<string>(() => getStoredMediaToken(deviceId))
+  const [selectedMedia, setSelectedMedia] = React.useState<MediaObjectOut | null>(null)
+  const [selectedMediaUrl, setSelectedMediaUrl] = React.useState<string>('')
+  const [openingMediaId, setOpeningMediaId] = React.useState<string | null>(null)
+  const mediaErrorToastRef = React.useRef<string>('')
 
   const deviceQ = useQuery({ queryKey: ['device', deviceId], queryFn: () => api.device(deviceId), refetchInterval: 10_000 })
   const contractQ = useQuery({ queryKey: ['telemetryContract'], queryFn: api.telemetryContract, staleTime: 5 * 60_000 })
@@ -246,7 +363,55 @@ export function DeviceDetailPage() {
     enabled: tab === 'notifications' && adminAccess,
   })
 
+  const mediaQ = useQuery({
+    queryKey: ['media', deviceId, mediaToken],
+    queryFn: () => api.media.list(deviceId, { token: mediaToken, limit: 200 }),
+    enabled: tab === 'media' && Boolean(mediaToken),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  })
+
   const latestMetrics = latestQ.data?.metrics ?? null
+
+  React.useEffect(() => {
+    const stored = getStoredMediaToken(deviceId)
+    setMediaTokenInput(stored)
+    setMediaToken(stored)
+    setMediaFilter('all')
+    setSelectedMedia(null)
+    setSelectedMediaUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return ''
+    })
+    setOpeningMediaId(null)
+    mediaErrorToastRef.current = ''
+  }, [deviceId])
+
+  React.useEffect(() => {
+    return () => {
+      if (selectedMediaUrl) URL.revokeObjectURL(selectedMediaUrl)
+    }
+  }, [selectedMediaUrl])
+
+  React.useEffect(() => {
+    if (tab !== 'media') return
+    if (!mediaQ.error) return
+    const message = (mediaQ.error as Error).message
+    if (mediaErrorToastRef.current === message) return
+    mediaErrorToastRef.current = message
+    toast({
+      title: 'Media load failed',
+      description: message,
+      variant: 'error',
+      durationMs: 8000,
+    })
+  }, [mediaQ.error, tab, toast])
+
+  React.useEffect(() => {
+    if (mediaQ.isSuccess) mediaErrorToastRef.current = ''
+  }, [mediaQ.isSuccess])
 
   const pinned = React.useMemo(() => {
     // Curated operational set.
@@ -266,13 +431,123 @@ export function DeviceDetailPage() {
     ].filter((k) => (contract ? Boolean(contract.metrics[k]) : true))
   }, [contract])
 
+  const mediaRows = mediaQ.data ?? []
+  const mediaFilteredRows = React.useMemo(() => {
+    if (mediaFilter === 'all') return mediaRows
+    return mediaRows.filter((row) => row.camera_id === mediaFilter)
+  }, [mediaRows, mediaFilter])
+  const mediaGridRows = React.useMemo(() => mediaFilteredRows.slice(0, 24), [mediaFilteredRows])
+  const latestByCamera = React.useMemo(() => {
+    const out: Partial<Record<Exclude<CameraFilter, 'all'>, MediaObjectOut>> = {}
+    for (const cam of CAMERA_FILTERS) {
+      if (cam === 'all') continue
+      const first = mediaRows.find((row) => row.camera_id === cam)
+      if (first) out[cam] = first
+    }
+    return out
+  }, [mediaRows])
+  const extraCameraFilters = React.useMemo(() => {
+    return Array.from(new Set(mediaRows.map((row) => row.camera_id)))
+      .filter((cameraId) => !CAMERA_FILTERS.includes(cameraId as CameraFilter))
+      .sort()
+  }, [mediaRows])
+
+  const handleMediaTokenSave = React.useCallback(() => {
+    const normalized = mediaTokenInput.trim()
+    storeMediaToken(deviceId, normalized)
+    setMediaToken(normalized)
+    if (normalized) {
+      toast({
+        title: 'Media token saved',
+        description: 'Stored for this device in local browser storage.',
+        variant: 'success',
+      })
+    } else {
+      toast({ title: 'Media token cleared', variant: 'default' })
+    }
+  }, [deviceId, mediaTokenInput, toast])
+
+  const handleMediaTokenClear = React.useCallback(() => {
+    storeMediaToken(deviceId, '')
+    setMediaTokenInput('')
+    setMediaToken('')
+    setSelectedMedia(null)
+    setSelectedMediaUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return ''
+    })
+    toast({ title: 'Media token cleared', variant: 'default' })
+  }, [deviceId, toast])
+
+  const handleCopyMediaLink = React.useCallback(
+    async (media: MediaObjectOut) => {
+      const url = `${window.location.origin}${api.media.downloadPath(media.id)}`
+      try {
+        await navigator.clipboard.writeText(url)
+        toast({
+          title: 'Copied link',
+          description: 'Share this link with operators who have device access.',
+          variant: 'success',
+        })
+      } catch {
+        toast({
+          title: 'Copy failed',
+          description: 'Clipboard is not available in this browser context.',
+          variant: 'error',
+        })
+      }
+    },
+    [toast],
+  )
+
+  const handleOpenMedia = React.useCallback(
+    async (media: MediaObjectOut) => {
+      if (!mediaToken) {
+        toast({
+          title: 'Device token required',
+          description: 'Configure a media token before opening assets.',
+          variant: 'warning',
+        })
+        return
+      }
+      setOpeningMediaId(media.id)
+      try {
+        const blob = await api.media.downloadBlob(media.id, mediaToken)
+        const url = URL.createObjectURL(blob)
+        setSelectedMedia(media)
+        setSelectedMediaUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev)
+          return url
+        })
+      } catch (error) {
+        toast({
+          title: 'Unable to open media',
+          description: (error as Error).message,
+          variant: 'error',
+          durationMs: 8000,
+        })
+      } finally {
+        setOpeningMediaId(null)
+      }
+    },
+    [mediaToken, toast],
+  )
+
+  const closeMediaModal = React.useCallback(() => {
+    setSelectedMedia(null)
+    setSelectedMediaUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return ''
+    })
+  }, [])
+
   const tabs: Array<{ key: TabKey; label: string; requiresAdminRoutes?: boolean }> = [
     { key: 'overview', label: 'Overview' },
     { key: 'telemetry', label: 'Telemetry' },
     { key: 'ingestions', label: 'Ingestions', requiresAdminRoutes: true },
     { key: 'drift', label: 'Drift', requiresAdminRoutes: true },
     { key: 'notifications', label: 'Notifications', requiresAdminRoutes: true },
-    { key: 'cameras', label: 'Cameras' },
+    { key: 'media', label: 'Media' },
   ]
 
   const visibleTabs = tabs.filter((t) => !t.requiresAdminRoutes || adminEnabled)
@@ -782,31 +1057,225 @@ export function DeviceDetailPage() {
         </div>
       ) : null}
 
-      {tab === 'cameras' ? (
+      {tab === 'media' ? (
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Cameras</CardTitle>
+              <CardTitle>Media</CardTitle>
               <CardDescription>
-                UI placeholder for the capture pipeline. Current scope: <strong>one camera active at a time</strong>.
+                Device media gallery. One metadata list call per device, with per-item previews and full-resolution open.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Callout title="Planned features">
-                <ul className="list-disc space-y-1 pl-5">
-                  <li>Single active camera with a selector for up to 4 physical cameras.</li>
-                  <li>Photo capture (on-demand + scheduled), plus short video clips.</li>
-                  <li>Upload via cellular data SIM (bandwidth-aware, retry + backoff).</li>
-                  <li>Retention and privacy posture documented per environment.</li>
-                </ul>
-              </Callout>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Device media token</Label>
+                  <Input
+                    type="password"
+                    value={mediaTokenInput}
+                    onChange={(e) => setMediaTokenInput(e.target.value)}
+                    placeholder="Bearer token for this device"
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    Required because media endpoints are device-auth scoped. Stored per-device in local browser storage.
+                  </div>
+                </div>
+                <div className="flex items-end gap-2">
+                  <Button onClick={handleMediaTokenSave}>Save token</Button>
+                  <Button variant="outline" onClick={handleMediaTokenClear}>
+                    Clear
+                  </Button>
+                </div>
+              </div>
 
-              <Callout title="Implementation status">
-                The backend capture + media storage endpoints are intentionally left as a task queue item for @codex.
-                See <code className="font-mono">docs/TASKS</code> and the camera runbook.
-              </Callout>
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Camera filter</Label>
+                  <SmallSelect
+                    value={mediaFilter}
+                    onChange={setMediaFilter}
+                    options={[
+                      ...CAMERA_FILTERS.map((camera) => ({
+                        value: camera,
+                        label: camera === 'all' ? 'All cameras' : camera,
+                      })),
+                      ...extraCameraFilters.map((camera) => ({ value: camera, label: camera })),
+                    ]}
+                    disabled={!mediaToken}
+                  />
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Uploaded items</div>
+                  <div className="text-2xl font-semibold tracking-tight">{mediaRows.length}</div>
+                </div>
+                <div className="rounded-lg border bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Filtered</div>
+                  <div className="text-2xl font-semibold tracking-tight">{mediaFilteredRows.length}</div>
+                </div>
+              </div>
+
+              {!mediaToken ? (
+                <Callout title="Token required">
+                  Provide the current device token to query media metadata and download assets.
+                </Callout>
+              ) : null}
+
+              {mediaQ.isLoading ? (
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {Array.from({ length: 8 }).map((_, idx) => (
+                    <div key={`media-skeleton-${idx}`} className="overflow-hidden rounded-lg border bg-background">
+                      <Skeleton className="h-32 w-full rounded-none" />
+                      <div className="space-y-2 p-3">
+                        <Skeleton className="h-3 w-20" />
+                        <Skeleton className="h-3 w-40" />
+                        <Skeleton className="h-8 w-full" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {!mediaQ.isLoading && mediaToken && mediaRows.length === 0 ? (
+                <Callout title="No media yet">
+                  This device has no uploaded media objects yet. Capture + upload from the edge agent, then refresh this tab.
+                </Callout>
+              ) : null}
             </CardContent>
           </Card>
+
+          {mediaRows.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Latest by camera</CardTitle>
+                <CardDescription>Most recent item per camera (`cam1..cam4`).</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {CAMERA_FILTERS.filter((camera) => camera !== 'all').map((camera) => {
+                    const media = latestByCamera[camera]
+                    return (
+                      <div key={`latest-${camera}`} className="rounded-lg border bg-background p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium">{camera}</div>
+                          <Badge variant="outline">{media ? reasonLabel(media.reason) : 'none'}</Badge>
+                        </div>
+                        {media ? (
+                          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                            <div>{fmtDateTime(media.captured_at)}</div>
+                            <div className="font-mono">{formatBytes(media.bytes)}</div>
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-xs text-muted-foreground">No captures yet.</div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {mediaGridRows.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Gallery</CardTitle>
+                <CardDescription>
+                  Latest {mediaGridRows.length} item(s) for {mediaFilter === 'all' ? 'all cameras' : mediaFilter}.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {mediaGridRows.map((media) => (
+                    <div key={media.id} className="overflow-hidden rounded-lg border bg-background">
+                      <MediaThumbnail media={media} token={mediaToken} />
+                      <div className="space-y-2 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <Badge variant="secondary">{media.camera_id}</Badge>
+                          <Badge variant="outline">{reasonLabel(media.reason)}</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">{fmtDateTime(media.captured_at)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatBytes(media.bytes)} · {media.mime_type}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="default"
+                            disabled={openingMediaId === media.id}
+                            onClick={() => {
+                              void handleOpenMedia(media)
+                            }}
+                          >
+                            {openingMediaId === media.id ? 'Opening…' : 'Open'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              void handleCopyMediaLink(media)
+                            }}
+                          >
+                            Copy link
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {selectedMedia ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm">
+              <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-xl border bg-background p-4 shadow-xl">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-lg font-semibold">{selectedMedia.camera_id}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {fmtDateTime(selectedMedia.captured_at)} · {reasonLabel(selectedMedia.reason)} ·{' '}
+                      {formatBytes(selectedMedia.bytes)}
+                    </div>
+                  </div>
+                  <Button variant="outline" onClick={closeMediaModal}>
+                    Close
+                  </Button>
+                </div>
+
+                <div className="mt-4">
+                  {selectedMediaUrl && isImageMime(selectedMedia.mime_type) ? (
+                    <img
+                      src={selectedMediaUrl}
+                      alt={`${selectedMedia.camera_id} capture`}
+                      className="max-h-[70vh] w-full rounded-md border object-contain"
+                    />
+                  ) : selectedMediaUrl ? (
+                    <Callout title="Preview unavailable">
+                      This asset type is not rendered inline in the gallery yet. Use the open/download button below.
+                    </Callout>
+                  ) : (
+                    <div className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">Loading asset…</div>
+                  )}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {selectedMediaUrl ? (
+                    <a href={selectedMediaUrl} target="_blank" rel="noreferrer">
+                      <Button>Open in new tab</Button>
+                    </a>
+                  ) : null}
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      void handleCopyMediaLink(selectedMedia)
+                    }}
+                  >
+                    Copy link
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </Page>
