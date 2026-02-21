@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Mapping, Protocol, runtime_checkable
 
 from ..base import Metrics, SensorBackend, normalize_metrics
+
+
+@runtime_checkable
+class ContextAwareBackend(Protocol):
+    def read_metrics_with_context(self, context: Mapping[str, Any]) -> Metrics: ...
 
 
 @dataclass
@@ -23,8 +29,12 @@ class CompositeSensorBackend:
         for backend in self.backends:
             backend_keys = frozenset(getattr(backend, "metric_keys", frozenset()))
             try:
+                if isinstance(backend, ContextAwareBackend):
+                    raw_metrics = backend.read_metrics_with_context(dict(merged))
+                else:
+                    raw_metrics = backend.read_metrics()
                 current = normalize_metrics(
-                    metrics=backend.read_metrics(),
+                    metrics=raw_metrics,
                     expected_keys=backend_keys,
                 )
                 merged.update(current)

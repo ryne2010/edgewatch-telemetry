@@ -12,6 +12,7 @@ from .base import SafeSensorBackend, SensorBackend
 from .backends import (
     AdcMetricChannel,
     CompositeSensorBackend,
+    DerivedOilLifeBackend,
     MockSensorBackend,
     PlaceholderSensorBackend,
     RpiAdcSensorBackend,
@@ -23,9 +24,7 @@ _METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ALLOWED_UNITS = {"pct", "psi", "c", "v", "dbm", "gpm", "bool"}
 _ADC_KINDS = {"current_4_20ma", "voltage"}
 
-_PLACEHOLDER_KEYS: dict[str, frozenset[str]] = {
-    "derived": frozenset({"oil_life_pct"}),
-}
+_PLACEHOLDER_KEYS: dict[str, frozenset[str]] = {}
 
 
 class SensorConfigError(ValueError):
@@ -129,6 +128,9 @@ def _build_backend(*, device_id: str, config: SensorConfig) -> SensorBackend:
 
     if config.backend == "rpi_adc":
         return _build_rpi_adc_backend(config=config)
+
+    if config.backend == "derived":
+        return _build_derived_backend(config=config)
 
     if config.backend == "composite":
         children = [_build_backend(device_id=device_id, config=child) for child in config.backends]
@@ -545,3 +547,67 @@ def _first_value(*values: Any) -> Any:
         if value is not None:
             return value
     return None
+
+
+def _build_derived_backend(*, config: SensorConfig) -> DerivedOilLifeBackend:
+    derived_settings = _mapping_value(config.backend_settings.get("derived"))
+
+    oil_life_max_run_hours = _as_float(
+        _first_value(
+            config.backend_settings.get("oil_life_max_run_hours"),
+            derived_settings.get("oil_life_max_run_hours"),
+            250.0,
+        ),
+        message="derived oil_life_max_run_hours must be numeric",
+    )
+    if oil_life_max_run_hours <= 0:
+        raise SensorConfigError("derived oil_life_max_run_hours must be > 0")
+
+    state_path = _as_string(
+        _first_value(
+            config.backend_settings.get("state_path"),
+            derived_settings.get("state_path"),
+            "./agent/state/oil_life_state.json",
+        ),
+        message="derived state_path must be a string",
+    ).strip()
+    if not state_path:
+        raise SensorConfigError("derived state_path cannot be empty")
+
+    run_on_threshold = _as_float(
+        _first_value(
+            config.backend_settings.get("run_on_threshold"),
+            derived_settings.get("run_on_threshold"),
+            25.0,
+        ),
+        message="derived run_on_threshold must be numeric",
+    )
+    run_off_threshold = _as_float(
+        _first_value(
+            config.backend_settings.get("run_off_threshold"),
+            derived_settings.get("run_off_threshold"),
+            20.0,
+        ),
+        message="derived run_off_threshold must be numeric",
+    )
+    if run_off_threshold > run_on_threshold:
+        raise SensorConfigError("derived run_off_threshold must be <= run_on_threshold")
+
+    warning_interval_s = _as_float(
+        _first_value(
+            config.backend_settings.get("warning_interval_s"),
+            derived_settings.get("warning_interval_s"),
+            300.0,
+        ),
+        message="derived warning_interval_s must be numeric",
+    )
+    if warning_interval_s < 0:
+        raise SensorConfigError("derived warning_interval_s must be >= 0")
+
+    return DerivedOilLifeBackend(
+        oil_life_max_run_hours=oil_life_max_run_hours,
+        state_path=state_path,
+        run_on_threshold=run_on_threshold,
+        run_off_threshold=run_off_threshold,
+        warning_interval_s=warning_interval_s,
+    )

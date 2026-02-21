@@ -57,6 +57,7 @@ python scripts/harness.py lint --only node
 - `11a-agent-sensor-framework.md`
 - `11b-rpi-i2c-temp-humidity.md`
 - `11c-rpi-adc-pressures-levels.md`
+- `11d-derived-oil-life-reset.md`
 
 ### In progress / partial
 
@@ -68,7 +69,6 @@ python scripts/harness.py lint --only node
 #### Requested “field-realistic edge node” scope
 
 - `11-edge-sensor-suite.md` (epic)
-  - `11d-derived-oil-life-reset.md`
 
 - `12-camera-capture-upload.md` (epic)
   - `12a-agent-camera-capture-ring-buffer.md`

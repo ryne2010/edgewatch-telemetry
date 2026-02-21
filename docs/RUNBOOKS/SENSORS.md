@@ -160,17 +160,30 @@ Then open the UI and verify:
 - metrics arrive and chart correctly
 - alerts trigger/recover when you apply controlled input changes
 
-## 6) Oil life reset procedure (planned)
+## 6) Oil life reset procedure
 
 Oil life is runtime-derived and should be reset after maintenance.
 
-Planned behavior (see ADR):
-- device stores `oil_life_reset_at` and `oil_life_runtime_s` durably
-- a local reset command sets oil life back to ~100%
+Local state is stored on the device (default path in this repo):
 
-Tracking:
-- `docs/DECISIONS/ADR-20260220-oil-life-manual-reset.md`
-- `docs/TASKS/11-edge-sensor-suite.md`
+- `./agent/state/oil_life_state.json`
+
+Reset command:
+
+```bash
+python -m agent.tools.oil_life reset --state ./agent/state/oil_life_state.json
+```
+
+Inspect current state:
+
+```bash
+python -m agent.tools.oil_life show --state ./agent/state/oil_life_state.json
+```
+
+Derived behavior:
+- oil life decreases only while the unit is running
+- running detection uses `pump_on` when present; otherwise `oil_pressure_psi` hysteresis
+- reset sets runtime back to zero and updates reset timestamp
 
 ## 7) Field diagnostics to collect
 
