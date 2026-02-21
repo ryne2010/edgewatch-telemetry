@@ -8,13 +8,22 @@ backends:
   #     bus: 1
   #     address: 0x76
   #     warning_interval_s: 300
+  # Replace mock with rpi_adc when ADS1115 channels are wired.
+  # - backend: rpi_adc
+  #   adc:
+  #     type: ads1115
+  #     bus: 1
+  #     address: 0x48
+  #     gain: 1
+  #     data_rate: 128
+  #     median_samples: 3
+  #     warning_interval_s: 300
   - backend: derived
     derived:
       oil_life_max_run_hours: 300
       state_path: ./agent/state/oil_life_state.json
 
-# Channel mappings and scaling constants are optional now, but this shape is
-# intentionally aligned with planned ADC work.
+# Channel mapping for ADS1115 analog lanes.
 channels:
   water_pressure_psi:
     channel: 0
@@ -28,6 +37,22 @@ channels:
     channel: 1
     kind: current_4_20ma
     unit: psi
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+  oil_level_pct:
+    channel: 2
+    kind: current_4_20ma
+    unit: pct
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+  drip_oil_level_pct:
+    channel: 3
+    kind: current_4_20ma
+    unit: pct
     shunt_ohms: 165
     scale:
       from: [4.0, 20.0]

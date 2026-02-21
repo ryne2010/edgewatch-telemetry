@@ -1,6 +1,6 @@
 # Task 11c — Raspberry Pi ADC: pressures + levels (0–100 psi + %)
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 

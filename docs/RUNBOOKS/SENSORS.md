@@ -71,6 +71,53 @@ rpi_i2c:
 
 - Confirm ADS1115 reads stable voltages (use a known reference voltage first).
 - Only then connect pressure / level channels.
+- Run the ADC backend with explicit channel mapping:
+
+```yaml
+backend: rpi_adc
+adc:
+  type: ads1115
+  bus: 1
+  address: 0x48
+  gain: 1
+  data_rate: 128
+  median_samples: 3
+channels:
+  water_pressure_psi:
+    channel: 0
+    kind: current_4_20ma
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+  oil_pressure_psi:
+    channel: 1
+    kind: current_4_20ma
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+  oil_level_pct:
+    channel: 2
+    kind: current_4_20ma
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+  drip_oil_level_pct:
+    channel: 3
+    kind: current_4_20ma
+    shunt_ohms: 165
+    scale:
+      from: [4.0, 20.0]
+      to: [0.0, 100.0]
+```
+
+Start the agent:
+
+```bash
+SENSOR_BACKEND=rpi_adc uv run python agent/edgewatch_agent.py
+```
 
 ### 4–20 mA conditioning sanity check
 
