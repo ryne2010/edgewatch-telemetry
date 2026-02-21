@@ -21,7 +21,7 @@ from device_policy import (
     load_cached_policy,
     save_cached_policy,
 )
-from sensors.mock_sensors import read_metrics
+from sensors import SensorConfigError, build_sensor_backend, load_sensor_config_from_env
 
 
 def utcnow_iso() -> str:
@@ -36,23 +36,21 @@ def make_point(metrics: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-
-
 class RateLimited(RuntimeError):
-    '''Raised when the server returns HTTP 429.
+    """Raised when the server returns HTTP 429.
 
     retry_after_s is best-effort parsed from Retry-After.
-    '''
+    """
 
     def __init__(self, message: str, retry_after_s: float | None = None):
         super().__init__(message)
         self.retry_after_s = retry_after_s
 
 
-def _parse_retry_after_seconds(headers: dict) -> float | None:
-    '''Parse Retry-After (seconds only). Returns None if unparseable.'''
+def _parse_retry_after_seconds(headers: Mapping[str, Any]) -> float | None:
+    """Parse Retry-After (seconds only). Returns None if unparseable."""
 
-    ra = headers.get('Retry-After')
+    ra = headers.get("Retry-After")
     if not ra:
         return None
     try:
@@ -311,7 +309,7 @@ def _flush_buffer(
 
         if resp.status_code == 429:
             ra = _parse_retry_after_seconds(resp.headers)
-            raise RateLimited('buffer flush rate limited (429)', retry_after_s=ra)
+            raise RateLimited("buffer flush rate limited (429)", retry_after_s=ra)
         if 200 <= resp.status_code < 300:
             for m in queued:
                 buf.delete(m.message_id)
@@ -324,7 +322,7 @@ def _flush_buffer(
 
                 if r2.status_code == 429:
                     ra = _parse_retry_after_seconds(r2.headers)
-                    raise RateLimited('buffer flush single-message rate limited (429)', retry_after_s=ra)
+                    raise RateLimited("buffer flush single-message rate limited (429)", retry_after_s=ra)
                 if 200 <= r2.status_code < 300:
                     buf.delete(m.message_id)
                 elif r2.status_code == 422:
@@ -452,6 +450,12 @@ def main() -> None:
     buffer_path = os.getenv("BUFFER_DB_PATH", "./edgewatch_buffer.sqlite")
     buf = SqliteBuffer(buffer_path)
 
+    try:
+        sensor_config = load_sensor_config_from_env()
+        sensor_backend = build_sensor_backend(device_id=device_id, config=sensor_config)
+    except SensorConfigError as exc:
+        raise SystemExit(f"[edgewatch-agent] invalid sensor config: {exc}") from exc
+
     session = requests.Session()
 
     cached: Optional[CachedPolicy] = load_cached_policy()
@@ -462,8 +466,8 @@ def main() -> None:
         next_policy_refresh_at = cached.fetched_at + float(policy.cache_max_age_s)
 
     print(
-        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s"
-        % (device_id, api_url, buffer_path, policy.policy_version)
+        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s"
+        % (device_id, api_url, buffer_path, policy.policy_version, sensor_config.backend)
     )
 
     state = AgentState()
@@ -488,7 +492,7 @@ def main() -> None:
                 print(f"[edgewatch-agent] policy fetch failed (using cached/default): {e!r}")
                 next_policy_refresh_at = time.time() + 60.0
 
-        metrics = read_metrics(device_id=device_id)
+        metrics = sensor_backend.read_metrics()
         current_state, current_alerts = _compute_state(metrics, state.last_alerts, policy)
         critical_active = "WATER_PRESSURE_LOW" in current_alerts
 
@@ -611,7 +615,6 @@ def main() -> None:
                     print(
                         f"[edgewatch-agent] send exception: {e!r} -> buffered queue={buf.count()} backoff={backoff:.1f}s"
                     )
-
 
             state.last_state = current_state
             state.last_alerts = set(current_alerts)

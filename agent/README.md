@@ -49,13 +49,26 @@ Tune it to trade off alert latency vs battery/data usage.
 
 ## Real sensors
 
-Replace `sensors/mock_sensors.py` with integrations like:
-- GPIO / ADC sensors
-- Modbus
-- reading `/sys` or systemd status
-- reading a serial device
+The agent now uses a pluggable backend interface under `agent/sensors/`.
 
-Keep the output as a dict of metric keys → values.
+Default behavior remains `mock` (no hardware required).
+
+Backend selection:
+
+- `SENSOR_CONFIG_PATH` points to a YAML config file
+- `SENSOR_BACKEND` optionally overrides the selected backend at runtime
+
+Example config:
+
+- `agent/config/example.sensors.yaml`
+
+Supported backend names in this stage:
+
+- `mock`
+- `composite`
+- `rpi_i2c` (placeholder, emits `None` metrics until Task 11b lands)
+- `rpi_adc` (placeholder, emits `None` metrics until Task 11c lands)
+- `derived` (placeholder, emits `None` metrics until Task 11d lands)
 
 ## Simulator
 
