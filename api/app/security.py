@@ -73,7 +73,22 @@ def verify_token(token: str, token_hash: str) -> bool:
 
 
 def require_admin(x_admin_key: str | None = Header(default=None, alias="X-Admin-Key")) -> None:
-    if not x_admin_key or not hmac.compare_digest(x_admin_key, settings.admin_api_key):
+    """Admin authorization gate.
+
+    Modes
+    - ADMIN_AUTH_MODE=key  (default): require X-Admin-Key and compare with ADMIN_API_KEY
+    - ADMIN_AUTH_MODE=none           : trust perimeter (Cloud Run IAM / IAP / VPN)
+
+    NOTE: If ENABLE_ADMIN_ROUTES=false, the admin router is not mounted, so this
+    dependency should never be invoked.
+    """
+
+    mode = getattr(settings, "admin_auth_mode", "key")
+    if mode == "none":
+        return
+
+    # Default: shared admin key (local/dev).
+    if not x_admin_key or not settings.admin_api_key or not hmac.compare_digest(x_admin_key, settings.admin_api_key):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin key")
 
 

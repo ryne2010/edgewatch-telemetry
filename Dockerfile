@@ -5,11 +5,11 @@ WORKDIR /app
 RUN corepack enable
 
 # Workspace install for reproducibility + caching.
-COPY package.json pnpm-workspace.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json ./web/package.json
 
-# If you commit pnpm-lock.yaml, switch to: pnpm install --frozen-lockfile
-RUN pnpm install --no-frozen-lockfile
+# Install deps deterministically (pnpm-lock.yaml is committed)
+RUN pnpm install --frozen-lockfile
 
 COPY web/ ./web/
 RUN pnpm -C web build

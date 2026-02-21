@@ -18,6 +18,8 @@ class AdminDeviceCreate(BaseModel):
 
 class AdminDeviceUpdate(BaseModel):
     display_name: Optional[str] = Field(None, min_length=1, max_length=256)
+    # Optional token rotation.
+    token: Optional[str] = Field(None, min_length=8, max_length=2048)
     heartbeat_interval_s: Optional[int] = Field(None, ge=5, le=3600)
     offline_after_s: Optional[int] = Field(None, ge=10, le=24 * 3600)
     enabled: Optional[bool] = None
@@ -33,6 +35,27 @@ class DeviceOut(BaseModel):
 
     status: str
     seconds_since_last_seen: Optional[int]
+
+
+class DeviceSummaryOut(BaseModel):
+    """Fleet view: device + status + selected latest telemetry metrics.
+
+    This avoids N+1 calls from the UI when rendering fleet dashboards.
+    """
+
+    device_id: str
+    display_name: str
+    heartbeat_interval_s: int
+    offline_after_s: int
+    last_seen_at: Optional[datetime]
+    enabled: bool
+
+    status: str
+    seconds_since_last_seen: Optional[int]
+
+    latest_telemetry_at: Optional[datetime]
+    latest_message_id: Optional[str] = None
+    metrics: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TelemetryPointIn(BaseModel):
@@ -164,11 +187,41 @@ class EdgePolicyAlertThresholdsOut(BaseModel):
     water_pressure_low_psi: float
     water_pressure_recover_psi: float
 
+    oil_pressure_low_psi: float
+    oil_pressure_recover_psi: float
+
+    oil_level_low_pct: float
+    oil_level_recover_pct: float
+
+    drip_oil_level_low_pct: float
+    drip_oil_level_recover_pct: float
+
+    oil_life_low_pct: float
+    oil_life_recover_pct: float
+
     battery_low_v: float
     battery_recover_v: float
 
     signal_low_rssi_dbm: float
     signal_recover_rssi_dbm: float
+
+
+class EdgePolicyContractOut(BaseModel):
+    """Public edge policy contract (device-side optimization).
+
+    This is intentionally public (no secrets):
+    - helps the UI show thresholds
+    - makes policy changes auditable
+    - helps edge devices validate expectations
+    """
+
+    policy_version: str
+    policy_sha256: str
+    cache_max_age_s: int
+
+    reporting: EdgePolicyReportingOut
+    delta_thresholds: Dict[str, float]
+    alert_thresholds: EdgePolicyAlertThresholdsOut
 
 
 class DevicePolicyOut(BaseModel):

@@ -29,6 +29,19 @@ class AlertThresholds:
     water_pressure_low_psi: float
     water_pressure_recover_psi: float
 
+    oil_pressure_low_psi: float
+    oil_pressure_recover_psi: float
+
+    oil_level_low_pct: float
+    oil_level_recover_pct: float
+
+    drip_oil_level_low_pct: float
+    drip_oil_level_recover_pct: float
+
+    # Runtime-derived metric; typically reset manually after service.
+    oil_life_low_pct: float
+    oil_life_recover_pct: float
+
     battery_low_v: float
     battery_recover_v: float
 
@@ -80,6 +93,27 @@ def _require_float(obj: Mapping[str, Any], key: str) -> float:
         return float(v)
     raise ValueError(f"'{key}' must be a number")
 
+def _validate_recover_gt_low(name: str, low: float, recover: float) -> None:
+    if recover <= low:
+        raise ValueError(f"Invalid alert thresholds for {name}: recover ({recover}) must be > low ({low})")
+
+
+def _validate_alert_thresholds(t: AlertThresholds) -> None:
+    _validate_recover_gt_low("water_pressure", t.water_pressure_low_psi, t.water_pressure_recover_psi)
+    _validate_recover_gt_low("oil_pressure", t.oil_pressure_low_psi, t.oil_pressure_recover_psi)
+    _validate_recover_gt_low("oil_level", t.oil_level_low_pct, t.oil_level_recover_pct)
+    _validate_recover_gt_low("drip_oil_level", t.drip_oil_level_low_pct, t.drip_oil_level_recover_pct)
+    _validate_recover_gt_low("oil_life", t.oil_life_low_pct, t.oil_life_recover_pct)
+    _validate_recover_gt_low("battery", t.battery_low_v, t.battery_recover_v)
+    _validate_recover_gt_low("signal", t.signal_low_rssi_dbm, t.signal_recover_rssi_dbm)
+
+
+def _validate_delta_thresholds(delta_thresholds: dict[str, float]) -> None:
+    for k, v in delta_thresholds.items():
+        if v <= 0:
+            raise ValueError(f"Invalid delta threshold for {k}: {v} (must be > 0)")
+
+
 
 def _require_mapping(obj: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     v = obj.get(key)
@@ -130,11 +164,22 @@ def load_edge_policy(version: str) -> EdgePolicy:
     alert_thresholds = AlertThresholds(
         water_pressure_low_psi=_require_float(alerts_raw, "water_pressure_low_psi"),
         water_pressure_recover_psi=_require_float(alerts_raw, "water_pressure_recover_psi"),
+        oil_pressure_low_psi=_require_float(alerts_raw, "oil_pressure_low_psi"),
+        oil_pressure_recover_psi=_require_float(alerts_raw, "oil_pressure_recover_psi"),
+        oil_level_low_pct=_require_float(alerts_raw, "oil_level_low_pct"),
+        oil_level_recover_pct=_require_float(alerts_raw, "oil_level_recover_pct"),
+        drip_oil_level_low_pct=_require_float(alerts_raw, "drip_oil_level_low_pct"),
+        drip_oil_level_recover_pct=_require_float(alerts_raw, "drip_oil_level_recover_pct"),
+        oil_life_low_pct=_require_float(alerts_raw, "oil_life_low_pct"),
+        oil_life_recover_pct=_require_float(alerts_raw, "oil_life_recover_pct"),
         battery_low_v=_require_float(alerts_raw, "battery_low_v"),
         battery_recover_v=_require_float(alerts_raw, "battery_recover_v"),
         signal_low_rssi_dbm=_require_float(alerts_raw, "signal_low_rssi_dbm"),
         signal_recover_rssi_dbm=_require_float(alerts_raw, "signal_recover_rssi_dbm"),
     )
+
+    _validate_alert_thresholds(alert_thresholds)
+    _validate_delta_thresholds(delta_thresholds)
 
     return EdgePolicy(
         version=version_from_file,

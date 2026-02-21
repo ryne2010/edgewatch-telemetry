@@ -1,6 +1,6 @@
 [project]
 name = "edgewatch-telemetry"
-version = "0.5.0"
+version = "0.14.1"
 description = "Local-first edge telemetry platform: device ingestion, buffering, status, alerts, and a small dashboard."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,6 +32,15 @@ dev = [
   "mypy>=1.10",
   "types-PyYAML>=6.0",
 ]
+
+# Optional observability tooling.
+otel = [
+  "opentelemetry-api>=1.28.0",
+  "opentelemetry-sdk>=1.28.0",
+  "opentelemetry-instrumentation-fastapi>=0.49b0",
+  "opentelemetry-exporter-otlp>=1.28.0",
+]
+
 
 [tool.ruff]
 line-length = 110

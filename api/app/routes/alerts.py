@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from datetime import datetime
 
-from fastapi import APIRouter, Query
-from sqlalchemy import desc
+from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import and_, or_
 
 from ..db import db_session
 from ..models import Alert
@@ -12,29 +12,71 @@ from ..schemas import AlertOut
 router = APIRouter(prefix="/api/v1", tags=["alerts"])
 
 
-@router.get("/alerts", response_model=List[AlertOut])
+@router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(
-    device_id: Optional[str] = Query(default=None),
-    open_only: bool = Query(default=False),
-    limit: int = Query(default=100, ge=1, le=1000),
-):
+    device_id: str | None = None,
+    open_only: bool = False,
+    severity: str | None = None,
+    alert_type: str | None = None,
+    before: datetime | None = Query(
+        None,
+        description=(
+            "Cursor pagination: return alerts created *before* this timestamp. "
+            "Use the created_at + id of the last row from the previous page."
+        ),
+    ),
+    before_id: str | None = Query(
+        None,
+        description="Cursor pagination tie-breaker when multiple alerts share the same created_at.",
+    ),
+    limit: int = Query(100, ge=1, le=1000),
+) -> list[AlertOut]:
+    """List alerts.
+
+    - Ordered by (created_at desc, id desc).
+    - Cursor pagination uses (before, before_id) from the last row.
+    - Filtering is optional and safe to combine.
+    """
+
+    if before_id is not None and before is None:
+        raise HTTPException(status_code=400, detail="before_id requires before")
+
     with db_session() as session:
         q = session.query(Alert)
+
         if device_id:
             q = q.filter(Alert.device_id == device_id)
         if open_only:
             q = q.filter(Alert.resolved_at.is_(None))
-        q = q.order_by(desc(Alert.created_at)).limit(limit)
+        if severity:
+            q = q.filter(Alert.severity == severity)
+        if alert_type:
+            q = q.filter(Alert.alert_type == alert_type)
+
+        if before is not None:
+            if before_id is not None:
+                q = q.filter(
+                    or_(
+                        Alert.created_at < before,
+                        and_(Alert.created_at == before, Alert.id < before_id),
+                    )
+                )
+            else:
+                q = q.filter(Alert.created_at < before)
+
+        q = q.order_by(Alert.created_at.desc(), Alert.id.desc()).limit(limit)
+
         rows = q.all()
+
         return [
             AlertOut(
-                id=r.id,
-                device_id=r.device_id,
-                alert_type=r.alert_type,
-                severity=r.severity,
-                message=r.message,
-                created_at=r.created_at,
-                resolved_at=r.resolved_at,
+                id=a.id,
+                device_id=a.device_id,
+                alert_type=a.alert_type,
+                severity=a.severity,
+                message=a.message,
+                created_at=a.created_at,
+                resolved_at=a.resolved_at,
             )
-            for r in rows
+            for a in rows
         ]

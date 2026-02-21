@@ -48,6 +48,10 @@ delta_thresholds:
   water_pressure_psi: 1.0
   oil_pressure_psi: 1.0
   temperature_c: 0.5
+  humidity_pct: 2.0
+  oil_level_pct: 1.0
+  oil_life_pct: 1.0
+  drip_oil_level_pct: 1.0
   battery_v: 0.05
   signal_rssi_dbm: 2
   flow_rate_gpm: 1.0
@@ -57,6 +61,19 @@ delta_thresholds:
 alert_thresholds:
   water_pressure_low_psi: 30.0
   water_pressure_recover_psi: 32.0
+
+  oil_pressure_low_psi: 25.0
+  oil_pressure_recover_psi: 28.0
+
+  oil_level_low_pct: 20.0
+  oil_level_recover_pct: 25.0
+
+  drip_oil_level_low_pct: 20.0
+  drip_oil_level_recover_pct: 25.0
+
+  # Oil life is runtime-derived and typically reset manually after service.
+  oil_life_low_pct: 15.0
+  oil_life_recover_pct: 20.0
 
   battery_low_v: 11.8
   battery_recover_v: 12.0

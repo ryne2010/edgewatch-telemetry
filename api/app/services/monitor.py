@@ -159,6 +159,309 @@ def ensure_water_pressure_alerts(
             )
 
 
+def ensure_oil_pressure_alerts(session: Session, device_id: str, oil_pressure_psi: float, now: datetime) -> None:
+    """Oil pressure threshold alert with hysteresis."""
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    low = policy.alert_thresholds.oil_pressure_low_psi
+    recover = policy.alert_thresholds.oil_pressure_recover_psi
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "OIL_PRESSURE_LOW",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if oil_pressure_psi < low:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="OIL_PRESSURE_LOW",
+                    severity="warning",
+                    message=f"Oil pressure low: {oil_pressure_psi:.1f} psi (threshold: {low:.1f} psi).",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert and oil_pressure_psi >= recover:
+            open_alert.resolved_at = now
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="OIL_PRESSURE_OK",
+                    severity="info",
+                    message=f"Oil pressure recovered: {oil_pressure_psi:.1f} psi.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
+def ensure_oil_level_alerts(session: Session, device_id: str, oil_level_pct: float, now: datetime) -> None:
+    """Oil level threshold alert with hysteresis."""
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    low = policy.alert_thresholds.oil_level_low_pct
+    recover = policy.alert_thresholds.oil_level_recover_pct
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "OIL_LEVEL_LOW",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if oil_level_pct < low:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="OIL_LEVEL_LOW",
+                    severity="warning",
+                    message=f"Oil level low: {oil_level_pct:.1f}% (threshold: {low:.1f}%).",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert and oil_level_pct >= recover:
+            open_alert.resolved_at = now
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="OIL_LEVEL_OK",
+                    severity="info",
+                    message=f"Oil level recovered: {oil_level_pct:.1f}%.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
+def ensure_drip_oil_level_alerts(session: Session, device_id: str, drip_oil_level_pct: float, now: datetime) -> None:
+    """Drip oiler reservoir level threshold alert with hysteresis."""
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    low = policy.alert_thresholds.drip_oil_level_low_pct
+    recover = policy.alert_thresholds.drip_oil_level_recover_pct
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "DRIP_OIL_LEVEL_LOW",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if drip_oil_level_pct < low:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="DRIP_OIL_LEVEL_LOW",
+                    severity="warning",
+                    message=f"Drip oil level low: {drip_oil_level_pct:.1f}% (threshold: {low:.1f}%).",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert and drip_oil_level_pct >= recover:
+            open_alert.resolved_at = now
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="DRIP_OIL_LEVEL_OK",
+                    severity="info",
+                    message=f"Drip oil level recovered: {drip_oil_level_pct:.1f}%.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
+def ensure_oil_life_alerts(session: Session, device_id: str, oil_life_pct: float, now: datetime) -> None:
+    """Oil life remaining alert with hysteresis.
+
+    Oil life is a runtime-derived metric and typically reset manually after service.
+    """
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    low = policy.alert_thresholds.oil_life_low_pct
+    recover = policy.alert_thresholds.oil_life_recover_pct
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "OIL_LIFE_LOW",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if oil_life_pct < low:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="OIL_LIFE_LOW",
+                    severity="warning",
+                    message=f"Oil life low: {oil_life_pct:.1f}% remaining (threshold: {low:.1f}%).",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert and oil_life_pct >= recover:
+            open_alert.resolved_at = now
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="OIL_LIFE_OK",
+                    severity="info",
+                    message=f"Oil life recovered: {oil_life_pct:.1f}%.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
+def ensure_battery_alerts(session: Session, device_id: str, battery_v: float, now: datetime) -> None:
+    """Battery threshold alert with hysteresis.
+
+    - Open when battery_v < low
+    - Resolve only when battery_v >= recover
+
+    Thresholds are sourced from the edge policy contract.
+    """
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    low = (
+        settings.default_battery_low_v
+        if settings.default_battery_low_v is not None
+        else policy.alert_thresholds.battery_low_v
+    )
+    recover = policy.alert_thresholds.battery_recover_v
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "BATTERY_LOW",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if battery_v < low:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="BATTERY_LOW",
+                    severity="warning",
+                    message=f"Battery low: {battery_v:.2f} V (threshold: {low:.2f} V).",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert and battery_v >= recover:
+            open_alert.resolved_at = now
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="BATTERY_OK",
+                    severity="info",
+                    message=f"Battery recovered: {battery_v:.2f} V.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
+def ensure_signal_alerts(session: Session, device_id: str, signal_rssi_dbm: float, now: datetime) -> None:
+    """Cellular/WiFi RSSI alert with hysteresis.
+
+    Note: RSSI is negative (dBm). "Lower" means weaker signal.
+    - Open when signal_rssi_dbm < low
+    - Resolve only when signal_rssi_dbm >= recover
+    """
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    low = (
+        settings.default_signal_low_rssi_dbm
+        if settings.default_signal_low_rssi_dbm is not None
+        else policy.alert_thresholds.signal_low_rssi_dbm
+    )
+    recover = policy.alert_thresholds.signal_recover_rssi_dbm
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "SIGNAL_LOW",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if signal_rssi_dbm < low:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="SIGNAL_LOW",
+                    severity="warning",
+                    message=f"Signal weak: {signal_rssi_dbm:.0f} dBm (threshold: {low:.0f} dBm).",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert and signal_rssi_dbm >= recover:
+            open_alert.resolved_at = now
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="SIGNAL_OK",
+                    severity="info",
+                    message=f"Signal recovered: {signal_rssi_dbm:.0f} dBm.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
 def _create_alert(session: Session, alert: Alert, *, now: datetime) -> None:
     session.add(alert)
     session.flush()

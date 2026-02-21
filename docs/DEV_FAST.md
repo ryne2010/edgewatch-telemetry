@@ -19,7 +19,7 @@ uv sync --locked
 
 # Node deps
 corepack enable
-pnpm install --no-frozen-lockfile
+pnpm install --frozen-lockfile
 ```
 
 Or use the Makefile wrapper for Node deps:
@@ -28,7 +28,7 @@ Or use the Makefile wrapper for Node deps:
 make web-install
 ```
 
-If you change `pyproject.toml` dependencies, update the lockfile:
+If you change Python or web dependencies, update lockfiles:
 
 ```bash
 make lock

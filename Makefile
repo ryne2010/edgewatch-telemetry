@@ -73,15 +73,29 @@ define require
 	@command -v $(1) >/dev/null 2>&1 || (echo "Missing dependency: $(1)"; exit 1)
 endef
 
-.PHONY: help init auth \
+.PHONY: \
+	help init auth \
 	doctor doctor-dev doctor-gcp \
+	buildx-init docker-login-gcp build-multiarch deploy-gcp-safe-multiarch \
 	clean \
 	db-up db-down api-dev web-install web-dev \
 	up down reset logs db-migrate db-revision \
-	demo-device devices alerts simulate \
-	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp build-gcp deploy-gcp deploy-gcp-safe url-gcp verify-gcp verify-gcp-ready logs-gcp migrate-gcp offline-check-gcp analytics-export-gcp destroy-gcp \
-	plan-gcp-demo apply-gcp-demo deploy-gcp-demo plan-gcp-prod apply-gcp-prod deploy-gcp-prod \
-	db-secret admin-secret lock hygiene
+	demo-device devices alerts simulate retention \
+	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp grant-cloudbuild-gcp build-gcp \
+	deploy-gcp deploy-gcp-safe deploy-gcp-safe-multiarch \
+	url-gcp url-gcp-admin url-gcp-dashboard verify-gcp verify-gcp-ready logs-gcp \
+	migrate-gcp offline-check-local offline-check-gcp simulate-gcp analytics-export-gcp retention-gcp destroy-gcp \
+	plan-gcp-demo apply-gcp-demo deploy-gcp-demo \
+	plan-gcp-stage apply-gcp-stage deploy-gcp-stage \
+	plan-gcp-stage-iot apply-gcp-stage-iot deploy-gcp-stage-iot \
+	plan-gcp-stage-iot-lp apply-gcp-stage-iot-lp deploy-gcp-stage-iot-lp \
+	plan-gcp-prod apply-gcp-prod deploy-gcp-prod \
+	plan-gcp-prod-iot apply-gcp-prod-iot deploy-gcp-prod-iot \
+	plan-gcp-prod-iot-lp apply-gcp-prod-iot-lp deploy-gcp-prod-iot-lp \
+	db-secret admin-secret lock hygiene \
+	fmt lint typecheck test build harness harness-doctor \
+	tf-fmt tf-validate tf-lint tf-sec tf-policy tf-checkov tf-check \
+	dist
 
 help:
 	@echo "Local targets:"
@@ -102,31 +116,45 @@ help:
 	@echo "  db-revision      Create new Alembic revision (msg=...)"
 	@echo "  demo-device      Create a demo device via admin API"
 	@echo "  simulate         Run the edge simulator fleet (3 by default)"
+	@echo "  retention        Run DB retention/compaction (deletes old telemetry)"
 	@echo "  devices          List devices"
 	@echo "  alerts           List recent alerts"
 	@echo ""
 	@echo "GCP targets (optional):"
 	@echo "  deploy-gcp       Deploy to Cloud Run (defaults to private IAM-only)"
 	@echo "  deploy-gcp-safe  Deploy + migrate + readiness verify"
-	@echo "  deploy-gcp-demo  Deploy the public demo profile (portfolio)"
+	@echo "  deploy-gcp-demo  Deploy the public demo profile"
+	@echo "  deploy-gcp-stage Deploy the staging profile (private IAM + simulation)"
 	@echo "  deploy-gcp-prod  Deploy the production profile (private IAM)"
 	@echo "  plan-gcp         Terraform plan"
 	@echo "  apply-gcp        Terraform apply"
 	@echo "  (tip) TFVARS=... Use a Terraform profile var-file (see infra/gcp/cloud_run_demo/profiles/)"
 	@echo "  url-gcp          Print service URL"
+	@echo "  url-gcp-admin    Print admin service URL (if enabled)"
+	@echo "  url-gcp-dashboard Print dashboard service URL (if enabled)"
 	@echo "  verify-gcp       Hit /health"
 	@echo "  verify-gcp-ready Hit /readyz (DB + migrations)"
 	@echo "  logs-gcp         Read Cloud Run logs"
 	@echo "  migrate-gcp      Run DB migrations via Cloud Run Job"
+	@echo "  offline-check-local Run offline check against local docker-compose stack"
 	@echo "  offline-check-gcp Manually run offline check via Cloud Run Job"
+	@echo "  simulate-gcp     Manually run synthetic telemetry via Cloud Run Job"
 	@echo "  analytics-export-gcp Manually run analytics export via Cloud Run Job"
 	@echo "  destroy-gcp      Terraform destroy (keeps tfstate bucket)"
 	@echo "  db-secret        Add DATABASE_URL secret version (stdin)"
 	@echo "  admin-secret     Add ADMIN_API_KEY secret version (stdin)"
 	@echo ""
+	@echo ""
+	@echo "Container image targets (optional):"
+	@echo "  buildx-init         Ensure a local docker buildx builder exists and is bootstrapped"
+	@echo "  docker-login-gcp    Configure docker auth for Artifact Registry (gcloud)"
+	@echo "  build-multiarch     Build and push a multi-arch image (linux/amd64 + linux/arm64) via buildx"
+	@echo "  deploy-gcp-safe-multiarch  build-multiarch + terraform apply + migrate + /readyz verify"
+	@echo ""
 	@echo "Reproducibility:"
 	@echo "  lock             Generate uv.lock + pnpm-lock.yaml"
 	@echo "  clean            Remove local runtime caches/artifacts (__pycache__, *.pyc, sqlite buffers, policy cache)"
+	@echo "  dist             Create a clean distribution zip under ./dist/"
 
 clean:
 	@set -euo pipefail; \
@@ -137,7 +165,9 @@ clean:
 	rm -f ./edgewatch_policy_cache_*.json ./agent/edgewatch_policy_cache_*.json; \
 	find . -name ".DS_Store" -type f -delete; \
 	echo "Cleaned caches/artifacts."
-	@echo "  hygiene          Repo sanity checks (forbidden URLs, big files, etc.)"
+
+
+
 
 
 
@@ -149,7 +179,7 @@ clean:
 # This avoids copy/pasting `export ...` blocks and keeps team workflows consistent.
 #
 # Usage (recommended for teams):
-#   make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=my-proj REGION=us-central1
+#   make init GCLOUD_CONFIG=edgewatch-demo PROJECT_ID=my-proj REGION=us-central1
 #
 # Usage (current gcloud config):
 #   make init PROJECT_ID=my-proj REGION=us-central1
@@ -527,6 +557,43 @@ grant-cloudbuild-gcp: doctor-gcp
 	  --role="roles/artifactregistry.writer" \
 	  --condition=None >/dev/null
 
+
+
+# -----------------------------
+# Container images (multi-arch)
+# -----------------------------
+
+# Ensure a local buildx builder exists and is bootstrapped.
+# (Required for multi-platform builds.)
+buildx-init: doctor
+	@set -euo pipefail; \
+	  if docker buildx inspect edgewatch-builder >/dev/null 2>&1; then \
+	    docker buildx use edgewatch-builder >/dev/null; \
+	  else \
+	    echo "Creating docker buildx builder: edgewatch-builder"; \
+	    docker buildx create --name edgewatch-builder --use >/dev/null; \
+	  fi; \
+	  docker buildx inspect --bootstrap >/dev/null; \
+	  echo "Buildx builder ready."
+
+# Configure docker auth for Artifact Registry.
+docker-login-gcp: doctor-gcp
+	@echo "Configuring docker auth for Artifact Registry: $(REGION)-docker.pkg.dev"
+	gcloud auth configure-docker "$(REGION)-docker.pkg.dev" --quiet
+
+# Build and push a *single tag* containing linux/amd64 + linux/arm64 variants.
+#
+# Notes:
+# - Cloud Run will automatically pull the linux/amd64 variant.
+# - Apple Silicon + Raspberry Pi will automatically pull linux/arm64.
+# - This lane is optional; the default `build-gcp` target uses Cloud Build.
+build-multiarch: doctor doctor-gcp infra-gcp buildx-init docker-login-gcp
+	@echo "Building + pushing multi-arch image via buildx: $(IMAGE)"
+	docker buildx build --platform linux/amd64,linux/arm64 -t "$(IMAGE)" --push .
+
+# Safe deploy sequence using the multi-arch build lane.
+deploy-gcp-safe-multiarch: build-multiarch apply-gcp migrate-gcp verify-gcp-ready
+
 build-gcp: doctor-gcp infra-gcp grant-cloudbuild-gcp
 	@echo "Building + pushing via Cloud Build: $(IMAGE)"
 	gcloud builds submit --tag "$(IMAGE)" .
@@ -546,6 +613,33 @@ apply-gcp-demo:
 deploy-gcp-demo:
 	$(MAKE) deploy-gcp-safe ENV=dev TFVARS=infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars
 
+plan-gcp-stage:
+	$(MAKE) plan-gcp ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_private_iam.tfvars
+
+apply-gcp-stage:
+	$(MAKE) apply-gcp ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_private_iam.tfvars
+
+deploy-gcp-stage:
+	$(MAKE) deploy-gcp-safe ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_private_iam.tfvars
+
+plan-gcp-stage-iot:
+	$(MAKE) plan-gcp ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_admin.tfvars
+
+apply-gcp-stage-iot:
+	$(MAKE) apply-gcp ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_admin.tfvars
+
+deploy-gcp-stage-iot:
+	$(MAKE) deploy-gcp-safe ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_admin.tfvars
+
+plan-gcp-stage-iot-lp:
+	$(MAKE) plan-gcp ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_dashboard_private_admin.tfvars
+
+apply-gcp-stage-iot-lp:
+	$(MAKE) apply-gcp ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_dashboard_private_admin.tfvars
+
+deploy-gcp-stage-iot-lp:
+	$(MAKE) deploy-gcp-safe ENV=stage TFVARS=infra/gcp/cloud_run_demo/profiles/stage_public_ingest_private_dashboard_private_admin.tfvars
+
 plan-gcp-prod:
 	$(MAKE) plan-gcp ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_private_iam.tfvars
 
@@ -555,8 +649,32 @@ apply-gcp-prod:
 deploy-gcp-prod:
 	$(MAKE) deploy-gcp-safe ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_private_iam.tfvars
 
+plan-gcp-prod-iot:
+	$(MAKE) plan-gcp ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_admin.tfvars
+
+apply-gcp-prod-iot:
+	$(MAKE) apply-gcp ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_admin.tfvars
+
+deploy-gcp-prod-iot:
+	$(MAKE) deploy-gcp-safe ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_admin.tfvars
+
+plan-gcp-prod-iot-lp:
+	$(MAKE) plan-gcp ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_dashboard_private_admin.tfvars
+
+apply-gcp-prod-iot-lp:
+	$(MAKE) apply-gcp ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_dashboard_private_admin.tfvars
+
+deploy-gcp-prod-iot-lp:
+	$(MAKE) deploy-gcp-safe ENV=prod TFVARS=infra/gcp/cloud_run_demo/profiles/prod_public_ingest_private_dashboard_private_admin.tfvars
+
 url-gcp: tf-init-gcp
 	@terraform -chdir=$(TF_DIR) output -raw service_url
+
+url-gcp-admin: tf-init-gcp
+	@terraform -chdir=$(TF_DIR) output -raw admin_service_url
+
+url-gcp-dashboard: tf-init-gcp
+	@terraform -chdir=$(TF_DIR) output -raw dashboard_service_url
 
 verify-gcp: doctor-gcp tf-init-gcp
 	@set -euo pipefail; \
@@ -600,9 +718,17 @@ logs-gcp: doctor-gcp
 migrate-gcp: doctor-gcp
 	@gcloud run jobs execute "edgewatch-migrate-$(ENV)" --region "$(REGION)" --wait
 
+# Run the offline check job against the local docker-compose stack.
+offline-check-local:
+	@docker compose exec -T api python -m api.app.jobs.offline_check
+
 # Manually trigger the offline check job (useful for smoke tests).
 offline-check-gcp: doctor-gcp
 	@gcloud run jobs execute "edgewatch-offline-check-$(ENV)" --region "$(REGION)" --wait
+
+# Manually trigger synthetic telemetry generation when enabled.
+simulate-gcp: doctor-gcp
+	@gcloud run jobs execute "edgewatch-simulate-telemetry-$(ENV)" --region "$(REGION)" --wait
 
 # Manually trigger the analytics export job when enabled.
 analytics-export-gcp: doctor-gcp
@@ -653,7 +779,12 @@ hygiene:
 
 POLICY_DIR := infra/gcp/policy
 
-.PHONY: tf-fmt tf-validate tf-lint tf-sec tf-policy tf-check
+.PHONY: tf-fmt tf-validate tf-lint tf-sec tf-policy tf-checkov tf-check
+
+# checkov can be noisy for small demo stacks. By default we run it in
+# "soft-fail" mode so findings are visible without blocking other work.
+# Set CHECKOV_SOFT_FAIL=0 to make it a hard gate.
+CHECKOV_SOFT_FAIL ?= 1
 
 tf-fmt: ## Terraform fmt check (no changes)
 	@terraform -chdir=$(TF_DIR) fmt -check -recursive
@@ -695,7 +826,25 @@ tf-policy: ## OPA/Conftest policy gate for Terraform (falls back to docker)
 	  docker run --rm -v "$$(pwd):/project" -w /project openpolicyagent/conftest:latest test --rego-version v0 --parser hcl2 --policy $(POLICY_DIR) $$TF_FILES; \
 	fi
 
-tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy ## Run all Terraform hygiene checks
+tf-checkov: ## checkov IaC policy scan (falls back to docker; soft-fail by default)
+	@set +e; \
+	status=0; \
+	if command -v checkov >/dev/null 2>&1; then \
+	  echo "Running checkov (local)"; \
+	  checkov -d $(TF_DIR); \
+	  status=$$?; \
+	else \
+	  echo "checkov not found; running via Docker"; \
+	  docker run --rm -v "$$(pwd):/src" -w /src bridgecrew/checkov:latest -d /src/$(TF_DIR); \
+	  status=$$?; \
+	fi; \
+	if [ "$(CHECKOV_SOFT_FAIL)" = "1" ] && [ $$status -ne 0 ]; then \
+	  echo "checkov reported findings (exit $$status) — soft-fail enabled (CHECKOV_SOFT_FAIL=1)"; \
+	  exit 0; \
+	fi; \
+	exit $$status
+
+tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy tf-checkov ## Run all Terraform hygiene checks
 
 
 # -----------------------------------------------------------------------------
@@ -736,3 +885,14 @@ harness-doctor:
 
 dist: clean ## Create a clean distribution zip under ./dist/
 	python scripts/package_dist.py
+
+
+# Retention / compaction
+retention:
+	@echo "Running retention/compaction job (RETENTION_ENABLED must be true)."
+	RETENTION_ENABLED=true python -m api.app.jobs.retention
+
+retention-gcp:
+	$(call require,gcloud)
+	@echo "Executing Cloud Run retention job: edgewatch-retention-$(ENV)"
+	gcloud run jobs execute edgewatch-retention-$(ENV) --region $(REGION) --project $(PROJECT_ID) --wait

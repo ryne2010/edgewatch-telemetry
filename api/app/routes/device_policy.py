@@ -52,11 +52,25 @@ def get_device_policy(
         else policy.alert_thresholds.water_pressure_low_psi
     )
 
+    batt_low = (
+        settings.default_battery_low_v
+        if settings.default_battery_low_v is not None
+        else policy.alert_thresholds.battery_low_v
+    )
+
+    sig_low = (
+        settings.default_signal_low_rssi_dbm
+        if settings.default_signal_low_rssi_dbm is not None
+        else policy.alert_thresholds.signal_low_rssi_dbm
+    )
+
     etag = _make_etag(
         policy.sha256,
         str(device.heartbeat_interval_s),
         str(device.offline_after_s),
         f"wp_low={wp_low}",
+        f"batt_low={batt_low}",
+        f"sig_low={sig_low}",
     )
 
     if request.headers.get("if-none-match") == etag:
@@ -95,9 +109,17 @@ def get_device_policy(
         alert_thresholds=EdgePolicyAlertThresholdsOut(
             water_pressure_low_psi=wp_low,
             water_pressure_recover_psi=policy.alert_thresholds.water_pressure_recover_psi,
-            battery_low_v=policy.alert_thresholds.battery_low_v,
+            oil_pressure_low_psi=policy.alert_thresholds.oil_pressure_low_psi,
+            oil_pressure_recover_psi=policy.alert_thresholds.oil_pressure_recover_psi,
+            oil_level_low_pct=policy.alert_thresholds.oil_level_low_pct,
+            oil_level_recover_pct=policy.alert_thresholds.oil_level_recover_pct,
+            drip_oil_level_low_pct=policy.alert_thresholds.drip_oil_level_low_pct,
+            drip_oil_level_recover_pct=policy.alert_thresholds.drip_oil_level_recover_pct,
+            oil_life_low_pct=policy.alert_thresholds.oil_life_low_pct,
+            oil_life_recover_pct=policy.alert_thresholds.oil_life_recover_pct,
+            battery_low_v=batt_low,
             battery_recover_v=policy.alert_thresholds.battery_recover_v,
-            signal_low_rssi_dbm=policy.alert_thresholds.signal_low_rssi_dbm,
+            signal_low_rssi_dbm=sig_low,
             signal_recover_rssi_dbm=policy.alert_thresholds.signal_recover_rssi_dbm,
         ),
     )

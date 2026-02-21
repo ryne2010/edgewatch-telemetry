@@ -72,7 +72,7 @@ def _git_tracked_paths() -> set[str]:
     try:
         import subprocess
 
-        out = subprocess.check_output(["git", "ls-files"], cwd=REPO_ROOT)
+        out = subprocess.check_output(["git", "ls-files"], cwd=REPO_ROOT, stderr=subprocess.DEVNULL)
         return {line.strip() for line in out.decode("utf-8").splitlines() if line.strip()}
     except Exception:
         return set()
@@ -113,10 +113,30 @@ class Finding:
     message: str
 
 
+# Directories that should be skipped during hygiene scans.
+#
+# IMPORTANT: Path.parts returns individual path segments, so entries here must
+# be single directory names (not "web/node_modules").
+SKIP_DIR_NAMES = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".pnpm-store",
+    "dist",
+    "build",
+    ".terraform",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".pyright",
+}
+
+
 def _iter_repo_files(root: Path) -> Iterable[Path]:
     for p in root.rglob("*"):
         # Skip virtualenvs and big vendored folders.
-        if any(part in {".venv", "web/node_modules", "web/dist", "infra/gcp/.terraform"} for part in p.parts):
+        if any(part in SKIP_DIR_NAMES for part in p.parts):
             continue
         if p.is_file():
             yield p

@@ -10,15 +10,37 @@ Each spec should include:
 
 When a task changes contracts or boundaries, also write an ADR in `docs/DECISIONS/`.
 
+---
+
+## How to execute tasks (recommended)
+
+For each task:
+
+1) Read the durable sources of truth (in order):
+   - `docs/DOMAIN.md`
+   - `docs/DESIGN.md`
+   - `docs/CONTRACTS.md`
+   - `docs/WORKFLOW.md`
+
+2) Implement the smallest safe slice.
+
+3) Validate with the harness before finalizing:
+
+```bash
+make harness
+```
+
+For faster inner loops:
+
+```bash
+python scripts/harness.py lint --only python
+python scripts/harness.py test --only python
+python scripts/harness.py lint --only node
+```
+
+---
+
 ## Queue status
-
-### Planned
-
-None.
-
-### In progress / partial
-
-None.
 
 ### Implemented
 
@@ -32,3 +54,36 @@ None.
 - `08-ci-cd-github-actions-wif.md`
 - `09-event-driven-ingest-pubsub.md`
 - `10-analytics-export-bigquery.md`
+
+### In progress / partial
+
+- `14-ui-ux-polish.md` (core UX shipped; remaining items tracked inside)
+- `16-opentelemetry.md` (FastAPI tracing is present; SQLAlchemy + metrics remain)
+
+### Planned
+
+#### Requested “field-realistic edge node” scope
+
+- `11-edge-sensor-suite.md` (epic)
+  - `11a-agent-sensor-framework.md`
+  - `11b-rpi-i2c-temp-humidity.md`
+  - `11c-rpi-adc-pressures-levels.md`
+  - `11d-derived-oil-life-reset.md`
+
+- `12-camera-capture-upload.md` (epic)
+  - `12a-agent-camera-capture-ring-buffer.md`
+  - `12b-api-media-metadata-storage.md`
+  - `12c-web-media-gallery.md`
+
+- `13-cellular-connectivity.md` (epic)
+  - `13a-cellular-runbook.md`
+  - `13b-agent-cellular-metrics-watchdog.md`
+  - `13c-cost-caps-policy.md`
+
+#### Production upgrades
+
+- `15-authn-authz.md` (IAP / identity perimeter + RBAC)
+- `17-telemetry-partitioning-rollups.md` (Postgres scale path)
+- `18-iap-identity-perimeter.md` (Terraform LB+IAP + app verification)
+- `19-agent-buffer-hardening.md` (WAL mode, disk quota, corruption recovery)
+- `20-edge-protection-cloud-armor.md` (Cloud Armor / API Gateway posture for public ingest)

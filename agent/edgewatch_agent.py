@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -33,6 +34,31 @@ def make_point(metrics: Dict[str, Any]) -> Dict[str, Any]:
         "ts": utcnow_iso(),
         "metrics": metrics,
     }
+
+
+
+
+class RateLimited(RuntimeError):
+    '''Raised when the server returns HTTP 429.
+
+    retry_after_s is best-effort parsed from Retry-After.
+    '''
+
+    def __init__(self, message: str, retry_after_s: float | None = None):
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+def _parse_retry_after_seconds(headers: dict) -> float | None:
+    '''Parse Retry-After (seconds only). Returns None if unparseable.'''
+
+    ra = headers.get('Retry-After')
+    if not ra:
+        return None
+    try:
+        return float(str(ra).strip())
+    except ValueError:
+        return None
 
 
 def post_points(
@@ -141,58 +167,78 @@ def _compute_alerts(metrics: Mapping[str, Any], prev_alerts: set[str], policy: D
     we observe a reading that satisfies recovery.
     """
 
+    def _low_alert(key: str, value: float | None, *, low: float, recover: float) -> bool:
+        prev = key in prev_alerts
+        if value is None:
+            return prev
+        if prev:
+            return value < recover
+        return value < low
+
     alerts: set[str] = set()
 
-    # Water pressure
-    wp_key = "WATER_PRESSURE_LOW"
-    wp_prev = wp_key in prev_alerts
-    wp_f = _as_float(metrics.get("water_pressure_psi"))
-    if wp_f is None:
-        if wp_prev:
-            alerts.add(wp_key)
-    else:
-        low = policy.alert_thresholds.water_pressure_low_psi
-        recover = policy.alert_thresholds.water_pressure_recover_psi
-        if wp_prev:
-            if wp_f < recover:
-                alerts.add(wp_key)
-        else:
-            if wp_f < low:
-                alerts.add(wp_key)
+    wp = _as_float(metrics.get("water_pressure_psi"))
+    if _low_alert(
+        "WATER_PRESSURE_LOW",
+        wp,
+        low=policy.alert_thresholds.water_pressure_low_psi,
+        recover=policy.alert_thresholds.water_pressure_recover_psi,
+    ):
+        alerts.add("WATER_PRESSURE_LOW")
 
-    # Battery
-    batt_key = "BATTERY_LOW"
-    batt_prev = batt_key in prev_alerts
-    b = _as_float(metrics.get("battery_v"))
-    if b is None:
-        if batt_prev:
-            alerts.add(batt_key)
-    else:
-        low = policy.alert_thresholds.battery_low_v
-        recover = policy.alert_thresholds.battery_recover_v
-        if batt_prev:
-            if b < recover:
-                alerts.add(batt_key)
-        else:
-            if b < low:
-                alerts.add(batt_key)
+    oil_p = _as_float(metrics.get("oil_pressure_psi"))
+    if _low_alert(
+        "OIL_PRESSURE_LOW",
+        oil_p,
+        low=policy.alert_thresholds.oil_pressure_low_psi,
+        recover=policy.alert_thresholds.oil_pressure_recover_psi,
+    ):
+        alerts.add("OIL_PRESSURE_LOW")
 
-    # Signal
-    sig_key = "SIGNAL_LOW"
-    sig_prev = sig_key in prev_alerts
-    r = _as_float(metrics.get("signal_rssi_dbm"))
-    if r is None:
-        if sig_prev:
-            alerts.add(sig_key)
-    else:
-        low = policy.alert_thresholds.signal_low_rssi_dbm
-        recover = policy.alert_thresholds.signal_recover_rssi_dbm
-        if sig_prev:
-            if r < recover:
-                alerts.add(sig_key)
-        else:
-            if r < low:
-                alerts.add(sig_key)
+    oil_lvl = _as_float(metrics.get("oil_level_pct"))
+    if _low_alert(
+        "OIL_LEVEL_LOW",
+        oil_lvl,
+        low=policy.alert_thresholds.oil_level_low_pct,
+        recover=policy.alert_thresholds.oil_level_recover_pct,
+    ):
+        alerts.add("OIL_LEVEL_LOW")
+
+    drip = _as_float(metrics.get("drip_oil_level_pct"))
+    if _low_alert(
+        "DRIP_OIL_LEVEL_LOW",
+        drip,
+        low=policy.alert_thresholds.drip_oil_level_low_pct,
+        recover=policy.alert_thresholds.drip_oil_level_recover_pct,
+    ):
+        alerts.add("DRIP_OIL_LEVEL_LOW")
+
+    oil_life = _as_float(metrics.get("oil_life_pct"))
+    if _low_alert(
+        "OIL_LIFE_LOW",
+        oil_life,
+        low=policy.alert_thresholds.oil_life_low_pct,
+        recover=policy.alert_thresholds.oil_life_recover_pct,
+    ):
+        alerts.add("OIL_LIFE_LOW")
+
+    batt = _as_float(metrics.get("battery_v"))
+    if _low_alert(
+        "BATTERY_LOW",
+        batt,
+        low=policy.alert_thresholds.battery_low_v,
+        recover=policy.alert_thresholds.battery_recover_v,
+    ):
+        alerts.add("BATTERY_LOW")
+
+    sig = _as_float(metrics.get("signal_rssi_dbm"))
+    if _low_alert(
+        "SIGNAL_LOW",
+        sig,
+        low=policy.alert_thresholds.signal_low_rssi_dbm,
+        recover=policy.alert_thresholds.signal_recover_rssi_dbm,
+    ):
+        alerts.add("SIGNAL_LOW")
 
     return alerts
 
@@ -262,6 +308,10 @@ def _flush_buffer(
             return True
 
         resp = post_points(session, api_url, token, [m.payload for m in queued])
+
+        if resp.status_code == 429:
+            ra = _parse_retry_after_seconds(resp.headers)
+            raise RateLimited('buffer flush rate limited (429)', retry_after_s=ra)
         if 200 <= resp.status_code < 300:
             for m in queued:
                 buf.delete(m.message_id)
@@ -271,6 +321,10 @@ def _flush_buffer(
         if resp.status_code == 422:
             for m in queued:
                 r2 = post_points(session, api_url, token, [m.payload])
+
+                if r2.status_code == 429:
+                    ra = _parse_retry_after_seconds(r2.headers)
+                    raise RateLimited('buffer flush single-message rate limited (429)', retry_after_s=ra)
                 if 200 <= r2.status_code < 300:
                     buf.delete(m.message_id)
                 elif r2.status_code == 422:
@@ -306,6 +360,14 @@ def _default_policy(device_id: str) -> DevicePolicy:
     alerts = AlertThresholds(
         water_pressure_low_psi=float(os.getenv("WATER_PRESSURE_LOW_PSI", "30.0")),
         water_pressure_recover_psi=float(os.getenv("WATER_PRESSURE_RECOVER_PSI", "32.0")),
+        oil_pressure_low_psi=float(os.getenv("OIL_PRESSURE_LOW_PSI", "20.0")),
+        oil_pressure_recover_psi=float(os.getenv("OIL_PRESSURE_RECOVER_PSI", "22.0")),
+        oil_level_low_pct=float(os.getenv("OIL_LEVEL_LOW_PCT", "20.0")),
+        oil_level_recover_pct=float(os.getenv("OIL_LEVEL_RECOVER_PCT", "25.0")),
+        drip_oil_level_low_pct=float(os.getenv("DRIP_OIL_LEVEL_LOW_PCT", "20.0")),
+        drip_oil_level_recover_pct=float(os.getenv("DRIP_OIL_LEVEL_RECOVER_PCT", "25.0")),
+        oil_life_low_pct=float(os.getenv("OIL_LIFE_LOW_PCT", "15.0")),
+        oil_life_recover_pct=float(os.getenv("OIL_LIFE_RECOVER_PCT", "20.0")),
         battery_low_v=float(os.getenv("BATTERY_LOW_V", "11.8")),
         battery_recover_v=float(os.getenv("BATTERY_RECOVER_V", "12.0")),
         signal_low_rssi_dbm=float(os.getenv("SIGNAL_LOW_RSSI_DBM", "-95")),
@@ -321,9 +383,14 @@ def _default_policy(device_id: str) -> DevicePolicy:
         offline_after_s=int(os.getenv("OFFLINE_AFTER_S", "600")),
         reporting=reporting,
         delta_thresholds={
-            "water_pressure_psi": float(os.getenv("DELTA_WATER_PRESSURE_PSI", "1.0")),
-            "oil_pressure_psi": float(os.getenv("DELTA_OIL_PRESSURE_PSI", "1.0")),
             "temperature_c": float(os.getenv("DELTA_TEMPERATURE_C", "0.5")),
+            "humidity_pct": float(os.getenv("DELTA_HUMIDITY_PCT", "2.0")),
+            "oil_pressure_psi": float(os.getenv("DELTA_OIL_PRESSURE_PSI", "1.0")),
+            "oil_level_pct": float(os.getenv("DELTA_OIL_LEVEL_PCT", "1.0")),
+            "oil_life_pct": float(os.getenv("DELTA_OIL_LIFE_PCT", "1.0")),
+            "drip_oil_level_pct": float(os.getenv("DELTA_DRIP_OIL_LEVEL_PCT", "1.0")),
+            "water_pressure_psi": float(os.getenv("DELTA_WATER_PRESSURE_PSI", "1.0")),
+            "flow_rate_gpm": float(os.getenv("DELTA_FLOW_RATE_GPM", "0.5")),
             "battery_v": float(os.getenv("DELTA_BATTERY_V", "0.05")),
             "signal_rssi_dbm": float(os.getenv("DELTA_SIGNAL_RSSI_DBM", "2")),
         },
@@ -512,22 +579,39 @@ def main() -> None:
                             f"[edgewatch-agent] sent ({send_reason}) state={current_state} alerts={sorted(current_alerts)} queue={buf.count()}"
                         )
                     else:
+                        if resp.status_code == 429:
+                            ra = _parse_retry_after_seconds(resp.headers)
+                            raise RateLimited(f"send failed: 429 {resp.text[:200]}", retry_after_s=ra)
                         raise RuntimeError(f"send failed: {resp.status_code} {resp.text[:200]}")
 
                 except Exception as e:
                     buf.enqueue(point["message_id"], point, point["ts"])
                     _maybe_prune(buf, policy)
 
+                    retry_after_s = e.retry_after_s if isinstance(e, RateLimited) else None
+
                     state.consecutive_failures += 1
-                    backoff = min(
+                    base_backoff = min(
                         policy.reporting.backoff_max_s,
                         policy.reporting.backoff_initial_s * (2 ** min(state.consecutive_failures, 8)),
                     )
+
+                    # If the server told us when to retry, respect it.
+                    if retry_after_s is not None:
+                        base_backoff = max(base_backoff, float(retry_after_s))
+
+                    # Jitter to avoid thundering herd if many devices reconnect simultaneously.
+                    jittered = float(base_backoff) * random.uniform(0.8, 1.2)
+                    backoff = min(policy.reporting.backoff_max_s, jittered)
+                    if retry_after_s is not None:
+                        backoff = max(backoff, float(retry_after_s))
+
                     state.next_network_attempt_at = time.time() + float(backoff)
 
                     print(
-                        f"[edgewatch-agent] send exception: {e!r} -> buffered queue={buf.count()} backoff={backoff}s"
+                        f"[edgewatch-agent] send exception: {e!r} -> buffered queue={buf.count()} backoff={backoff:.1f}s"
                     )
+
 
             state.last_state = current_state
             state.last_alerts = set(current_alerts)

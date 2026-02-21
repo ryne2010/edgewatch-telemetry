@@ -8,8 +8,13 @@ export * from './ui/separator'
 export * from './ui/textarea'
 export * from './ui/checkbox'
 
+export * from './ui/toast'
+export * from './ui/skeleton'
+
 export * from './components/AppShell'
 export * from './components/Page'
 export * from './components/DataTable'
 export * from './components/RangeSlider'
 export * from './components/Devtools'
+
+export * from './icons'

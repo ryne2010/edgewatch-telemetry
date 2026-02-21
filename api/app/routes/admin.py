@@ -64,6 +64,9 @@ def update_device(device_id: str, req: AdminDeviceUpdate) -> DeviceOut:
 
         if req.display_name is not None:
             d.display_name = req.display_name
+        if req.token is not None:
+            d.token_fingerprint = token_fingerprint(req.token)
+            d.token_hash = hash_token(req.token)
         if req.heartbeat_interval_s is not None:
             d.heartbeat_interval_s = req.heartbeat_interval_s
         if req.offline_after_s is not None:

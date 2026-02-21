@@ -1,7 +1,7 @@
 /*
   Service Monitoring: Availability SLO + burn-rate alerts.
 
-  Why include this in a portfolio repo?
+  Why include this in this repo?
   - It demonstrates "staff-level ops maturity": you don't just deploy; you define SLIs/SLOs,
     track error budgets, and alert on burn rate (fast + slow) instead of static thresholds.
 

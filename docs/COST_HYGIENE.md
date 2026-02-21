@@ -2,7 +2,7 @@
 
 This repo is designed to be **safe to keep running** as a long-lived demo.
 
-If your goal is to keep the monthly bill near-zero for a small portfolio deployment:
+If your goal is to keep the monthly bill near-zero for a small demo/staging deployment:
 
 1. **Scale the app tier to zero** (Cloud Run) and cap instance count.
 2. **Treat the database as the primary cost driver** (Cloud SQL is rarely “free”).

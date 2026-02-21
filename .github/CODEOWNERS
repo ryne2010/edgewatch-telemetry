@@ -1,0 +1,15 @@
+# CODEOWNERS
+#
+# This file enables GitHub CODEOWNERS-based review routing.
+#
+# NOTE: Replace placeholders with real GitHub usernames/teams.
+#
+# Start simple:
+# * @your-github-handle
+#
+# Suggested granularity:
+# /infra/ @your-github-handle
+# /docs/  @your-github-handle
+# /web/   @your-github-handle
+# /api/   @your-github-handle
+# /agent/ @your-github-handle

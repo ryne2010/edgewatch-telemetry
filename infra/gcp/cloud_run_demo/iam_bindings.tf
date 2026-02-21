@@ -56,6 +56,54 @@ resource "google_cloud_run_v2_service_iam_member" "engineers_min_invoker" {
   member = local.engineers_min_group
 }
 
+
+# Admin service invoker bindings (only when enable_admin_service=true)
+resource "google_cloud_run_v2_service_iam_member" "engineers_admin_invoker" {
+  count = (local.has_workspace && var.enable_admin_service && !var.admin_allow_unauthenticated) ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = module.cloud_run_admin[0].service_name
+
+  role   = "roles/run.invoker"
+  member = local.engineers_group
+}
+
+resource "google_cloud_run_v2_service_iam_member" "engineers_min_admin_invoker" {
+  count = (local.has_workspace && var.enable_admin_service && !var.admin_allow_unauthenticated) ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = module.cloud_run_admin[0].service_name
+
+  role   = "roles/run.invoker"
+  member = local.engineers_min_group
+}
+
+
+# Dashboard service invoker bindings (only when enable_dashboard_service=true)
+resource "google_cloud_run_v2_service_iam_member" "engineers_dashboard_invoker" {
+  count = (local.has_workspace && var.enable_dashboard_service && !var.dashboard_allow_unauthenticated) ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = module.cloud_run_dashboard[0].service_name
+
+  role   = "roles/run.invoker"
+  member = local.engineers_group
+}
+
+resource "google_cloud_run_v2_service_iam_member" "engineers_min_dashboard_invoker" {
+  count = (local.has_workspace && var.enable_dashboard_service && !var.dashboard_allow_unauthenticated) ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = module.cloud_run_dashboard[0].service_name
+
+  role   = "roles/run.invoker"
+  member = local.engineers_min_group
+}
+
 # --- Log View access (least-privilege client observability) ------------------
 #
 # Clients often need access to *just* this service's logs — not the whole project.

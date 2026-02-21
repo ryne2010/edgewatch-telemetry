@@ -19,13 +19,19 @@ Install Homebrew (if you don't have it already).
 
 **Cloud Run note (architecture):**
 
-Cloud Run expects Linux `x86_64` / `linux/amd64` images.
+Cloud Run expects Linux `x86_64` / `linux/amd64` images (multi-arch images are fine as long as they include `linux/amd64`).
 
-- This repo uses **Cloud Build** for GCP builds to avoid Apple Silicon cross-arch issues.
-- If you do build/push images from your M2 laptop manually, use:
+- This repo uses **Cloud Build** for the standard GCP deploy lane to avoid Apple Silicon cross-arch issues.
+- If you want a **single tag** that runs on both Cloud Run (`amd64`) and Apple Silicon/RPi (`arm64`),
+  use the multi-arch workflow / buildx lane.
+
+See: `docs/MULTIARCH_IMAGES.md`.
+
+Example (from your M2 laptop):
 
 ```bash
-docker build --platform linux/amd64 -t your-image:tag .
+make docker-login-gcp
+TAG=$(git rev-parse HEAD) make build-multiarch
 ```
 
 ### gcloud SDK
@@ -107,6 +113,14 @@ Simulate a 3-device fleet:
 make simulate
 ```
 
+Notes:
+
+- The simulator uses the **telemetry contract** and will trigger threshold alerts.
+- For remote dev/staging environments, the Terraform profiles can provision a Cloud Run Job + Scheduler
+  that generates synthetic telemetry automatically:
+  - `make deploy-gcp-demo` (dev, public)
+  - `make deploy-gcp-stage` (stage, private IAM)
+
 ---
 
 ## 3) DB migrations
@@ -151,7 +165,7 @@ make harness
 ## 5) GCP deploy lane
 
 ```bash
-make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
+make init GCLOUD_CONFIG=edgewatch-demo PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
 make auth
 make doctor-gcp
 
@@ -161,8 +175,17 @@ make admin-secret
 # Public demo posture (dev)
 make deploy-gcp-demo
 
+# Or: staging posture (private IAM + simulation)
+make deploy-gcp-stage
+
+# Or: staging IoT posture (public ingest + private admin service)
+make deploy-gcp-stage-iot
+
 # Or: production posture (private IAM)
 make deploy-gcp-prod
+
+# Or: production IoT posture (public ingest + private admin service)
+make deploy-gcp-prod-iot
 
 # Or: explicit lane
 # make deploy-gcp-safe ENV=dev

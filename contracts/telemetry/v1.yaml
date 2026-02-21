@@ -25,6 +25,26 @@ metrics:
     unit: celsius
     description: Ambient temperature near the device.
 
+  humidity_pct:
+    type: number
+    unit: percent
+    description: Ambient relative humidity near the device.
+
+  oil_level_pct:
+    type: number
+    unit: percent
+    description: Oil reservoir level (0-100%).
+
+  oil_life_pct:
+    type: number
+    unit: percent
+    description: Remaining oil life percentage (runtime-derived; manual reset).
+
+  drip_oil_level_pct:
+    type: number
+    unit: percent
+    description: Drip oiler reservoir level (0-100%).
+
   battery_v:
     type: number
     unit: volts

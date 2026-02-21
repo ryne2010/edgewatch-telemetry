@@ -1,0 +1,123 @@
+name: Publish Multi-Arch Image (Artifact Registry)
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Environment label (used only for tagging + operator clarity)."
+        required: false
+        default: "dev"
+      tag:
+        description: "Image tag (defaults to commit SHA)."
+        required: false
+        default: ""
+      image_name:
+        description: "Artifact Registry package name."
+        required: false
+        default: "edgewatch-api"
+      ar_repo:
+        description: "Artifact Registry repository name override (defaults to Actions var AR_REPO or 'edgewatch')."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-multiarch-${{ github.event.inputs.env }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    env:
+      PROJECT_ID: ${{ vars.PROJECT_ID }}
+      REGION: ${{ vars.REGION }}
+      AR_REPO: ${{ vars.AR_REPO }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure gcloud defaults
+        run: |
+          set -euo pipefail
+          if [ -z "${PROJECT_ID:-}" ]; then
+            echo "ERROR: GitHub Actions variable PROJECT_ID must be set." >&2
+            exit 1
+          fi
+          REGION_EFFECTIVE="${REGION:-us-central1}"
+          echo "Using region: ${REGION_EFFECTIVE}"
+          gcloud config set project "${PROJECT_ID}"
+          gcloud config set run/region "${REGION_EFFECTIVE}"
+
+      - name: Configure docker auth (Artifact Registry)
+        run: |
+          set -euo pipefail
+          REGION_EFFECTIVE="${REGION:-us-central1}"
+          gcloud auth configure-docker "${REGION_EFFECTIVE}-docker.pkg.dev" --quiet
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image ref
+        id: meta
+        run: |
+          set -euo pipefail
+
+          REGION_EFFECTIVE="${REGION:-us-central1}"
+          AR_REPO_EFFECTIVE="${{ github.event.inputs.ar_repo }}"
+          if [ -z "${AR_REPO_EFFECTIVE}" ]; then
+            AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
+          fi
+
+          TAG_EFFECTIVE="${{ github.sha }}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG_EFFECTIVE="${{ github.event.inputs.tag }}"
+          fi
+
+          IMAGE_NAME_EFFECTIVE="${{ github.event.inputs.image_name }}"
+
+          IMAGE_REF="${REGION_EFFECTIVE}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/${IMAGE_NAME_EFFECTIVE}:${TAG_EFFECTIVE}"
+
+          echo "image_ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG_EFFECTIVE}" >> "$GITHUB_OUTPUT"
+          echo "ar_repo=${AR_REPO_EFFECTIVE}" >> "$GITHUB_OUTPUT"
+          echo "region=${REGION_EFFECTIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (multi-arch)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.image_ref }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=edgewatch-telemetry
+            org.opencontainers.image.description=EdgeWatch Telemetry (API + UI)
+
+      - name: Summary
+        run: |
+          echo "Published multi-arch image:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ${{ steps.meta.outputs.image_ref }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Platforms: linux/amd64 + linux/arm64" >> "$GITHUB_STEP_SUMMARY"

@@ -52,7 +52,7 @@ These are the rules that must always hold (and should be enforced mechanically).
 
 4) **Generate alerts**
 - Periodic job checks device last-seen and opens/resolves offline alerts.
-- Metric threshold alerts (example: water pressure) open/resolve based on values.
+- Metric threshold alerts (water pressure, battery, signal) open/resolve based on values.
 
 5) **Dashboard queries**
 - UI queries:
@@ -68,6 +68,24 @@ These are the rules that must always hold (and should be enforced mechanically).
 - **Heartbeat:** a periodic signal indicating the device is alive.
 - **Offline:** `now - last_seen_at > offline_after_s`.
 - **Alert:** an operational event derived from telemetry or offline checks.
+
+## Canonical metric keys (contracted)
+
+EdgeWatch intentionally allows additive evolution (unknown keys are accepted), but the
+demo environment uses an explicit "known keys" contract for discoverability.
+
+See `contracts/telemetry/v1.yaml` for the full list.
+
+Common operational metrics:
+- `water_pressure_psi`
+- `oil_pressure_psi`
+- `temperature_c`
+- `humidity_pct`
+- `oil_level_pct`
+- `oil_life_pct`
+- `drip_oil_level_pct`
+- `battery_v`
+- `signal_rssi_dbm`
 
 ## Data model overview
 

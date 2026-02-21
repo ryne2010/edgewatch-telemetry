@@ -35,6 +35,27 @@ Alerts are evaluated with **per-alert hysteresis**, meaning each alert has an in
 (e.g., battery low) could incorrectly influence hysteresis for a different alert
 (e.g., water pressure).
 
+## Alert thresholds in v1
+
+The v1 edge policy defines independent **low** / **recover** thresholds for:
+
+- Water pressure (psi)
+- Oil pressure (psi)
+- Oil level (%)
+- Drip oil level (%)
+- Oil life (%)
+- Battery voltage (V)
+- Cellular RSSI (dBm)
+
+The API can optionally override a few *low* thresholds via env vars (useful for demos and staging):
+
+- `DEFAULT_WATER_PRESSURE_LOW_PSI`
+- `DEFAULT_BATTERY_LOW_V`
+- `DEFAULT_SIGNAL_LOW_RSSI_DBM`
+
+These overrides are included in the device-policy **ETag**, so devices will reliably pick up changes
+without waiting for cache expiry.
+
 ## When the agent sends telemetry
 
 In priority order:

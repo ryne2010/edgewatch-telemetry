@@ -1,0 +1,5 @@
+# EdgeWatch agent runtime deps (RPi-friendly)
+# Keep minimal; prefer stdlib + HTTP only.
+
+requests>=2.31.0,<3
+python-dotenv>=1.0.0,<2

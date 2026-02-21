@@ -3,6 +3,16 @@ output "service_url" {
   value       = module.cloud_run.service_url
 }
 
+output "admin_service_url" {
+  description = "Cloud Run admin service URL (if enable_admin_service=true)."
+  value       = try(module.cloud_run_admin[0].service_url, null)
+}
+
+output "dashboard_service_url" {
+  description = "Cloud Run dashboard service URL (if enable_dashboard_service=true)."
+  value       = try(module.cloud_run_dashboard[0].service_url, null)
+}
+
 output "runtime_service_account" {
   description = "Cloud Run runtime service account email."
   value       = module.service_accounts.runtime_service_account_email

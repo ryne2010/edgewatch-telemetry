@@ -16,7 +16,7 @@ These live under `.github/workflows/`:
   - Intended to be the default PR/merge gate.
 
 - `terraform-hygiene.yml`
-  - Runs `make tf-check` (fmt/validate/tflint/tfsec/conftest) on Terraform changes.
+  - Runs `make tf-check` (fmt/validate/tflint/tfsec/checkov/conftest) on Terraform changes.
 
 - `terraform-apply-gcp.yml`
   - **Manual** (`workflow_dispatch`) Terraform apply for GCP.
@@ -29,6 +29,11 @@ These live under `.github/workflows/`:
     2) applies Terraform
     3) runs migrations
     4) verifies the service is live
+
+- `publish-image-multiarch.yml`
+  - **Manual** (`workflow_dispatch`) multi-arch publish.
+  - Builds and pushes a single tag containing `linux/amd64` + `linux/arm64` variants to Artifact Registry.
+  - Useful when you want one tag for Cloud Run (amd64) and Apple Silicon/RPi (arm64).
 
 - `terraform-drift.yml`
   - Scheduled drift detection.

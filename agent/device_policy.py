@@ -30,6 +30,18 @@ class AlertThresholds:
     water_pressure_low_psi: float
     water_pressure_recover_psi: float
 
+    oil_pressure_low_psi: float
+    oil_pressure_recover_psi: float
+
+    oil_level_low_pct: float
+    oil_level_recover_pct: float
+
+    drip_oil_level_low_pct: float
+    drip_oil_level_recover_pct: float
+
+    oil_life_low_pct: float
+    oil_life_recover_pct: float
+
     battery_low_v: float
     battery_recover_v: float
 
@@ -120,6 +132,14 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
     alerts = AlertThresholds(
         water_pressure_low_psi=_require_float(alerts_raw, "water_pressure_low_psi"),
         water_pressure_recover_psi=_require_float(alerts_raw, "water_pressure_recover_psi"),
+        oil_pressure_low_psi=_require_float(alerts_raw, "oil_pressure_low_psi"),
+        oil_pressure_recover_psi=_require_float(alerts_raw, "oil_pressure_recover_psi"),
+        oil_level_low_pct=_require_float(alerts_raw, "oil_level_low_pct"),
+        oil_level_recover_pct=_require_float(alerts_raw, "oil_level_recover_pct"),
+        drip_oil_level_low_pct=_require_float(alerts_raw, "drip_oil_level_low_pct"),
+        drip_oil_level_recover_pct=_require_float(alerts_raw, "drip_oil_level_recover_pct"),
+        oil_life_low_pct=_require_float(alerts_raw, "oil_life_low_pct"),
+        oil_life_recover_pct=_require_float(alerts_raw, "oil_life_recover_pct"),
         battery_low_v=_require_float(alerts_raw, "battery_low_v"),
         battery_recover_v=_require_float(alerts_raw, "battery_recover_v"),
         signal_low_rssi_dbm=_require_float(alerts_raw, "signal_low_rssi_dbm"),
@@ -202,6 +222,14 @@ def save_cached_policy(policy: DevicePolicy, etag: str, *, path: Optional[Path] 
             "alert_thresholds": {
                 "water_pressure_low_psi": policy.alert_thresholds.water_pressure_low_psi,
                 "water_pressure_recover_psi": policy.alert_thresholds.water_pressure_recover_psi,
+                "oil_pressure_low_psi": policy.alert_thresholds.oil_pressure_low_psi,
+                "oil_pressure_recover_psi": policy.alert_thresholds.oil_pressure_recover_psi,
+                "oil_level_low_pct": policy.alert_thresholds.oil_level_low_pct,
+                "oil_level_recover_pct": policy.alert_thresholds.oil_level_recover_pct,
+                "drip_oil_level_low_pct": policy.alert_thresholds.drip_oil_level_low_pct,
+                "drip_oil_level_recover_pct": policy.alert_thresholds.drip_oil_level_recover_pct,
+                "oil_life_low_pct": policy.alert_thresholds.oil_life_low_pct,
+                "oil_life_recover_pct": policy.alert_thresholds.oil_life_recover_pct,
                 "battery_low_v": policy.alert_thresholds.battery_low_v,
                 "battery_recover_v": policy.alert_thresholds.battery_recover_v,
                 "signal_low_rssi_dbm": policy.alert_thresholds.signal_low_rssi_dbm,

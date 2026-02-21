@@ -7,6 +7,9 @@ env = "prod"
 
 allow_unauthenticated = false
 
+# Service-level admin auth: since this profile is private IAM-only, do not require browser-held keys.
+admin_auth_mode = "none"
+
 # Guardrail: never bootstrap demo devices in prod
 bootstrap_demo_device = false
 
@@ -30,3 +33,9 @@ enable_analytics_export = false
 
 # Keep VPC connector OFF unless you must reach private IP resources
 enable_vpc_connector = false
+
+# Retention / compaction
+enable_retention_job   = true
+retention_job_schedule = "30 3 * * *"
+telemetry_retention_days  = 90
+quarantine_retention_days = 90

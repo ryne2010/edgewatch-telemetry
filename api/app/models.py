@@ -143,7 +143,14 @@ class Alert(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notification_events: Mapped[list["NotificationEvent"]] = relationship(back_populates="alert")
 
-    __table_args__ = (Index("ix_alerts_device_created", "device_id", "created_at"),)
+    __table_args__ = (
+        # Device drill-down queries
+        Index("ix_alerts_device_created", "device_id", "created_at"),
+        # Global feed pagination ordering (created_at desc, id desc)
+        Index("ix_alerts_created_id", "created_at", "id"),
+        # Open-only feeds filter resolved_at IS NULL and order by created_at
+        Index("ix_alerts_resolved_created", "resolved_at", "created_at"),
+    )
 
 
 class AlertPolicy(Base):

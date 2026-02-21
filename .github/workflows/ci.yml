@@ -31,7 +31,7 @@ jobs:
         run: corepack enable
 
       - name: Install Node dependencies (pnpm)
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Sync Python deps (uv.lock)
         run: uv sync --all-groups --locked

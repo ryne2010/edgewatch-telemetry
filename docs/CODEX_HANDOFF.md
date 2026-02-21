@@ -1,7 +1,10 @@
 # Codex handoff guide
 
-This repo is intentionally set up to be **Codex-friendly**: larger work is specced in `docs/TASKS/`,
-and repo-quality gates are centralized in `scripts/harness.py` + `harness.toml`.
+This repo is intentionally set up to be **Codex-friendly**:
+
+- larger work is specced in `docs/TASKS/`
+- repo-quality gates are centralized in `scripts/harness.py` + `harness.toml`
+- agent roles/checklists live under `agents/`
 
 ## Quick start (local)
 
@@ -25,31 +28,78 @@ python scripts/harness.py test --only python
 python scripts/harness.py lint --only node
 ```
 
-## Task queue
+## Where the task specs live
 
-- Planned / remaining: see `docs/TASKS/README.md`
-- Each task spec includes: intent, non-goals, acceptance criteria, design notes, validation plan.
+- **Task queue** (status + ordering): `docs/TASKS/README.md`
+- **Roadmap** (milestones + why): `docs/ROADMAP.md`
+- Durable sources of truth (read before doing architecture work):
+  - `docs/DOMAIN.md`
+  - `docs/DESIGN.md`
+  - `docs/CONTRACTS.md`
+  - `docs/WORKFLOW.md`
+
+## Recommended execution order (remaining work)
+
+If you want the fastest path to “real field node”:
+
+1) Sensors framework + real sensors
+   - `docs/TASKS/11a-agent-sensor-framework.md`
+   - `docs/TASKS/11b-rpi-i2c-temp-humidity.md`
+   - `docs/TASKS/11c-rpi-adc-pressures-levels.md`
+   - `docs/TASKS/11d-derived-oil-life-reset.md`
+
+2) Camera lane
+   - `docs/TASKS/12a-agent-camera-capture-ring-buffer.md`
+   - `docs/TASKS/12b-api-media-metadata-storage.md`
+   - `docs/TASKS/12c-web-media-gallery.md`
+
+3) Cellular + cost hygiene
+   - `docs/TASKS/13a-cellular-runbook.md`
+   - `docs/TASKS/13b-agent-cellular-metrics-watchdog.md`
+   - `docs/TASKS/13c-cost-caps-policy.md`
+
+4) UI/UX polish (ongoing)
+   - `docs/TASKS/14-ui-ux-polish.md`
+
+If you want the fastest path to “enterprise operator posture”:
+
+- Identity perimeter + RBAC
+  - `docs/TASKS/18-iap-identity-perimeter.md`
+  - `docs/TASKS/15-authn-authz.md`
+
+- Observability
+  - `docs/TASKS/16-opentelemetry.md`
+
+- Scale path
+  - `docs/TASKS/17-telemetry-partitioning-rollups.md`
+  - `docs/TASKS/20-edge-protection-cloud-armor.md`
+
+- Edge buffer hardening
+  - `docs/TASKS/19-agent-buffer-hardening.md`
 
 ## Working agreements
 
 - Keep `api/app/routes/*` thin; business logic in `api/app/services/*`.
 - When changing public API behavior or a non-negotiable invariant, write an ADR under `docs/DECISIONS/`.
-- Add unit tests for deterministic behavior (use fixed timestamps, deterministic IDs).
+- Add unit tests for deterministic behavior (fixed timestamps, deterministic IDs).
 - Never log secrets (device tokens, admin keys, DATABASE_URL, Secret Manager payloads).
 
 ## Suggested parallel workstreams
 
-These tasks can be developed in parallel if PRs are rebased/merged carefully.
+These can be developed in parallel if PRs are rebased/merged carefully:
 
-- Stream A (alerts): `01-alert-routing-rules.md` + `02-notification-adapters.md`
-- Stream B (contracts/lineage): finish `03-telemetry-contracts.md` + implement `04-lineage-artifacts.md`
-- Stream C (pipelines): `07-replay-backfill.md` + `09-event-driven-ingest-pubsub.md` + `10-analytics-export-bigquery.md`
+- Stream A (sensors): `11a` → `11b` / `11c` → `11d`
+- Stream B (media): `12a` (device) in parallel with `12b` (API) until the upload handshake needs integration
+- Stream C (cellular): `13a` docs can be written anytime; `13b` agent + `13c` policy changes should be coordinated
+- Stream D (platform): IAP (`18`) + OTEL (`16`) + partitioning (`17`) can proceed independently
 
-## CI/CD / GCP deploy lane
+## Deployment lanes
 
-- GitHub Actions + Workload Identity Federation: `docs/WIF_GITHUB_ACTIONS.md`
-- Cloud Run demo/prod Terraform: `infra/gcp/cloud_run_demo/`
-- Safe deploy shortcut:
+- Cloud Run deploy: `docs/DEPLOY_GCP.md`
+- Raspberry Pi deploy: `docs/DEPLOY_RPI.md`
+- Multi-arch image publishing: `docs/MULTIARCH_IMAGES.md`
+
+Safe deploy shortcut:
 
 ```bash
 make deploy-gcp-safe ENV=dev

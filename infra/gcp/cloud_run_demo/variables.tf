@@ -45,11 +45,17 @@ variable "allow_public_in_non_dev" {
 If true, you may set allow_unauthenticated=true in stage/prod.
 
 Guardrail:
-- For portfolio/demo apps it's common to run a public Cloud Run service.
+- For demo apps it's common to run a public Cloud Run service.
 - For a production posture, default to private IAM-only invocations.
 
 This flag forces an explicit acknowledgment before making non-dev environments public.
 EOT
+  default     = false
+}
+
+variable "allow_public_admin_noauth" {
+  type        = bool
+  description = "Acknowledge risk: allow admin_auth_mode=none (no admin key) on a public Cloud Run service. NOT recommended."
   default     = false
 }
 
@@ -61,6 +67,144 @@ variable "allow_unauthenticated" {
   validation {
     condition     = var.env == "dev" || var.allow_unauthenticated == false || var.allow_public_in_non_dev == true
     error_message = "Refusing to make stage/prod public: set allow_public_in_non_dev=true to acknowledge the risk/cost posture."
+  }
+}
+
+
+# --- Admin surface + split-admin deployment pattern -------------------------
+
+variable "enable_admin_routes" {
+  type        = bool
+  description = "If false, do not mount /api/v1/admin/* routes on the primary service."
+  default     = true
+}
+
+
+# --- Route surface toggles ---------------------------------------------------
+#
+# These toggles let you deploy the same container image as multiple Cloud Run
+# services with different responsibilities (recommended for IoT/edge posture).
+#
+# Examples:
+# - Public ingest service: ingest only (no UI, no read endpoints, no admin)
+# - Private dashboard service: UI + read endpoints (no ingest, no admin)
+# - Private admin service: UI + admin endpoints (optionally read endpoints)
+
+variable "enable_ui" {
+  type        = bool
+  description = "Whether the primary service should serve the web UI (static files from /web/dist)."
+  default     = true
+}
+
+variable "enable_ingest_routes" {
+  type        = bool
+  description = "Whether the primary service should mount ingest routes (/api/v1/ingest, device policy, pubsub push)."
+  default     = true
+}
+
+variable "enable_read_routes" {
+  type        = bool
+  description = "Whether the primary service should mount read-only dashboard routes (/api/v1/devices, /api/v1/alerts, /api/v1/contracts)."
+  default     = true
+}
+
+variable "admin_auth_mode" {
+  type        = string
+  description = "Admin auth mode for the primary service: key (X-Admin-Key) or none (trust perimeter)."
+  default     = "key"
+
+  validation {
+    condition     = contains(["key", "none"], var.admin_auth_mode)
+    error_message = "admin_auth_mode must be one of: key, none."
+  }
+
+
+  validation {
+    condition     = !(var.allow_unauthenticated && var.enable_admin_routes && var.admin_auth_mode == "none") || var.allow_public_admin_noauth
+    error_message = "Refusing to run a public service with enable_admin_routes=true and admin_auth_mode=none. Disable admin routes, set admin_auth_mode=key, or set allow_public_admin_noauth=true to acknowledge the risk."
+  }
+
+}
+
+variable "enable_admin_service" {
+  type        = bool
+  description = <<EOT
+If true, deploy a second Cloud Run service that includes admin routes (recommended for a production IoT posture).
+
+Pattern:
+- public ingest service: ENABLE_ADMIN_ROUTES=0
+- private admin service: ENABLE_ADMIN_ROUTES=1, ADMIN_AUTH_MODE=none (protected by Cloud Run IAM/IAP)
+EOT
+  default     = false
+}
+
+variable "admin_service_name" {
+  type        = string
+  description = "Optional admin Cloud Run service name override. Null derives from service_name."
+  default     = null
+}
+
+variable "admin_allow_unauthenticated" {
+  type        = bool
+  description = "Whether the admin service is public (NOT recommended)."
+  default     = false
+
+  validation {
+    condition     = var.env == "dev" || var.admin_allow_unauthenticated == false || var.allow_public_in_non_dev == true
+    error_message = "Refusing to make stage/prod admin service public: set allow_public_in_non_dev=true to acknowledge the risk/cost posture."
+  }
+}
+
+variable "admin_service_admin_auth_mode" {
+  type        = string
+  description = "Admin auth mode for the admin service (usually none when protected by IAM/IAP)."
+  default     = "none"
+
+  validation {
+    condition     = contains(["key", "none"], var.admin_service_admin_auth_mode)
+    error_message = "admin_service_admin_auth_mode must be one of: key, none."
+  }
+
+
+  validation {
+    condition     = !(var.enable_admin_service && var.admin_allow_unauthenticated && var.admin_service_admin_auth_mode == "none") || var.allow_public_admin_noauth
+    error_message = "Refusing to run a public admin service with admin_service_admin_auth_mode=none. Keep admin private (recommended) or set allow_public_admin_noauth=true to acknowledge the risk."
+  }
+
+}
+
+
+# --- Optional: separate dashboard service (read-only UI) ---------------------
+#
+# Design goal: least privilege.
+# - Many users/operators should access the dashboard (read endpoints + UI)
+# - Fewer users should access provisioning/debug endpoints (admin)
+#
+# Pattern:
+# - Public ingest service: ENABLE_UI=0, ENABLE_READ_ROUTES=0, ENABLE_ADMIN_ROUTES=0
+# - Private dashboard service: ENABLE_UI=1, ENABLE_READ_ROUTES=1, ENABLE_ADMIN_ROUTES=0
+# - Private admin service: ENABLE_UI=1, ENABLE_ADMIN_ROUTES=1
+
+variable "enable_dashboard_service" {
+  type        = bool
+  description = "If true, deploy a second Cloud Run service that serves the dashboard UI + read endpoints (no ingest, no admin)."
+  default     = false
+}
+
+variable "dashboard_service_name" {
+  type        = string
+  description = "Optional dashboard Cloud Run service name override. Null derives from service_name."
+  default     = null
+}
+
+variable "dashboard_allow_unauthenticated" {
+  type        = bool
+  description = "Whether the dashboard service is public (NOT recommended for stage/prod)."
+  default     = false
+
+  validation {
+    condition     = var.env == "dev" || var.dashboard_allow_unauthenticated == false || var.allow_public_in_non_dev == true
+    error_message = "Refusing to make stage/prod dashboard service public: set allow_public_in_non_dev=true to acknowledge the risk/cost posture."
   }
 }
 
@@ -76,6 +220,30 @@ When null (default), the API applies safe in-app defaults:
 Set this when you deploy a browser UI to a fixed domain.
 EOT
   default     = null
+}
+
+variable "max_request_body_bytes" {
+  type        = number
+  description = "Max request body size (bytes) for write endpoints (defense-in-depth)."
+  default     = 1000000
+}
+
+variable "max_points_per_request" {
+  type        = number
+  description = "Max number of telemetry points accepted per /api/v1/ingest request."
+  default     = 5000
+}
+
+variable "rate_limit_enabled" {
+  type        = bool
+  description = "Enable in-app rate limiting backstops (defense-in-depth)."
+  default     = true
+}
+
+variable "ingest_rate_limit_points_per_min" {
+  type        = number
+  description = "Device-scoped ingest rate limit (points per minute) used by the in-app limiter."
+  default     = 25000
 }
 
 variable "min_instances" {
@@ -304,6 +472,72 @@ variable "scheduler_time_zone" {
   default     = "Etc/UTC"
 }
 
+
+# --- Optional: retention / compaction job (recommended) ---
+
+variable "enable_retention_job" {
+  type        = bool
+  description = "If true, provision a Cloud Run Job + Cloud Scheduler trigger to prune old telemetry (reduces Cloud SQL storage growth)."
+  default     = true
+}
+
+variable "retention_job_schedule" {
+  type        = string
+  description = "Cron schedule for the retention job."
+  default     = "15 3 * * *"
+}
+
+variable "telemetry_retention_days" {
+  type        = number
+  description = "Delete telemetry_points older than N days."
+  default     = 30
+}
+
+variable "quarantine_retention_days" {
+  type        = number
+  description = "Delete quarantined_telemetry older than N days."
+  default     = 30
+}
+
+variable "retention_batch_size" {
+  type        = number
+  description = "Rows deleted per batch (Postgres uses a CTE + LIMIT)."
+  default     = 5000
+}
+
+variable "retention_max_batches" {
+  type        = number
+  description = "Maximum batches per run (guardrail to avoid runaway deletions)."
+  default     = 50
+}
+
+
+# --- Optional: synthetic telemetry generator (dev/stage only) ---
+
+variable "enable_simulation" {
+  type        = bool
+  description = "If true, provision a Cloud Run Job + Cloud Scheduler trigger that generates synthetic telemetry for the demo fleet. Intended for dev/stage only."
+  default     = false
+
+  validation {
+    condition     = var.env != "prod" || var.enable_simulation == false
+    error_message = "enable_simulation must be false when env=prod (synthetic telemetry is for dev/stage only)."
+  }
+}
+
+variable "simulation_schedule" {
+  type        = string
+  description = "Cron schedule for the simulation Cloud Scheduler job."
+  # Default to every minute so dashboards feel "live".
+  default = "*/1 * * * *"
+}
+
+variable "simulation_points_per_device" {
+  type        = number
+  description = "How many telemetry points to generate per device per simulation job run."
+  default     = 1
+}
+
 # --- Optional: event-driven ingest (Pub/Sub) ---
 
 variable "enable_pubsub_ingest" {
@@ -376,11 +610,17 @@ variable "bootstrap_demo_device" {
   default     = true
 
   # Guardrail: demo bootstrap is great for `env=dev`, but it's a footgun for stage/prod.
-  # Force an explicit opt-out when switching environments.
+  # Force an explicit opt-in when switching environments.
   validation {
-    condition     = var.env == "dev" || var.bootstrap_demo_device == false
-    error_message = "bootstrap_demo_device must be false when env is stage/prod (avoid shipping demo credentials)."
+    condition     = var.env == "dev" || var.bootstrap_demo_device == false || var.allow_demo_in_non_dev
+    error_message = "bootstrap_demo_device must be false when env is stage/prod unless allow_demo_in_non_dev=true (avoid shipping demo credentials by accident)."
   }
+}
+
+variable "allow_demo_in_non_dev" {
+  type        = bool
+  description = "Guardrail override: allow demo fleet bootstrap in stage/prod. Only set this to true for non-production staging environments." 
+  default     = false
 }
 
 variable "demo_fleet_size" {

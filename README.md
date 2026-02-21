@@ -14,18 +14,23 @@ make doctor-dev
 
 For a tighter inner loop (API + UI hot reload on your Mac, Postgres in Docker), see `docs/DEV_FAST.md`.
 
+Hardware + edge node scope (sensors/cameras/LTE): see `docs/HARDWARE.md`.
+
 
 Optional GCP demo deploy:
 
 ```bash
-make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
+make init GCLOUD_CONFIG=edgewatch-demo PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
 make auth          # only needed once per machine/user
 make doctor-gcp
 make admin-secret
 # make db-secret   # only if enable_cloud_sql=false and you provide external Postgres
 
-# Public portfolio demo (dev)
+# Public demo (dev)
 make deploy-gcp-demo
+
+# Or: staging posture (private IAM-only) + synthetic telemetry enabled
+make deploy-gcp-stage
 
 # Or: production posture (private IAM-only)
 make deploy-gcp-prod
@@ -34,6 +39,9 @@ make deploy-gcp-prod
 # make deploy-gcp-safe ENV=dev
 # or: make deploy-gcp ENV=dev && make migrate-gcp ENV=dev && make verify-gcp-ready ENV=dev
 ```
+
+Want a **single image tag** that runs on Cloud Run (`amd64`) and on arm64 devices (Apple Silicon / Raspberry Pi)?
+See: `docs/MULTIARCH_IMAGES.md` (includes a GitHub Actions multi-arch publish workflow).
 
 EdgeWatch is a reference implementation of a **lightweight edge telemetry platform** for scenarios like:
 - well/pump monitoring (online/offline heartbeat, pressure thresholds)
@@ -56,8 +64,10 @@ It is designed to be:
 - **Drift events + quarantine lane** (optional type-mismatch quarantine with auditable events)
 - **Alerts**
   - device offline / online
-  - metric thresholds (example: water pressure low)
+  - metric thresholds (water pressure, battery, signal)
   - routing rules (quiet hours, dedupe, throttling) + auditable notification events
+- **Synthetic telemetry generator** (Cloud Run Job + Scheduler) for dev/stage environments
+- **Retention / compaction job** (Cloud Run Job + Scheduler) to bound Cloud SQL storage growth
 - **Replay tooling** (`python -m agent.replay`) for idempotent edge backfill by time range
 - **Optional Pub/Sub ingest mode** (`INGEST_PIPELINE_MODE=pubsub`) with worker push endpoint
 - **Optional BigQuery export lane** (Cloud Run Job + Scheduler + watermark-based exports)
@@ -108,6 +118,7 @@ make up
 Endpoints:
 - UI (React + TanStack): `http://localhost:8082`
 - Swagger docs: `http://localhost:8082/docs`
+- Retention runbook: `docs/RUNBOOKS/RETENTION.md`
 - API base: `http://localhost:8082/api/v1`
 
 Fast dev lane (tight edit → reload loop):
@@ -166,11 +177,13 @@ uv run python -m agent.replay \
 
 - `POST /api/v1/ingest` — device telemetry ingestion (requires Bearer token)
 - `GET  /api/v1/devices` — list devices with computed status (online/offline)
+- `GET  /api/v1/devices/summary` — fleet-friendly list (status + latest vitals)
 - `GET  /api/v1/devices/{device_id}` — device detail (computed status)
 - `GET  /api/v1/devices/{device_id}/telemetry` — raw telemetry points
 - `GET  /api/v1/devices/{device_id}/timeseries` — bucketed time series
 - `GET  /api/v1/alerts` — alerts
 - `GET  /api/v1/contracts/telemetry` — active telemetry contract
+- `GET  /api/v1/contracts/edge_policy` — active edge policy contract
 - `GET  /api/v1/device-policy` — device policy (Bearer token; ETag cached)
 - `POST /api/v1/admin/devices` — register device (admin only)
 - `GET  /api/v1/admin/ingestions` — ingestion batch audit (admin only)
@@ -212,7 +225,9 @@ See `docs/architecture.md` for more detail.
 
 - Each device authenticates using an **opaque token** (`Authorization: Bearer <token>`).
 - Server stores only a **PBKDF2 hash** of the token (never plaintext).
-- Admin operations require `X-Admin-Key`.
+- Admin operations are optional and configurable:
+  - `ENABLE_ADMIN_ROUTES=0` removes `/api/v1/admin/*` entirely
+  - `ADMIN_AUTH_MODE=key|none` chooses between `X-Admin-Key` or trusting an infrastructure perimeter
 
 See `docs/security.md` for threat model notes and hardening recommendations.
 
@@ -223,8 +238,10 @@ See `docs/security.md` for threat model notes and hardening recommendations.
 This repo includes a working, team-ready Cloud Run demo deployment (Terraform + Cloud Build).
 
 See:
+- `docs/START_HERE.md`
 - `docs/DEPLOY_GCP.md`
 - `docs/TEAM_WORKFLOW.md`
+- `docs/NEXT_ITERATION.md`
 
 ### Cost-minimized production posture
 
@@ -274,11 +291,34 @@ python scripts/harness.py all
 
 MIT — see `LICENSE`.
 
+## Web UI
+
+The UI is a React app that talks to the API (and is also served by the API in production).
+
+- Dashboard (fleet overview)
+- Devices list + device detail (charts + raw points)
+- Alerts feed
+- Contracts page (live telemetry contract)
+- Admin audit console (requires `X-Admin-Key`)
+- Settings + system/health page
+
+See `docs/WEB_UI.md` for a UI walkthrough.
+
+## Edge agent (Raspberry Pi)
+
+The `agent/` folder contains a small Python agent intended to run on a Raspberry Pi (or similar Linux SBC) and send telemetry to the API.
+
+- Buffers locally when offline (SQLite)
+- Retries with backoff
+- Flushes buffered points when connectivity returns
+
+See `docs/DEPLOY_RPI.md` for a systemd deployment.
+
 ## UI stack
 
 - Vite + React
 - TanStack Router/Query/Table + Virtual + Pacer + Ranger
-- Tailwind + shadcn-style components (vendored in `web/src/portfolio-ui`)
+- Tailwind + shadcn-style components (vendored in `web/src/ui-kit`)
 
 ## Packaging
 

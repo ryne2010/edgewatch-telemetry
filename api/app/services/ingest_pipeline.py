@@ -10,7 +10,7 @@ from ..contracts import TelemetryContract, TypeMismatch
 
 UnknownKeysMode = Literal["allow", "flag"]
 TypeMismatchMode = Literal["reject", "quarantine"]
-_ALLOWED_SOURCES = {"device", "replay", "pubsub", "backfill"}
+_ALLOWED_SOURCES = {"device", "replay", "pubsub", "backfill", "simulation"}
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 
 This repo treats new telemetry metrics as a **data-contract change**, not "just another JSON key".
 
-The goal is to keep the system portfolio-friendly:
+The goal is to keep the system production-friendly:
 - predictable ingest
 - type-safe time-series queries
 - drift visibility (unknown keys) without blocking additive evolution

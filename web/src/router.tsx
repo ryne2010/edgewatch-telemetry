@@ -1,31 +1,31 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router'
-import { AppShell, PortfolioDevtools } from './portfolio-ui'
+import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
+import { RootLayout } from './RootLayout'
+import { DashboardPage } from './pages/Dashboard'
 import { DevicesPage } from './pages/Devices'
 import { DeviceDetailPage } from './pages/DeviceDetail'
 import { AlertsPage } from './pages/Alerts'
+import { ContractsPage } from './pages/Contracts'
+import { AdminPage } from './pages/Admin'
+import { SettingsPage } from './pages/Settings'
 import { MetaPage } from './pages/Meta'
+import { ErrorPage } from './pages/Error'
+import { NotFoundPage } from './pages/NotFound'
 
 const rootRoute = createRootRoute({
-  component: () => (
-    <AppShell
-      appName="EdgeWatch Telemetry"
-      appBadge="Edge + Ops"
-      nav={[
-        { to: '/', label: 'Devices' },
-        { to: '/alerts', label: 'Alerts' },
-        { to: '/meta', label: 'Meta' },
-      ]}
-      docsHref="/docs"
-    >
-      <Outlet />
-      <PortfolioDevtools />
-    </AppShell>
-  ),
+  component: RootLayout,
+  errorComponent: ({ error }) => <ErrorPage error={error} />,
+  notFoundComponent: () => <NotFoundPage />,
+})
+
+const dashboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/',
+  component: DashboardPage,
 })
 
 const devicesRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/',
+  path: '/devices',
   component: DevicesPage,
 })
 
@@ -41,13 +41,40 @@ const alertsRoute = createRoute({
   component: AlertsPage,
 })
 
+const contractsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/contracts',
+  component: ContractsPage,
+})
+
+const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin',
+  component: AdminPage,
+})
+
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/settings',
+  component: SettingsPage,
+})
+
 const metaRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/meta',
   component: MetaPage,
 })
 
-export const routeTree = rootRoute.addChildren([devicesRoute, deviceDetailRoute, alertsRoute, metaRoute])
+export const routeTree = rootRoute.addChildren([
+  dashboardRoute,
+  devicesRoute,
+  deviceDetailRoute,
+  alertsRoute,
+  contractsRoute,
+  adminRoute,
+  settingsRoute,
+  metaRoute,
+])
 
 export const router = createRouter({
   routeTree,

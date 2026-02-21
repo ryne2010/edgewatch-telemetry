@@ -10,6 +10,7 @@ from ..db import db_session
 from ..models import Device, IngestionBatch
 from ..schemas import IngestRequest, IngestResponse
 from ..security import require_device_auth
+from ..rate_limit import ingest_points_limiter
 from ..services.ingest_pipeline import (
     CandidatePoint,
     build_pubsub_batch_payload,
@@ -42,6 +43,35 @@ def ingest(
 
     Regardless of mode, each request records an ingestion lineage artifact.
     """
+
+    points_count = len(req.points)
+    if points_count > settings.max_points_per_request:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={
+                "error": {
+                    "code": "TOO_MANY_POINTS",
+                    "message": f"Too many points in one request: {points_count} > {settings.max_points_per_request}",
+                    "max_points_per_request": settings.max_points_per_request,
+                }
+            },
+        )
+
+    # Defense-in-depth: device-scoped rate limiting based on points/minute.
+    allowed, retry_after_s = ingest_points_limiter.allow(key=device.device_id, cost=points_count)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "error": {
+                    "code": "RATE_LIMITED",
+                    "message": "Ingest rate limit exceeded.",
+                    "retry_after_s": retry_after_s,
+                    "limit_points_per_min": settings.ingest_rate_limit_points_per_min,
+                }
+            },
+            headers={"Retry-After": str(retry_after_s)},
+        )
 
     try:
         contract = load_telemetry_contract(settings.telemetry_contract_version)

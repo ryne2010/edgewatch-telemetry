@@ -16,6 +16,23 @@ locals {
     APP_ENV    = var.env
     LOG_LEVEL  = "INFO"
     LOG_FORMAT = "json"
+    GCP_PROJECT_ID = var.project_id
+
+    # Safety limits (defense in depth)
+    MAX_REQUEST_BODY_BYTES = tostring(var.max_request_body_bytes)
+    MAX_POINTS_PER_REQUEST = tostring(var.max_points_per_request)
+    RATE_LIMIT_ENABLED = var.rate_limit_enabled ? "true" : "false"
+    INGEST_RATE_LIMIT_POINTS_PER_MIN = tostring(var.ingest_rate_limit_points_per_min)
+
+    # Admin surface toggles (see docs/PRODUCTION_POSTURE.md)
+    ENABLE_ADMIN_ROUTES = var.enable_admin_routes ? "true" : "false"
+    ADMIN_AUTH_MODE     = var.admin_auth_mode
+
+    # Route surface toggles (see docs/PRODUCTION_POSTURE.md)
+    ENABLE_UI           = var.enable_ui ? "true" : "false"
+    ENABLE_INGEST_ROUTES = var.enable_ingest_routes ? "true" : "false"
+    ENABLE_READ_ROUTES   = var.enable_read_routes ? "true" : "false"
+
 
     # Production-safe: Cloud Run services should not rely on in-process schedulers.
     #
@@ -65,10 +82,12 @@ locals {
     CORS_ALLOW_ORIGINS = var.cors_allow_origins_csv
   }
 
-  # Only the *service* gets demo + CORS vars.
+  # Only the *primary* service gets demo + CORS vars.
   # Jobs should stay minimal and must not inherit demo tokens.
-  service_env_vars = merge(local.base_env_vars, local.demo_env_vars, local.cors_env_vars)
-  job_env_vars     = local.base_env_vars
+  # Secondary services (dashboard/admin) explicitly disable demo bootstrap.
+  primary_service_env_vars = merge(local.base_env_vars, local.demo_env_vars, local.cors_env_vars)
+  secondary_service_env_vars = merge(local.base_env_vars, local.cors_env_vars)
+  job_env_vars              = local.base_env_vars
 
   cloud_sql_instances = var.enable_cloud_sql ? [module.cloud_sql_postgres[0].connection_name] : []
 
@@ -94,6 +113,13 @@ locals {
     ],
     var.enable_cloud_sql ? ["roles/cloudsql.client"] : [],
   )
+
+  # Shared secrets passed to Cloud Run services/jobs
+  service_secret_env = {
+    DATABASE_URL  = module.secrets.secret_names["edgewatch-database-url"]
+    ADMIN_API_KEY = module.secrets.secret_names["edgewatch-admin-api-key"]
+  }
+
 }
 
 module "core_services" {
@@ -216,7 +242,7 @@ module "cloud_run" {
   max_instances = var.max_instances
 
   allow_unauthenticated = var.allow_unauthenticated
-  env_vars              = local.service_env_vars
+  env_vars              = local.primary_service_env_vars
   labels                = local.labels
 
   secret_env = {
@@ -231,3 +257,89 @@ module "cloud_run" {
 
   depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
 }
+
+# Optional: separate private admin service (recommended for production IoT posture)
+module "cloud_run_admin" {
+  count  = var.enable_admin_service ? 1 : 0
+  source = "../modules/cloud_run_service"
+
+  project_id            = var.project_id
+  region                = var.region
+  service_name          = coalesce(var.admin_service_name, "${var.service_name}-admin")
+  image                 = var.image
+  service_account_email = module.service_accounts.runtime_service_account_email
+
+  allow_unauthenticated = var.admin_allow_unauthenticated
+  min_instances         = var.min_instances
+  max_instances         = var.max_instances
+  cpu                   = var.service_cpu
+  memory                = var.service_memory
+
+  # Admin service is meant to be operator-only; disable docs in non-dev by default via APP_ENV.
+  env_vars = merge(local.secondary_service_env_vars, {
+    # Ensure admin surface is present
+    ENABLE_ADMIN_ROUTES = "true"
+    ADMIN_AUTH_MODE     = var.admin_service_admin_auth_mode
+
+    # Admin UI should be reachable on this service
+    ENABLE_UI           = "true"
+    ENABLE_READ_ROUTES  = "true"
+    ENABLE_INGEST_ROUTES = "false"
+
+    # Avoid demo-token env propagation in secondary services
+    BOOTSTRAP_DEMO_DEVICE = "false"
+  })
+
+  secret_env = local.service_secret_env
+
+  cloud_sql_instances = local.cloud_sql_instances
+  vpc_connector_id    = var.enable_vpc_connector ? module.network[0].serverless_connector_id : null
+  vpc_egress          = var.vpc_egress
+
+  labels = merge(local.labels, { service = "admin" })
+
+
+  depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
+}
+
+
+# Optional: separate private dashboard service (read-only UI)
+module "cloud_run_dashboard" {
+  count  = var.enable_dashboard_service ? 1 : 0
+  source = "../modules/cloud_run_service"
+
+  project_id            = var.project_id
+  region                = var.region
+  service_name          = coalesce(var.dashboard_service_name, "${var.service_name}-dashboard")
+  image                 = var.image
+  service_account_email = module.service_accounts.runtime_service_account_email
+
+  allow_unauthenticated = var.dashboard_allow_unauthenticated
+  min_instances         = var.min_instances
+  max_instances         = var.max_instances
+  cpu                   = var.service_cpu
+  memory                = var.service_memory
+
+  # Dashboard service: UI + read endpoints only (no ingest, no admin).
+  env_vars = merge(local.secondary_service_env_vars, {
+    ENABLE_ADMIN_ROUTES  = "false"
+    ADMIN_AUTH_MODE      = "none"
+    ENABLE_UI            = "true"
+    ENABLE_READ_ROUTES   = "true"
+    ENABLE_INGEST_ROUTES = "false"
+
+    # Avoid demo-token env propagation in secondary services
+    BOOTSTRAP_DEMO_DEVICE = "false"
+  })
+
+  secret_env = local.service_secret_env
+
+  cloud_sql_instances = local.cloud_sql_instances
+  vpc_connector_id    = var.enable_vpc_connector ? module.network[0].serverless_connector_id : null
+  vpc_egress          = var.vpc_egress
+
+  labels = merge(local.labels, { service = "dashboard" })
+
+  depends_on = [google_secret_manager_secret_version.database_url_cloudsql]
+}
+

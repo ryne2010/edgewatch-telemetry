@@ -1,4 +1,4 @@
-# Public demo posture (portfolio)
+# Public demo posture (dev)
 # - Public Cloud Run endpoint
 # - Scale-to-zero
 # - Max instances capped to control cost
@@ -24,6 +24,11 @@ enable_migration_job  = true
 enable_scheduled_jobs = true
 offline_job_schedule  = "*/5 * * * *"
 
+# Simulation (synthetic telemetry)
+enable_simulation           = true
+simulation_schedule         = "*/1 * * * *"
+simulation_points_per_device = 1
+
 # Managed Cloud SQL (minimal-cost defaults)
 enable_cloud_sql             = true
 cloudsql_tier                = "db-f1-micro"
@@ -35,3 +40,9 @@ enable_analytics_export = false
 
 # Keep VPC connector OFF unless you need private networking
 enable_vpc_connector = false
+
+# Retention / compaction
+enable_retention_job   = true
+retention_job_schedule = "30 3 * * *"
+telemetry_retention_days  = 7
+quarantine_retention_days = 7

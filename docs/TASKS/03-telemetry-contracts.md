@@ -9,7 +9,7 @@ Introduce a lightweight "data contract" for telemetry metrics so the system can:
 - detect drift (additive vs breaking)
 - produce a small lineage artifact per ingestion
 
-This bridges the "data architect" portfolio story into EdgeWatch without turning it into a full warehouse product.
+This bridges a "data architect"-style contract/governance story into EdgeWatch without turning it into a full warehouse product.
 
 ## Non-goals
 

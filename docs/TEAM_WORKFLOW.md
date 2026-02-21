@@ -21,7 +21,7 @@ make db-migrate
 Recommended first steps for a teammate deploying the Cloud Run demo:
 
 ```bash
-make init GCLOUD_CONFIG=personal-portfolio PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
+make init GCLOUD_CONFIG=edgewatch-demo PROJECT_ID=YOUR_PROJECT_ID REGION=us-central1
 make auth          # only needed once per machine/user
 make doctor-gcp
 

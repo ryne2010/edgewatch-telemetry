@@ -10,7 +10,7 @@ Add a repeatable way to **replay** historical telemetry into EdgeWatch to suppor
 - demos (load a realistic history)
 - operational recovery (edge devices that were offline for long periods)
 
-This aligns with the portfolio theme: *idempotency + recoverability + operational runbooks*.
+This aligns with the project theme: *idempotency + recoverability + operational runbooks*.
 
 ## Non-goals
 

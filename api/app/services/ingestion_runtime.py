@@ -8,7 +8,15 @@ from sqlalchemy.orm import Session
 
 from ..models import Device, DriftEvent, IngestionBatch, QuarantinedTelemetry, TelemetryPoint
 from .ingest_pipeline import CandidatePoint, QuarantinedPoint, candidate_rows
-from .monitor import ensure_water_pressure_alerts
+from .monitor import (
+    ensure_battery_alerts,
+    ensure_drip_oil_level_alerts,
+    ensure_oil_level_alerts,
+    ensure_oil_life_alerts,
+    ensure_oil_pressure_alerts,
+    ensure_signal_alerts,
+    ensure_water_pressure_alerts,
+)
 
 
 def persist_points_for_batch(
@@ -52,6 +60,30 @@ def persist_points_for_batch(
         water_pressure = point.metrics.get("water_pressure_psi")
         if isinstance(water_pressure, (int, float)) and not isinstance(water_pressure, bool):
             ensure_water_pressure_alerts(session, device_id, float(water_pressure), point.ts)
+
+        oil_pressure = point.metrics.get("oil_pressure_psi")
+        if isinstance(oil_pressure, (int, float)) and not isinstance(oil_pressure, bool):
+            ensure_oil_pressure_alerts(session, device_id, float(oil_pressure), point.ts)
+
+        oil_level = point.metrics.get("oil_level_pct")
+        if isinstance(oil_level, (int, float)) and not isinstance(oil_level, bool):
+            ensure_oil_level_alerts(session, device_id, float(oil_level), point.ts)
+
+        drip_oil_level = point.metrics.get("drip_oil_level_pct")
+        if isinstance(drip_oil_level, (int, float)) and not isinstance(drip_oil_level, bool):
+            ensure_drip_oil_level_alerts(session, device_id, float(drip_oil_level), point.ts)
+
+        oil_life = point.metrics.get("oil_life_pct")
+        if isinstance(oil_life, (int, float)) and not isinstance(oil_life, bool):
+            ensure_oil_life_alerts(session, device_id, float(oil_life), point.ts)
+
+        battery_v = point.metrics.get("battery_v")
+        if isinstance(battery_v, (int, float)) and not isinstance(battery_v, bool):
+            ensure_battery_alerts(session, device_id, float(battery_v), point.ts)
+
+        signal_rssi = point.metrics.get("signal_rssi_dbm")
+        if isinstance(signal_rssi, (int, float)) and not isinstance(signal_rssi, bool):
+            ensure_signal_alerts(session, device_id, float(signal_rssi), point.ts)
 
     if newest_ts is not None:
         device = session.query(Device).filter(Device.device_id == device_id).one_or_none()

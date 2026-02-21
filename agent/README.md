@@ -25,6 +25,12 @@ cp agent/.env.example agent/.env
 uv run python agent/edgewatch_agent.py
 ```
 
+## Raspberry Pi deployment
+
+For a production-ish Raspberry Pi setup (venv + systemd + logs), see:
+
+- `docs/DEPLOY_RPI.md`
+
 ## Device policy (energy & data optimization)
 
 Devices fetch their policy from:

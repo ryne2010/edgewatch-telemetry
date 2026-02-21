@@ -16,6 +16,9 @@ export default defineConfig({
       '/api': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
       '/readyz': 'http://localhost:8080',
+      '/docs': 'http://localhost:8080',
+      '/redoc': 'http://localhost:8080',
+      '/openapi.json': 'http://localhost:8080',
     },
   },
 })

@@ -8,7 +8,9 @@ This repository includes an **optional** Terraform + Cloud Build demo deployment
 - **Cloud Run Jobs** for:
   - DB migrations (`edgewatch-migrate-<env>`)
   - offline checks (`edgewatch-offline-check-<env>`)
+  - retention/compaction (`edgewatch-retention-<env>`, recommended)
   - analytics export (`edgewatch-analytics-export-<env>`, optional)
+  - synthetic telemetry (`edgewatch-simulate-telemetry-<env>`, optional)
 - **Cloud Scheduler** to trigger offline checks on a cron schedule
 - Optional Pub/Sub ingest lane (`enable_pubsub_ingest=true`)
 
@@ -73,21 +75,47 @@ Deploy the service (Cloud Build builds the container image; Terraform deploys Cl
 
 Note: Cloud Run expects `linux/amd64` (x86_64) container images. Using Cloud Build avoids Apple Silicon cross-arch build issues.
 
+If you want a **single image tag** that runs on both Cloud Run (`linux/amd64`) and arm64 devices
+(Apple Silicon, Raspberry Pi), use the multi-arch build lane:
+
+- GitHub Actions: `Publish Multi-Arch Image (Artifact Registry)`
+- Local: `make build-multiarch`
+
+See: `docs/MULTIARCH_IMAGES.md`.
+
 ### Pick a posture (profiles)
 
 This repo ships Terraform `*.tfvars` profiles under:
 
 `infra/gcp/cloud_run_demo/profiles/`
 
-- **Public demo** (portfolio): `dev_public_demo.tfvars`
-- **Production** (cost-min + secure): `prod_private_iam.tfvars`
+- **Public demo** (dev): `dev_public_demo.tfvars`
+- **Staging** (private IAM + simulation): `stage_private_iam.tfvars`
+- **Production** (private IAM): `prod_private_iam.tfvars`
+- **Staging IoT posture** (public ingest + private admin service): `stage_public_ingest_private_admin.tfvars`
+- **Production IoT posture** (public ingest + private admin service): `prod_public_ingest_private_admin.tfvars`
+- **Recommended staging IoT posture (least privilege)** (public ingest + private dashboard + private admin): `stage_public_ingest_private_dashboard_private_admin.tfvars`
+- **Recommended production IoT posture (least privilege)** (public ingest + private dashboard + private admin): `prod_public_ingest_private_dashboard_private_admin.tfvars`
 
 Convenience targets:
 
 ```bash
-make deploy-gcp-demo  # public demo (dev)
-make deploy-gcp-prod  # private IAM (prod)
+make deploy-gcp-demo       # public demo (dev)
+make deploy-gcp-stage      # private IAM (stage) + simulation
+make deploy-gcp-stage-iot     # public ingest + private admin service (stage)
+make deploy-gcp-stage-iot-lp  # public ingest + private dashboard + private admin (stage)
+make deploy-gcp-prod          # private IAM (prod)
+make deploy-gcp-prod-iot      # public ingest + private admin service (prod)
+make deploy-gcp-prod-iot-lp   # public ingest + private dashboard + private admin (prod)
 ```
+
+Route surface hardening (IoT posture): the provided IoT profiles set these app env vars on the **public ingest** service:
+
+- `ENABLE_UI=0`
+- `ENABLE_READ_ROUTES=0`
+- `ENABLE_INGEST_ROUTES=1`
+
+This keeps the public surface minimal while still allowing operators to use the private dashboard/admin services.
 
 > Under the hood these targets set `TFVARS=...` and call `deploy-gcp-safe`.
 
@@ -104,6 +132,10 @@ Or step-by-step:
 ```bash
 make deploy-gcp ENV=dev
 make url-gcp ENV=dev
+# If enable_admin_service=true, you can also fetch the admin URL:
+# make url-gcp-admin ENV=dev
+# If enable_dashboard_service=true, you can fetch the dashboard URL:
+# make url-gcp-dashboard ENV=dev
 make verify-gcp ENV=dev
 
 # Apply DB migrations (Cloud Run Job)
@@ -112,6 +144,20 @@ make migrate-gcp ENV=dev
 # Verify DB connectivity + migrations
 make verify-gcp-ready ENV=dev
 ```
+
+### Accessing a private IAM-only service from your browser
+
+If `allow_unauthenticated=false` (recommended for staging/production posture), the Cloud Run URL
+requires an authenticated identity token.
+
+For local browser access, the easiest workflow is the gcloud proxy:
+
+```bash
+gcloud run services proxy "edgewatch-telemetry-<env>" --project "$PROJECT_ID" --region "$REGION" --port 8082
+open http://localhost:8082
+```
+
+Replace `<env>` with `stage` or `prod`.
 
 ## 4) Run migrations (recommended)
 
@@ -138,6 +184,13 @@ By default, the Terraform demo stack creates:
 
 Schedule is configurable via Terraform variable `offline_job_schedule` (default: every **5** minutes).
 
+
+Retention is configurable via Terraform variables:
+
+- `enable_retention_job=true`
+- `retention_job_schedule` (default: daily 03:15 UTC)
+- `telemetry_retention_days` / `quarantine_retention_days`
+
 > If you need faster detection, set it to every minute ("*/1 * * * *").
 
 This pattern avoids duplicate work when Cloud Run scales to multiple instances.
@@ -154,13 +207,51 @@ Manual trigger:
 make analytics-export-gcp ENV=dev
 ```
 
+Manual trigger (retention):
+
+```bash
+make retention-gcp ENV=dev
+```
+
+## 6) Synthetic telemetry (dev + staging)
+
+For dev/staging environments, Terraform can provision a **Cloud Run Job** plus a **Cloud Scheduler** trigger
+that generates realistic-looking telemetry every minute so the UI stays "live" even without hardware.
+
+The job entrypoint is:
+
+```bash
+python -m api.app.jobs.simulate_telemetry
+```
+
+Enable it via Terraform variables:
+
+- `enable_simulation=true`
+- `simulation_schedule="*/1 * * * *"`
+- `simulation_points_per_device=1`
+
+The `dev_public_demo` and `stage_private_iam` profiles already enable these defaults.
+
+Manual trigger:
+
+```bash
+make simulate-gcp ENV=dev
+make simulate-gcp ENV=stage
+```
+
+Guardrails:
+
+- The simulator job is blocked from running in `APP_ENV=prod`.
+- Terraform enforces `enable_simulation=false` when `env=prod`.
+- Demo fleet bootstrap in staging requires explicit opt-in: `allow_demo_in_non_dev=true`.
+
 ## Production notes
 
 ### Authentication
 
 The Terraform stack defaults to **private IAM-only** invocations (`allow_unauthenticated=false`).
 
-For a portfolio demo posture, use the `dev_public_demo.tfvars` profile.
+For a public demo posture, use the `dev_public_demo.tfvars` profile.
 
 Guardrail: to make stage/prod public, you must also set `allow_public_in_non_dev=true`.
 

@@ -7,8 +7,10 @@
 - Added **Cloud Run Job** entrypoints:
   - `python -m api.app.jobs.offline_check`
   - `python -m api.app.jobs.migrate`
+  - `python -m api.app.jobs.retention`
 - Terraform demo stack (`infra/gcp/cloud_run_demo/`) now supports:
   - Cloud Run Job: `edgewatch-offline-check-<env>`
+  - Cloud Run Job: `edgewatch-retention-<env>`
   - Cloud Scheduler trigger (cron) -> Cloud Run Jobs API
   - Scheduler service account + minimal IAM bindings
 - `ENABLE_SCHEDULER` is treated as **dev-only**.
@@ -25,8 +27,9 @@
 - Terraform: `infra/gcp/cloud_run_demo/jobs.tf`
 - Make shortcuts:
   - `make offline-check-gcp ENV=<env>`
+  - `make retention-gcp ENV=<env>`
   - `make migrate-gcp ENV=<env>`
 
 ## Follow-ups (optional)
 
-- Add a second scheduler/job for other maintenance tasks (pruning old telemetry, materialized views, etc.)
+- Add additional maintenance jobs (materialized views, rollups, partition management, etc.)

@@ -15,7 +15,7 @@ Provide a **repeatable, secure, and low‑cost** pipeline for:
 ✅ Implemented in `.github/workflows/`:
 
 - `ci.yml` (repo gates)
-- `terraform-hygiene.yml` (fmt/validate/tflint/tfsec/conftest)
+- `terraform-hygiene.yml` (fmt/validate/tflint/tfsec/checkov/conftest)
 - `terraform-apply-gcp.yml` (manual apply)
 - `deploy-gcp.yml` (manual safe deploy)
 - `terraform-drift.yml` (scheduled drift detection)

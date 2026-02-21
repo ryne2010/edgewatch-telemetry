@@ -5,7 +5,7 @@
 ## Intent
 
 Add configurable alert routing rules so that alerts are actionable and do not spam operators.
-This is part of the "ops-ready" story described in the portfolio materials.
+This is part of the "ops-ready" story described in the project narrative.
 
 ## Non-goals
 

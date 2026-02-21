@@ -9,6 +9,26 @@ Files to review:
 
 ---
 
+## Structured logging
+
+The API supports two log formats:
+
+- `LOG_FORMAT=text` (default for local dev): human readable
+- `LOG_FORMAT=json` (recommended for Cloud Run): Cloud Logging compatible JSON
+
+When JSON logging is enabled, each log line includes:
+
+- `request_id` (from `X-Request-ID` / `X-Correlation-ID` or auto-generated)
+- `httpRequest` (request method/path/status/latency)
+- Cloud Trace correlation fields when available:
+  - `logging.googleapis.com/trace`
+  - `logging.googleapis.com/spanId`
+  - `logging.googleapis.com/trace_sampled`
+
+Cloud Run automatically passes the `X-Cloud-Trace-Context` header. If the runtime
+knows the project id (via `GCP_PROJECT_ID` / `GOOGLE_CLOUD_PROJECT`), traces and logs
+will link in the GCP console.
+
 ## Logging: service-scoped logs (client-safe pattern)
 
 Instead of giving stakeholders broad `roles/logging.viewer` access on the project, this repo:

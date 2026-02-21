@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from .config import settings
+from .config import Settings, settings as global_settings
 from .db import engine, db_session
 from .migrations import maybe_run_startup_migrations
 from .models import Device
@@ -26,43 +26,26 @@ from .routes.admin import router as admin_router
 from .routes.contracts import router as contracts_router
 from .routes.device_policy import router as device_policy_router
 from .routes.pubsub_worker import router as pubsub_worker_router
-from .observability import RequestContextMiddleware, configure_logging
+from .observability import RequestContextMiddleware, configure_logging, get_request_id, maybe_instrument_opentelemetry
 from .version import __version__
+from .demo_fleet import derive_nth as _derive_nth
 
 
 logger = logging.getLogger("edgewatch")
 
 
-def _split_suffix_3digits(s: str) -> tuple[str, int] | None:
-    m = re.match(r"^(.*?)(\d{3})$", s)
-    if not m:
-        return None
-    return m.group(1), int(m.group(2))
+def create_app(_settings: Settings | None = None) -> FastAPI:
+    # Allow tests (and advanced deployments) to inject a Settings object
+    # without reloading modules.
+    settings = _settings or global_settings
 
-
-def _derive_nth(value: str, n: int) -> str:
-    """Derive a stable demo fleet value for index `n` (1-based).
-
-    If the value ends with 3 digits (e.g. `demo-well-001`), replace that suffix.
-    Otherwise append `-NNN` for n > 1.
-    """
-    if n == 1:
-        return value
-    split = _split_suffix_3digits(value)
-    if split:
-        prefix, _ = split
-        return f"{prefix}{n:03d}"
-    return f"{value}-{n:03d}"
-
-
-def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        _setup_logging()
+        _setup_logging(settings)
         _init_db()
-        _bootstrap_demo_device()
+        _bootstrap_demo_device(settings)
         if settings.enable_scheduler:
-            _start_scheduler()
+            _start_scheduler(settings)
         else:
             logger.info("Scheduler disabled (ENABLE_SCHEDULER=false)")
         yield
@@ -89,12 +72,169 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Defense-in-depth: cap request body sizes for write endpoints.
+    # Cloud-native edge limits are still recommended for internet exposure.
+    if settings.max_request_body_bytes > 0:
+        from .middleware.limits import BodySizeLimitMiddleware
+
+        app.add_middleware(
+            BodySizeLimitMiddleware,
+            max_body_bytes=settings.max_request_body_bytes,
+            paths=["/api/v1/ingest", "/api/v1/internal/pubsub/push", "/api/v1/admin"],
+        )
+
     # Request IDs / structured HTTP logs
     app.add_middleware(RequestContextMiddleware)
 
+    # Optional OpenTelemetry instrumentation (ENABLE_OTEL=1).
+    # Best-effort; never blocks startup if deps are missing.
+    maybe_instrument_opentelemetry(
+        enabled=settings.enable_otel,
+        app=app,
+        service_name=os.getenv("OTEL_SERVICE_NAME") or "edgewatch-telemetry",
+        service_version=__version__,
+        environment=settings.app_env,
+    )
+
+    def _runtime_features() -> dict:
+        return {
+            "admin": {
+                "enabled": bool(settings.enable_admin_routes),
+                "auth_mode": str(settings.admin_auth_mode),
+            },
+            "docs": {"enabled": bool(settings.enable_docs)},
+            "otel": {"enabled": bool(settings.enable_otel)},
+            "ui": {"enabled": bool(settings.enable_ui)},
+            "routes": {
+                "ingest": bool(settings.enable_ingest_routes),
+                "read": bool(settings.enable_read_routes),
+            },
+            "ingest": {"pipeline_mode": str(settings.ingest_pipeline_mode)},
+            "analytics_export": {"enabled": bool(settings.analytics_export_enabled)},
+            "retention": {"enabled": bool(settings.retention_enabled)},
+            "limits": {
+                "max_request_body_bytes": int(settings.max_request_body_bytes),
+                "max_points_per_request": int(settings.max_points_per_request),
+                "rate_limit_enabled": bool(settings.rate_limit_enabled),
+                "ingest_rate_limit_points_per_min": int(settings.ingest_rate_limit_points_per_min),
+            },
+        }
+
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz():
+        return {"ok": True, "version": __version__, "env": settings.app_env, "features": _runtime_features()}
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException):
+        rid = get_request_id() or "unknown"
+
+        # SPA fallback: when the web UI is built into the container, serve index.html
+        # for client-side routes (deep links) instead of returning a JSON 404.
+        if settings.enable_ui and exc.status_code == 404:
+            req_path = request.url.path
+            is_api = req_path.startswith("/api") or req_path.startswith("/openapi") or req_path.startswith("/docs")
+            looks_like_asset = "." in (req_path.rsplit("/", 1)[-1])
+            if (not is_api) and (not looks_like_asset):
+                root_dir = Path(__file__).resolve().parents[2]
+                index_path = root_dir / "web" / "dist" / "index.html"
+                if index_path.exists():
+                    return FileResponse(index_path)
+
+        # Preserve explicit error envelopes when callers supply them.
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            payload = exc.detail
+        else:
+            payload = {"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}}
+
+        if isinstance(payload.get("error"), dict):
+            payload["error"].setdefault("request_id", rid)
+
+        headers = dict(exc.headers or {})
+        headers.setdefault("X-Request-ID", rid)
+        return JSONResponse(status_code=exc.status_code, content=payload, headers=headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+        rid = get_request_id() or "unknown"
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "Request validation failed",
+                    "details": exc.errors(),
+                    "request_id": rid,
+                }
+            },
+            headers={"X-Request-ID": rid},
+        )
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception):
+        # Provide a stable request_id for support/debugging without leaking details.
+        rid = get_request_id() or "unknown"
+        logger.exception(
+            "unhandled_exception",
+            extra={"fields": {"path": str(request.url.path), "method": request.method}},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "INTERNAL", "message": "Internal server error", "request_id": rid}},
+            headers={"X-Request-ID": rid},
+        )
+
+    # Baseline security headers (safe defaults).
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        resp = await call_next(request)
+
+        # NOTE: Our default CSP is strict (no inline scripts). FastAPI's Swagger/Redoc
+        # pages include small inline bootstrap scripts. We loosen CSP *only* on docs
+        # routes so that:
+        # - production UI/API stays hardened
+        # - dev docs remain usable
+        path = request.url.path or ""
+        is_docs_route = path.startswith("/docs") or path.startswith("/redoc")
+
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        resp.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        )
+
+        if is_docs_route:
+            # Swagger UI / Redoc rely on an inline bootstrap script and (depending on version)
+            # may use eval() internally.
+            resp.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+                "img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; form-action 'self'",
+            )
+        else:
+            resp.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+                "img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+                "connect-src 'self'; form-action 'self'",
+            )
+        resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        resp.headers.setdefault("X-DNS-Prefetch-Control", "off")
+        resp.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+
+        # HSTS only when served over HTTPS (Cloud Run). Local dev is usually HTTP.
+        proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower()
+        if proto == "https":
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+
+        return resp
+
     @app.get("/health", include_in_schema=False)
     def health_root():
-        return {"ok": True, "env": settings.app_env, "version": app.version}
+        return {"ok": True, "env": settings.app_env, "version": app.version, "features": _runtime_features()}
 
     @app.get("/readyz", include_in_schema=False)
     def readyz():
@@ -114,55 +254,71 @@ def create_app() -> FastAPI:
 
         return {"ready": True}
 
-    # Versioned health endpoint (kept for API clients)
+    # Versioned health endpoint (used by the UI)
     @app.get("/api/v1/health")
     def health_api():
-        return {"ok": True, "env": settings.app_env, "version": app.version}
+        return {"ok": True, "env": settings.app_env, "version": app.version, "features": _runtime_features()}
 
-    app.include_router(ingest_router)
-    app.include_router(devices_router)
-    app.include_router(alerts_router)
-    app.include_router(admin_router)
-    app.include_router(contracts_router)
-    app.include_router(device_policy_router)
-    app.include_router(pubsub_worker_router)
+    # --- Route surface ---
+    # Ingest surface (device agent / pubsub push)
+    if settings.enable_ingest_routes:
+        app.include_router(ingest_router)
+        app.include_router(device_policy_router)
+        app.include_router(pubsub_worker_router)
+    else:
+        logger.info("Ingest routes disabled (ENABLE_INGEST_ROUTES=false)")
+
+    # Read surface (dashboard)
+    if settings.enable_read_routes:
+        app.include_router(devices_router)
+        app.include_router(alerts_router)
+        app.include_router(contracts_router)
+    else:
+        logger.info("Read routes disabled (ENABLE_READ_ROUTES=false)")
+
+    # Admin surface (provisioning/debug)
+    if settings.enable_admin_routes:
+        app.include_router(admin_router)
 
     # --- Optional React UI ---
-    # The backend serves a built UI from /web/dist when present.
-    root_dir = Path(__file__).resolve().parents[2]
-    dist_dir = (root_dir / "web" / "dist").resolve()
-    assets_dir = dist_dir / "assets"
+    # The backend can serve a built UI from /web/dist when present.
+    if settings.enable_ui:
+        root_dir = Path(__file__).resolve().parents[2]
+        dist_dir = (root_dir / "web" / "dist").resolve()
+        assets_dir = dist_dir / "assets"
 
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
-    @app.get("/", include_in_schema=False)
-    def ui_index():
-        index = dist_dir / "index.html"
-        if index.exists():
-            return FileResponse(str(index))
-        return HTMLResponse(
-            "<h1>EdgeWatch</h1><p>Frontend not built. See README for pnpm build instructions.</p>"
-        )
+        @app.get("/", include_in_schema=False)
+        def ui_index():
+            index = dist_dir / "index.html"
+            if index.exists():
+                return FileResponse(str(index))
+            return HTMLResponse(
+                "<h1>EdgeWatch</h1><p>Frontend not built. See README for pnpm build instructions.</p>"
+            )
 
-    @app.get("/{path:path}", include_in_schema=False)
-    def ui_fallback(path: str):
-        if path.startswith(("api", "docs", "openapi", "redoc")):
+        @app.get("/{path:path}", include_in_schema=False)
+        def ui_fallback(path: str):
+            if path.startswith(("api", "docs", "openapi", "redoc")):
+                raise HTTPException(status_code=404)
+            candidate = dist_dir / path
+            if candidate.exists() and candidate.is_file():
+                return FileResponse(str(candidate))
+            index = dist_dir / "index.html"
+            if index.exists():
+                return FileResponse(str(index))
             raise HTTPException(status_code=404)
-        candidate = dist_dir / path
-        if candidate.exists() and candidate.is_file():
-            return FileResponse(str(candidate))
-        index = dist_dir / "index.html"
-        if index.exists():
-            return FileResponse(str(index))
-        raise HTTPException(status_code=404)
+    else:
+        logger.info("UI disabled (ENABLE_UI=false)")
 
     return app
 
 
-def _setup_logging() -> None:
+def _setup_logging(settings: Settings) -> None:
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
-    configure_logging(level=level, log_format=settings.log_format)
+    configure_logging(level=level, log_format=settings.log_format, gcp_project_id=settings.gcp_project_id)
     logger.info("Logging initialized (level=%s)", settings.log_level)
 
 
@@ -172,7 +328,7 @@ def _init_db() -> None:
     logger.info("DB init complete")
 
 
-def _bootstrap_demo_device() -> None:
+def _bootstrap_demo_device(settings: Settings) -> None:
     if not settings.bootstrap_demo_device:
         return
 
@@ -226,7 +382,7 @@ def _bootstrap_demo_device() -> None:
 _scheduler: BackgroundScheduler | None = None
 
 
-def _start_scheduler() -> None:
+def _start_scheduler(settings: Settings) -> None:
     global _scheduler
     scheduler = BackgroundScheduler(timezone="UTC")
 

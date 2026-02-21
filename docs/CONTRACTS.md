@@ -11,19 +11,27 @@ Base: `/api/v1`
 
 - `POST /ingest` — device telemetry ingestion (Bearer token)
 - `GET  /devices` — list devices + computed status
+- `GET  /devices/summary` — fleet-friendly list (status + latest selected vitals)
 - `GET  /devices/{device_id}` — device detail + computed status
 - `GET  /devices/{device_id}/telemetry` — raw telemetry points
 - `GET  /devices/{device_id}/timeseries` — bucketed time series
 - `GET  /alerts` — recent alerts
 - `GET  /device-policy` — edge policy/config for devices (Bearer token; ETag cached)
-- `POST /admin/devices` — register device (admin key)
-- `GET  /admin/ingestions` — ingestion lineage batches (admin key)
-- `GET  /admin/drift-events` — drift audit events (admin key)
-- `GET  /admin/notifications` — notification routing/delivery audit events (admin key)
-- `GET  /admin/exports` — analytics export batch audit (admin key)
+- `GET  /contracts/telemetry` — active telemetry contract (public)
+- `GET  /contracts/edge_policy` — active edge policy contract (public)
+- `POST /admin/devices` — register device (admin surface; optional)
+- `GET  /admin/ingestions` — ingestion lineage batches (admin surface; optional)
+- `GET  /admin/drift-events` — drift audit events (admin surface; optional)
+- `GET  /admin/notifications` — notification routing/delivery audit events (admin surface; optional)
+- `GET  /admin/exports` — analytics export batch audit (admin surface; optional)
+
+
+Admin surface controls:
+- `ENABLE_ADMIN_ROUTES=0` removes `/api/v1/admin/*` entirely
+- `ADMIN_AUTH_MODE=key|none` controls whether admin routes require `X-Admin-Key` or trust a perimeter
 
 **Compatibility:**
-- Endpoints under `/api/v1` are intended to be stable for the portfolio demo.
+- Endpoints under `/api/v1` are intended to be stable for the public demo.
 - Breaking changes should:
   - require an ADR
   - bump the API version path (ex: `/api/v2`) or provide backward compatible behavior
@@ -68,7 +76,7 @@ A request includes:
 
 2c) **Lineage completeness**
 - Every ingest call writes an `ingestion_batches` artifact with contract hash + drift summary.
-- Replay and pubsub paths are tagged for auditability (`source`, `pipeline_mode`).
+- Replay, pubsub, and simulation paths are tagged for auditability (`source`, `pipeline_mode`).
 
 3) **Token handling**
 - Plaintext device tokens are never stored.
@@ -110,13 +118,13 @@ A request includes:
 - **Telemetry contract**: `contracts/telemetry/v1.yaml`
 - **Edge policy contract**: `contracts/edge_policy/v1.yaml`
 - **Ingestion batches**: persisted in Postgres (`ingestion_batches`) and queryable via:
-  - `GET /api/v1/admin/ingestions` (admin key)
+  - `GET /api/v1/admin/ingestions` (admin surface; optional)
 - **Drift events**: persisted in Postgres (`drift_events`) and queryable via:
-  - `GET /api/v1/admin/drift-events` (admin key)
+  - `GET /api/v1/admin/drift-events` (admin surface; optional)
 - **Notification events**: persisted in Postgres (`notification_events`) and queryable via:
-  - `GET /api/v1/admin/notifications` (admin key)
+  - `GET /api/v1/admin/notifications` (admin surface; optional)
 - **Export batches**: persisted in Postgres (`export_batches`) and queryable via:
-  - `GET /api/v1/admin/exports` (admin key)
+  - `GET /api/v1/admin/exports` (admin surface; optional)
 
 ## Testing contract
 

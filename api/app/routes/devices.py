@@ -1,17 +1,38 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import desc
+import re
+
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import desc, func
 
 from ..db import db_session
 from ..models import Device, TelemetryPoint
-from ..schemas import DeviceOut, TimeseriesMultiPointOut, TimeseriesPointOut
+from ..schemas import DeviceOut, TimeseriesMultiPointOut, TimeseriesPointOut, DeviceSummaryOut
 from ..services.monitor import compute_status
 
 router = APIRouter(prefix="/api/v1", tags=["devices"])
+
+
+METRIC_KEY_RE = re.compile(r'^[A-Za-z0-9_]{1,64}$')
+
+
+DEFAULT_SUMMARY_METRICS: list[str] = [
+    # Fleet vitals shown in the UI (keep this list small + high signal).
+    "water_pressure_psi",
+    "oil_pressure_psi",
+    "temperature_c",
+    "humidity_pct",
+    "oil_level_pct",
+    "oil_life_pct",
+    "drip_oil_level_pct",
+    "battery_v",
+    "signal_rssi_dbm",
+    "flow_rate_gpm",
+    "pump_on",
+]
 
 
 # Normalize optional datetime query params to UTC.
@@ -49,6 +70,99 @@ def list_devices() -> List[DeviceOut]:
                     seconds_since_last_seen=seconds,
                 )
             )
+        return out
+
+
+@router.get("/devices/summary", response_model=List[DeviceSummaryOut])
+def list_device_summaries(
+    metrics: Optional[List[str]] = Query(default=None),
+    limit_metrics: int = Query(default=20, ge=1, le=100),
+) -> List[DeviceSummaryOut]:
+    """Return a fleet-friendly device list with the latest telemetry metrics.
+
+    Why this exists
+    - The UI wants to render "fleet vitals" without N+1 API calls.
+    - We join devices with each device's *latest* telemetry point.
+
+    Query params
+    - metrics: optional repeated query param (metrics=a&metrics=b). If omitted, uses DEFAULT_SUMMARY_METRICS.
+    - limit_metrics: safety valve for callers that pass an overly-large list.
+
+    Notes
+    - This endpoint is public (no secrets) and returns only *latest* metrics per device.
+    """
+
+    requested: List[str]
+    if metrics:
+        requested = [m.strip() for m in metrics if (m or '').strip()]
+    else:
+        requested = list(DEFAULT_SUMMARY_METRICS)
+
+    # Defensive limits (avoid returning huge JSON blobs per device).
+    if len(requested) > limit_metrics:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many metrics requested (max {limit_metrics})",
+        )
+
+    # De-dupe while preserving order.
+    seen: set[str] = set()
+    unique_metrics: List[str] = []
+    for m in requested:
+        if m in seen:
+            continue
+        if not METRIC_KEY_RE.fullmatch(m):
+            continue
+        seen.add(m)
+        unique_metrics.append(m)
+
+    now = datetime.now(timezone.utc)
+
+    with db_session() as session:
+        tp = TelemetryPoint
+        rn = func.row_number().over(partition_by=tp.device_id, order_by=(tp.ts.desc(), tp.created_at.desc())).label("rn")
+        ranked = (
+            session.query(
+                tp.device_id.label("device_id"),
+                tp.ts.label("ts"),
+                tp.message_id.label("message_id"),
+                tp.metrics.label("metrics"),
+                rn,
+            )
+        ).subquery()
+
+        latest = session.query(ranked).filter(ranked.c.rn == 1).subquery()
+
+        rows = (
+            session.query(Device, latest.c.ts, latest.c.message_id, latest.c.metrics)
+            .outerjoin(latest, latest.c.device_id == Device.device_id)
+            .order_by(Device.device_id)
+            .all()
+        )
+
+        out: List[DeviceSummaryOut] = []
+        for d, ts, message_id, metrics_obj in rows:
+            status, seconds = compute_status(d, now)
+
+            m: dict = metrics_obj if isinstance(metrics_obj, dict) else {}
+            summary_metrics = {k: m.get(k) for k in unique_metrics}
+
+            out.append(
+                DeviceSummaryOut(
+                    device_id=d.device_id,
+                    display_name=d.display_name,
+                    heartbeat_interval_s=d.heartbeat_interval_s,
+                    offline_after_s=d.offline_after_s,
+                    last_seen_at=d.last_seen_at,
+                    enabled=d.enabled,
+                    status=status,
+                    seconds_since_last_seen=seconds,
+                    latest_telemetry_at=ts,
+                    latest_message_id=message_id,
+                    metrics=summary_metrics,
+                )
+            )
+
         return out
 
 

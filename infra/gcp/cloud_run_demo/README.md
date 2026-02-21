@@ -14,6 +14,7 @@ What this demonstrates:
   - Cloud Run Job: DB migrations (`edgewatch-migrate-<env>`)
   - Cloud Run Job: offline checks (`edgewatch-offline-check-<env>`)
   - Cloud Run Job: analytics export (`edgewatch-analytics-export-<env>`, optional)
+  - Cloud Run Job: synthetic telemetry (`edgewatch-simulate-telemetry-<env>`, optional)
   - Cloud Scheduler cron trigger -> Cloud Run Jobs API
 - optional Pub/Sub ingest lane (`enable_pubsub_ingest=true`)
 
@@ -29,11 +30,26 @@ From the repo root:
 make doctor-gcp
 make admin-secret
 
-# Public demo posture (portfolio)
+# Public demo posture (dev)
 make deploy-gcp-demo
+
+# Or: staging posture (private IAM + simulation)
+make deploy-gcp-stage
+
+# Or: staging IoT posture (public ingest + private admin service)
+make deploy-gcp-stage-iot
+
+# Or: staging IoT posture (least privilege: public ingest + private dashboard + private admin)
+make deploy-gcp-stage-iot-lp
 
 # Or: production posture (private IAM-only)
 make deploy-gcp-prod
+
+# Or: production IoT posture (public ingest + private admin service)
+make deploy-gcp-prod-iot
+
+# Or: production IoT posture (least privilege: public ingest + private dashboard + private admin)
+make deploy-gcp-prod-iot-lp
 
 # Raw lane (explicit)
 # make deploy-gcp-safe ENV=dev
@@ -50,16 +66,43 @@ Terraform variables (passed implicitly via the Makefile defaults, or overridden 
 
 Service exposure + sizing:
 - `allow_unauthenticated` — default `false` (private IAM); set `true` for a public demo
+- `enable_ui` / `enable_read_routes` / `enable_ingest_routes` — app-level route surface toggles (recommended for IoT posture)
 - `allow_public_in_non_dev` — explicit acknowledgment required to make stage/prod public
 - `min_instances` / `max_instances` — default `0` / `1`
 - `service_cpu` / `service_memory` — default `1` / `512Mi`
 - `job_cpu` / `job_memory` — default `1` / `512Mi`
+
+Admin surface + auth posture:
+- `enable_admin_routes` — mount `/api/v1/admin/*` on the primary service (set `false` for a public ingest service)
+- `admin_auth_mode` — `key|none` (`none` trusts an infrastructure perimeter like Cloud Run IAM/IAP)
+- `enable_admin_service` — deploy a second, private admin Cloud Run service (recommended for production IoT)
+- `admin_service_name` — optional name override for the admin service
+- `admin_allow_unauthenticated` — default `false` (keep admin private)
+- `admin_service_admin_auth_mode` — `key|none` for the admin service (default `none`)
+
+Optional dashboard service (read-only UI):
+- `enable_dashboard_service` — deploy a second Cloud Run service that serves UI + read endpoints only
+- `dashboard_service_name` — optional name override
+- `dashboard_allow_unauthenticated` — default `false` (keep dashboard private in stage/prod)
+
+
 
 Scheduled jobs:
 - `enable_scheduled_jobs` — enable Cloud Scheduler -> Cloud Run Job offline checks
 - `offline_job_schedule` — cron schedule (default: every 5 minutes)
 - `scheduler_time_zone` — default `Etc/UTC`
 - `enable_migration_job` — create a migration job (manual execution)
+
+Retention / compaction (recommended):
+- `enable_retention_job` — provision a Cloud Run Job + Scheduler that prunes old telemetry
+- `retention_job_schedule` — cron schedule (default daily)
+- `telemetry_retention_days` / `quarantine_retention_days` — deletion horizon
+- `retention_batch_size` / `retention_max_batches` — safety guardrails
+
+Synthetic telemetry (dev/stage):
+- `enable_simulation` — provision a Cloud Run Job + Scheduler that generates synthetic telemetry
+- `simulation_schedule` — cron schedule (default: every minute)
+- `simulation_points_per_device` — burst size per run
 
 Cloud SQL:
 - `enable_cloud_sql` — provision managed Postgres and manage `DATABASE_URL` secret version
@@ -81,7 +124,8 @@ Optional analytics export:
 - `analytics_export_dataset` / `analytics_export_table` / `analytics_export_gcs_prefix`
 
 Demo bootstrap:
-- `bootstrap_demo_device` (guardrail: must be `false` for `env=stage|prod`)
+- `bootstrap_demo_device` (guardrail: must be `false` for `env=stage|prod` unless `allow_demo_in_non_dev=true`)
+- `allow_demo_in_non_dev` — explicit opt-in to allow demo fleet bootstrap in staging
 - `demo_fleet_size`
 - `demo_device_id`, `demo_device_name`, `demo_device_token`
 

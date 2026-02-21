@@ -4,7 +4,7 @@
 
 ## Intent
 
-Add an **optional** analytics lane that exports telemetry to BigQuery for reporting, dashboards, and portfolio-ready "data architect" depth.
+Add an **optional** analytics lane that exports telemetry to BigQuery for reporting, dashboards, and production-ready "data architect" depth.
 
 Key goals:
 - cost-aware defaults (partitioning, clustering, incremental loads)
