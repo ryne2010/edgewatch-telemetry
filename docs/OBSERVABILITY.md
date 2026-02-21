@@ -29,6 +29,35 @@ Cloud Run automatically passes the `X-Cloud-Trace-Context` header. If the runtim
 knows the project id (via `GCP_PROJECT_ID` / `GOOGLE_CLOUD_PROJECT`), traces and logs
 will link in the GCP console.
 
+## OpenTelemetry signals (optional)
+
+When `ENABLE_OTEL=1`, EdgeWatch emits OTEL traces + metrics:
+
+- HTTP server spans (FastAPI) and DB spans (SQLAlchemy)
+- request/DB correlation via `edgewatch.request_id`
+- core OTEL metrics:
+  - `edgewatch.http.server.requests`
+  - `edgewatch.http.server.duration`
+  - `edgewatch.ingest.points`
+  - `edgewatch.alert.transitions`
+  - `edgewatch.monitor.loop.duration`
+
+Where they land:
+
+- OTLP endpoint configured:
+  - exported to your collector/backend
+- no OTLP endpoint in `APP_ENV=dev`:
+  - exported to console for local debugging
+
+See `docs/OBSERVABILITY_OTEL.md` for env setup and signal details.
+
+### Incident triage flow
+
+1) Check request volume + latency by route (`edgewatch.http.server.*`) to scope impact.
+2) Check ingest rejected points (`edgewatch.ingest.points{outcome=\"rejected\"}`) for contract/pipeline breakage.
+3) Check monitor loop duration (`edgewatch.monitor.loop.duration`) for scheduler regression.
+4) Drill into traces and confirm whether DB spans dominate request latency.
+
 ## Logging: service-scoped logs (client-safe pattern)
 
 Instead of giving stakeholders broad `roles/logging.viewer` access on the project, this repo:

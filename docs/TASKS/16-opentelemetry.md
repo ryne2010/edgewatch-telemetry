@@ -1,12 +1,17 @@
 # Task 16 — OpenTelemetry (SQLAlchemy + metrics + ops docs)
 
-🟡 **Status: In progress / partial**
+✅ **Status: Implemented (2026-02-21)**
 
 ## What’s already implemented
 
-- Optional FastAPI tracing instrumentation behind `ENABLE_OTEL=1`.
-- OTLP export (if configured via standard `OTEL_*` env vars).
-- Console exporter fallback in dev.
+- Optional FastAPI + SQLAlchemy tracing instrumentation behind `ENABLE_OTEL=1`.
+- OTLP trace and metric export (if configured via standard `OTEL_*` env vars).
+- Console trace + metric exporter fallback in dev.
+- OTEL metrics for:
+  - request rate/latency per endpoint
+  - ingest points accepted/rejected
+  - alert opens/closes
+  - monitor loop duration
 
 Docs: `docs/OBSERVABILITY_OTEL.md`
 

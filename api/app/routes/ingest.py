@@ -11,6 +11,7 @@ from ..models import Device, IngestionBatch
 from ..schemas import IngestRequest, IngestResponse
 from ..security import require_device_auth
 from ..rate_limit import ingest_points_limiter
+from ..observability import record_ingest_points_metric
 from ..services.ingest_pipeline import (
     CandidatePoint,
     build_pubsub_batch_payload,
@@ -192,6 +193,12 @@ def ingest(
             )
 
     if reject_detail is not None:
+        record_ingest_points_metric(
+            accepted=0,
+            rejected=points_count,
+            source=source,
+            pipeline_mode=settings.ingest_pipeline_mode,
+        )
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=reject_detail)
 
     if publish_payload is not None:
@@ -206,6 +213,12 @@ def ingest(
                     duplicates=0,
                     processing_status="publish_failed",
                 )
+            record_ingest_points_metric(
+                accepted=0,
+                rejected=len(prepared.accepted_points) + len(prepared.quarantined_points),
+                source=source,
+                pipeline_mode=settings.ingest_pipeline_mode,
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -223,5 +236,12 @@ def ingest(
             duplicates=0,
             quarantined=len(prepared.quarantined_points),
         )
+
+    record_ingest_points_metric(
+        accepted=int(ingest_response.accepted),
+        rejected=len(prepared.quarantined_points),
+        source=source,
+        pipeline_mode=settings.ingest_pipeline_mode,
+    )
 
     return ingest_response

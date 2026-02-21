@@ -26,6 +26,18 @@ span_id_ctx: ContextVar[Optional[str]] = ContextVar("span_id", default=None)
 trace_sampled_ctx: ContextVar[Optional[bool]] = ContextVar("trace_sampled", default=None)
 
 
+@dataclass
+class _OtelRuntime:
+    http_requests_total: Any | None = None
+    http_request_duration_ms: Any | None = None
+    ingest_points_total: Any | None = None
+    alert_transitions_total: Any | None = None
+    monitor_loop_duration_ms: Any | None = None
+
+
+_otel_runtime: _OtelRuntime | None = None
+
+
 def _utc_iso(ts: float | None = None) -> str:
     dt = datetime.fromtimestamp(ts or time.time(), tz=timezone.utc)
     return dt.isoformat()
@@ -137,6 +149,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                         "fields": {"duration_ms": duration_ms},
                     },
                 )
+                record_http_request_metric(
+                    method=request.method,
+                    route=_route_template(request),
+                    status_code=500,
+                    duration_ms=duration_ms,
+                )
                 raise
 
             response.headers["X-Request-ID"] = rid
@@ -150,6 +168,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     ),
                     "fields": {"duration_ms": duration_ms},
                 },
+            )
+            record_http_request_metric(
+                method=request.method,
+                route=_route_template(request),
+                status_code=response.status_code,
+                duration_ms=duration_ms,
             )
             return response
         finally:
@@ -178,6 +202,79 @@ def _http_request_payload(request: Request, *, status: int, duration_ms: int) ->
     if referer:
         payload["referer"] = referer
     return payload
+
+
+def _route_template(request: Request) -> str:
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if isinstance(path, str) and path:
+        return path
+    return request.url.path
+
+
+def record_http_request_metric(*, method: str, route: str, status_code: int, duration_ms: float) -> None:
+    runtime = _otel_runtime
+    if runtime is None:
+        return
+
+    attrs = {
+        "http.method": method.upper(),
+        "http.route": route or "/",
+        "http.status_code": int(status_code),
+    }
+    if runtime.http_requests_total is not None:
+        runtime.http_requests_total.add(1, attributes=attrs)
+    if runtime.http_request_duration_ms is not None:
+        runtime.http_request_duration_ms.record(float(duration_ms), attributes=attrs)
+
+
+def record_ingest_points_metric(
+    *,
+    accepted: int,
+    rejected: int,
+    source: str,
+    pipeline_mode: str,
+) -> None:
+    runtime = _otel_runtime
+    if runtime is None or runtime.ingest_points_total is None:
+        return
+
+    attrs_base = {
+        "source": source or "device",
+        "pipeline_mode": pipeline_mode or "direct",
+    }
+    if accepted > 0:
+        runtime.ingest_points_total.add(int(accepted), attributes={**attrs_base, "outcome": "accepted"})
+    if rejected > 0:
+        runtime.ingest_points_total.add(int(rejected), attributes={**attrs_base, "outcome": "rejected"})
+
+
+def record_alert_transition_metric(*, state: str, alert_type: str, severity: str) -> None:
+    runtime = _otel_runtime
+    if runtime is None or runtime.alert_transitions_total is None:
+        return
+
+    runtime.alert_transitions_total.add(
+        1,
+        attributes={
+            "state": state,
+            "alert_type": alert_type,
+            "severity": severity or "unknown",
+        },
+    )
+
+
+def record_monitor_loop_metric(*, duration_ms: float, success: bool) -> None:
+    runtime = _otel_runtime
+    if runtime is None or runtime.monitor_loop_duration_ms is None:
+        return
+
+    runtime.monitor_loop_duration_ms.record(
+        float(duration_ms),
+        attributes={
+            "success": bool(success),
+        },
+    )
 
 
 # -----------------------------
@@ -312,7 +409,13 @@ def configure_logging(*, level: int, log_format: str, gcp_project_id: str | None
 
 
 def maybe_instrument_opentelemetry(
-    *, enabled: bool, app, service_name: str, service_version: str, environment: str
+    *,
+    enabled: bool,
+    app,
+    sqlalchemy_engine,
+    service_name: str,
+    service_version: str,
+    environment: str,
 ) -> None:
     """Optionally instrument FastAPI with OpenTelemetry.
 
@@ -326,17 +429,24 @@ def maybe_instrument_opentelemetry(
     - In dev, when no exporter endpoint is configured, we fall back to ConsoleSpanExporter.
     """
 
+    global _otel_runtime
+
     if not enabled:
+        _otel_runtime = None
         return
 
     log = logging.getLogger("edgewatch.otel")
 
     try:
-        from opentelemetry import trace
+        from opentelemetry import metrics, trace
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from sqlalchemy import event as sqlalchemy_event
     except Exception:  # pragma: no cover
         log.warning(
             "OpenTelemetry is enabled (ENABLE_OTEL=1) but dependencies are not installed. "
@@ -358,14 +468,19 @@ def maybe_instrument_opentelemetry(
     trace.set_tracer_provider(provider)
 
     # Prefer OTLP exporter when configured; fall back to console exporter in dev.
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-    if endpoint:
+    traces_endpoint = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or os.getenv(
+        "OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+    if traces_endpoint:
         try:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
             exporter = OTLPSpanExporter()
             provider.add_span_processor(BatchSpanProcessor(exporter))
-            log.info("OpenTelemetry OTLP exporter enabled", extra={"fields": {"endpoint": endpoint}})
+            log.info(
+                "OpenTelemetry trace exporter enabled",
+                extra={"fields": {"endpoint": traces_endpoint}},
+            )
         except Exception:  # pragma: no cover
             log.exception("Failed to configure OTLP exporter; traces will be dropped")
     else:
@@ -383,7 +498,118 @@ def maybe_instrument_opentelemetry(
                 extra={"fields": {"hint": "Set OTEL_EXPORTER_OTLP_ENDPOINT"}},
             )
 
+    # Configure metrics provider/exporter.
+    metric_readers: list[Any] = []
+    metrics_endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") or os.getenv(
+        "OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+    if metrics_endpoint:
+        try:
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+            metric_readers.append(PeriodicExportingMetricReader(OTLPMetricExporter()))
+            log.info(
+                "OpenTelemetry metric exporter enabled",
+                extra={"fields": {"endpoint": metrics_endpoint}},
+            )
+        except Exception:  # pragma: no cover
+            log.exception("Failed to configure OTLP metric exporter; metrics will be dropped")
+    elif environment == "dev":
+        try:
+            from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
+
+            metric_readers.append(PeriodicExportingMetricReader(ConsoleMetricExporter()))
+            log.info("OpenTelemetry console metric exporter enabled (dev)")
+        except Exception:  # pragma: no cover
+            log.exception("Failed to configure console metric exporter; metrics will be dropped")
+    else:
+        log.warning(
+            "ENABLE_OTEL=1 but no OTEL metric exporter endpoint is configured; metrics will be dropped",
+            extra={
+                "fields": {"hint": "Set OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"}
+            },
+        )
+
     try:
-        FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+        metric_provider = MeterProvider(resource=resource, metric_readers=metric_readers)
+        metrics.set_meter_provider(metric_provider)
+    except Exception:  # pragma: no cover
+        log.exception("Failed to initialize OpenTelemetry metrics provider")
+        metric_provider = None
+
+    meter = metrics.get_meter(service_name, service_version) if metric_provider is not None else None
+    if meter is not None:
+        _otel_runtime = _OtelRuntime(
+            http_requests_total=meter.create_counter(
+                "edgewatch.http.server.requests",
+                unit="{request}",
+                description="HTTP request count by route/method/status.",
+            ),
+            http_request_duration_ms=meter.create_histogram(
+                "edgewatch.http.server.duration",
+                unit="ms",
+                description="HTTP request latency by route/method/status.",
+            ),
+            ingest_points_total=meter.create_counter(
+                "edgewatch.ingest.points",
+                unit="{point}",
+                description="Ingested points by accepted/rejected outcome.",
+            ),
+            alert_transitions_total=meter.create_counter(
+                "edgewatch.alert.transitions",
+                unit="{event}",
+                description="Alert lifecycle transitions (open/close).",
+            ),
+            monitor_loop_duration_ms=meter.create_histogram(
+                "edgewatch.monitor.loop.duration",
+                unit="ms",
+                description="Offline monitor job duration.",
+            ),
+        )
+    else:
+        _otel_runtime = None
+
+    # SQLAlchemy spans (query timing + db metadata).
+    try:
+        SQLAlchemyInstrumentor().instrument(engine=sqlalchemy_engine, tracer_provider=provider)
+    except Exception:  # pragma: no cover
+        log.exception("Failed to instrument SQLAlchemy with OpenTelemetry")
+    else:
+        marker = "_edgewatch_otel_sql_request_id_hook"
+        db_name = str(getattr(sqlalchemy_engine.url, "database", "") or "")
+        if not sqlalchemy_engine.info.get(marker):
+            sqlalchemy_engine.info[marker] = True
+
+            @sqlalchemy_event.listens_for(sqlalchemy_engine, "before_cursor_execute")
+            def _edgewatch_sql_before_cursor_execute(
+                conn,
+                cursor,
+                statement,
+                parameters,
+                context,
+                executemany,
+            ):  # pragma: no cover - callback execution is integration-driven
+                span = trace.get_current_span()
+                if span is None or not span.is_recording():
+                    return
+                rid = get_request_id()
+                if rid:
+                    span.set_attribute("edgewatch.request_id", rid)
+                if db_name:
+                    span.set_attribute("db.name", db_name)
+
+    def _request_hook(span, scope) -> None:
+        if span is None or not span.is_recording():
+            return
+        rid = get_request_id()
+        if rid:
+            span.set_attribute("edgewatch.request_id", rid)
+
+    try:
+        FastAPIInstrumentor.instrument_app(
+            app,
+            tracer_provider=provider,
+            server_request_hook=_request_hook,
+        )
     except Exception:  # pragma: no cover
         log.exception("Failed to instrument FastAPI with OpenTelemetry")
