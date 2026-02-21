@@ -91,6 +91,28 @@ python -m agent.tools.oil_life reset --state ./agent/state/oil_life_state.json
 python -m agent.tools.oil_life show --state ./agent/state/oil_life_state.json
 ```
 
+## Camera snapshots + local ring buffer (MVP)
+
+Enable scheduled photo snapshots with a local disk ring buffer:
+
+```bash
+MEDIA_ENABLED=true \
+CAMERA_IDS=cam1,cam2 \
+MEDIA_SNAPSHOT_INTERVAL_S=300 \
+uv run python agent/edgewatch_agent.py
+```
+
+Notes:
+- capture backend: `libcamera-still` (Raspberry Pi camera stack)
+- capture is serialized with a lock (one active camera at a time)
+- assets + sidecar metadata are stored under `MEDIA_RING_DIR` and oldest assets are evicted when `MEDIA_RING_MAX_BYTES` is exceeded
+
+Manual capture helper:
+
+```bash
+python -m agent.tools.camera cam1 --device-id demo-well-001 --reason manual
+```
+
 ## Simulator
 
 From the repo root:

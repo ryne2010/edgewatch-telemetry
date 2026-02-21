@@ -415,3 +415,73 @@
 
 - [ ] Consider emitting a local audit event when reset is invoked (for optional future upload).
 - [ ] Evaluate whether oil-life runtime should be checkpointed less frequently for flash-wear-sensitive deployments.
+
+## Task 12a — Agent Camera Capture + Ring Buffer (2026-02-21)
+
+### What changed
+
+- Added the new media subsystem under:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/media/storage.py`
+    - filesystem ring buffer for captured assets
+    - per-asset JSON sidecar metadata (`device_id`, `camera_id`, `captured_at`, `reason`, `sha256`, `bytes`, `mime_type`)
+    - max-byte enforcement with FIFO eviction
+    - atomic writes (`temp + fsync + rename`) for both media bytes and sidecars
+    - orphan/temp-file cleanup during scans
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/media/capture.py`
+    - capture backend interface
+    - `libcamera-still` backend implementation for photo capture MVP
+    - in-process capture lock for one-camera-at-a-time serialization
+    - camera id parser (`cam1..camN`)
+    - service that captures + persists into the ring buffer
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/media/runtime.py`
+    - env-driven media config loader (`MEDIA_ENABLED`, `CAMERA_IDS`, intervals, ring settings)
+    - scheduled snapshot runtime loop (round-robin across configured camera IDs)
+    - graceful unsupported-platform handling when `libcamera-still` is missing
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/media/__init__.py`
+- Wired media runtime into the agent loop:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - loads media runtime when enabled
+  - executes scheduled captures in-loop
+  - logs capture success/failure without crashing telemetry path
+- Added a manual capture CLI:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/tools/camera.py`
+- Updated operator/developer docs and env examples:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CAMERA.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/12a-agent-camera-capture-ring-buffer.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+- Added deterministic tests for media behavior:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_media_ring_buffer.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_media_runtime.py`
+
+### Why it changed
+
+- Completes Task 12a by shipping the device-side camera lane foundation:
+  - snapshot capture
+  - serialized camera access
+  - durable local media ring buffer with bounded disk usage
+  - stable module interfaces for upcoming 12b/12c integration
+
+### How it was validated
+
+- Required full-gate run:
+  - `make harness` (fails on pre-existing repo-wide issues unrelated to Task 12a, including repo hygiene `.DS_Store` and existing API lint/type/test failures)
+- Task-specific validation:
+  - `ruff format agent/edgewatch_agent.py agent/media agent/tools/camera.py tests/test_media_ring_buffer.py tests/test_media_runtime.py` (pass)
+  - `ruff check agent/edgewatch_agent.py agent/media agent/tools/camera.py tests/test_media_ring_buffer.py tests/test_media_runtime.py` (pass)
+  - `pyright agent/edgewatch_agent.py agent/media agent/tools/camera.py tests/test_media_ring_buffer.py tests/test_media_runtime.py` (pass)
+  - `DATABASE_URL=sqlite+pysqlite:///:memory: pytest -q tests/test_media_ring_buffer.py tests/test_media_runtime.py` (pass)
+- Spec validation command status:
+  - `make fmt` (fails due existing repo-wide pre-commit/hygiene issues outside Task 12a scope; unrelated file edits were reverted before commit)
+
+### Risks / rollout notes
+
+- Media capture currently depends on `libcamera-still`; when missing, media setup is disabled with a clear log message while telemetry continues.
+- Scheduled capture currently uses `reason=scheduled` only in-agent; alert-transition/manual trigger plumbing is intentionally deferred to later tasks.
+- Ring buffer eviction is byte-bound and FIFO by `captured_at`; operators should size `MEDIA_RING_MAX_BYTES` to keep the desired local retention window.
+
+### Follow-ups / tech debt
+
+- [ ] Task 12b: wire this media lane into API metadata + upload flow.
+- [ ] Add integration tests that exercise end-to-end capture on Raspberry Pi hardware in CI-adjacent smoke lanes.

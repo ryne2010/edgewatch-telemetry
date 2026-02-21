@@ -21,6 +21,7 @@ from device_policy import (
     load_cached_policy,
     save_cached_policy,
 )
+from media import MediaConfigError, build_media_runtime_from_env
 from sensors import SensorConfigError, build_sensor_backend, load_sensor_config_from_env
 
 
@@ -465,9 +466,24 @@ def main() -> None:
     if cached:
         next_policy_refresh_at = cached.fetched_at + float(policy.cache_max_age_s)
 
+    media_runtime = None
+    try:
+        media_runtime = build_media_runtime_from_env(device_id=device_id)
+    except MediaConfigError as exc:
+        print(f"[edgewatch-agent] media disabled: {exc}")
+    except Exception as exc:
+        print(f"[edgewatch-agent] media disabled due to setup error: {exc!r}")
+
     print(
-        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s"
-        % (device_id, api_url, buffer_path, policy.policy_version, sensor_config.backend)
+        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s"
+        % (
+            device_id,
+            api_url,
+            buffer_path,
+            policy.policy_version,
+            sensor_config.backend,
+            "enabled" if media_runtime is not None else "disabled",
+        )
     )
 
     state = AgentState()
@@ -618,6 +634,22 @@ def main() -> None:
 
             state.last_state = current_state
             state.last_alerts = set(current_alerts)
+
+        if media_runtime is not None:
+            try:
+                media_asset = media_runtime.maybe_capture_scheduled(now_s=time.time())
+                if media_asset is not None:
+                    print(
+                        "[edgewatch-agent] media captured camera=%s reason=%s bytes=%s path=%s"
+                        % (
+                            media_asset.metadata.camera_id,
+                            media_asset.metadata.reason,
+                            media_asset.metadata.bytes,
+                            media_asset.asset_path,
+                        )
+                    )
+            except Exception as exc:
+                print(f"[edgewatch-agent] media capture failed: {exc!r}")
 
         _sleep(sample_s)
 

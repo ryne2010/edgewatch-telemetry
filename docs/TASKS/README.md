@@ -58,6 +58,7 @@ python scripts/harness.py lint --only node
 - `11b-rpi-i2c-temp-humidity.md`
 - `11c-rpi-adc-pressures-levels.md`
 - `11d-derived-oil-life-reset.md`
+- `12a-agent-camera-capture-ring-buffer.md`
 
 ### In progress / partial
 
@@ -71,7 +72,6 @@ python scripts/harness.py lint --only node
 - `11-edge-sensor-suite.md` (epic)
 
 - `12-camera-capture-upload.md` (epic)
-  - `12a-agent-camera-capture-ring-buffer.md`
   - `12b-api-media-metadata-storage.md`
   - `12c-web-media-gallery.md`
 
