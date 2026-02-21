@@ -1215,3 +1215,52 @@
 ### Follow-ups / tech debt
 
 - [ ] Add a Postgres migration integration test lane that asserts partitioned table plans directly (for example, `EXPLAIN` partition pruning checks in CI).
+
+## Task 19 — Agent Buffer Hardening (2026-02-21)
+
+### What changed
+
+- Hardened SQLite buffering in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/buffer.py`:
+  - configurable WAL pragmas (`journal_mode`, `synchronous`, `temp_store`)
+  - DB byte quota enforcement (`max_db_bytes`) with oldest-first eviction
+  - disk-full graceful handling (evict + retry, or drop with audit log)
+  - corruption recovery (move malformed DB/WAL/SHM aside, recreate schema)
+  - buffer metrics API:
+    - `buffer_db_bytes`
+    - `buffer_queue_depth`
+    - `buffer_evictions_total`
+- Wired env-driven buffer config + audit metrics into runtime loops:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/simulator.py`
+- Added operator-facing config + runbook docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/OFFLINE_CHECKS.md`
+- Added deterministic tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_buffer.py`
+- Updated task queue status docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/19-agent-buffer-hardening.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CODEX_HANDOFF.md`
+
+### Why it changed
+
+- Task 19 requires field-resilient buffering behavior under power loss, intermittent links, and constrained disk on edge nodes.
+- The hardened buffer preserves local-first operation while making data loss events explicit and observable for operators.
+
+### How it was validated
+
+- `make fmt` ✅
+- `make lint` ✅
+- `make typecheck` ✅
+- `make test` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- If `BUFFER_MAX_DB_BYTES` is configured below SQLite’s practical file floor for a device, the buffer now clamps the quota upward and logs a warning to avoid permanent eviction thrash.
+- Evictions are intentional oldest-first data loss events; operators should monitor `buffer_evictions_total` and adjust disk quotas per node profile.
+
+### Follow-ups / tech debt
+
+- [ ] Consider exporting buffer metrics as dedicated local health endpoints in addition to telemetry payload embedding.

@@ -63,9 +63,6 @@ If you want the fastest path to “real field node”:
 
 If you want the fastest path to “enterprise operator posture”:
 
-- Edge buffer hardening
-  - `docs/TASKS/19-agent-buffer-hardening.md`
-
 - Ingest perimeter hardening
   - `docs/TASKS/20-edge-protection-cloud-armor.md`
 

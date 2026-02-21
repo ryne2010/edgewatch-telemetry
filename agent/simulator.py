@@ -8,7 +8,6 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from buffer import SqliteBuffer
 from device_policy import (
     CachedPolicy,
     DevicePolicy,
@@ -20,6 +19,7 @@ from edgewatch_agent import (
     AgentState,
     _changed_keys,
     _compute_state,
+    build_buffer_from_env,
     _flush_buffer,
     _mark_point_recorded,
     _maybe_prune,
@@ -60,7 +60,7 @@ def main() -> None:
     token = os.getenv("EDGEWATCH_DEVICE_TOKEN", "dev-device-token-001")
 
     buffer_path = os.getenv("BUFFER_DB_PATH", "./edgewatch_buffer.sqlite")
-    buf = SqliteBuffer(buffer_path)
+    buf = build_buffer_from_env(buffer_path)
 
     session = requests.Session()
 
@@ -152,6 +152,7 @@ def main() -> None:
                 dict(payload_metrics) if send_reason in {"delta", "heartbeat"} else dict(metrics)
             )
 
+            payload_metrics.update(buf.metrics())
             payload_metrics["device_state"] = current_state
             point = make_point(payload_metrics)
 

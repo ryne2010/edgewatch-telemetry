@@ -69,6 +69,7 @@ python scripts/harness.py lint --only node
 - `16-opentelemetry.md`
 - `17-telemetry-partitioning-rollups.md` (Postgres scale path)
 - `18-iap-identity-perimeter.md`
+- `19-agent-buffer-hardening.md` (WAL mode, disk quota, corruption recovery)
 
 ### In progress / partial
 
@@ -84,5 +85,4 @@ python scripts/harness.py lint --only node
 
 #### Production upgrades
 
-- `19-agent-buffer-hardening.md` (WAL mode, disk quota, corruption recovery)
 - `20-edge-protection-cloud-armor.md` (Cloud Armor / API Gateway posture for public ingest)

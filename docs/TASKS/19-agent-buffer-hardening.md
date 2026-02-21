@@ -1,6 +1,6 @@
 # Task 19 — Agent buffer hardening (WAL mode, disk quota, corruption recovery)
 
-🟡 **Status: Planned**
+✅ **Status: Implemented**
 
 ## Objective
 
