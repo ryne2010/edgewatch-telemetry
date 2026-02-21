@@ -1,6 +1,6 @@
 # Task 12c — Web UI: device media gallery
 
-🟡 **Status: Planned**
+🟢 **Status: Implemented (2026-02-21)**
 
 ## Objective
 

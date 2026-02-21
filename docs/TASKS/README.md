@@ -60,6 +60,7 @@ python scripts/harness.py lint --only node
 - `11d-derived-oil-life-reset.md`
 - `12a-agent-camera-capture-ring-buffer.md`
 - `12b-api-media-metadata-storage.md`
+- `12c-web-media-gallery.md`
 
 ### In progress / partial
 
@@ -73,7 +74,6 @@ python scripts/harness.py lint --only node
 - `11-edge-sensor-suite.md` (epic)
 
 - `12-camera-capture-upload.md` (epic)
-  - `12c-web-media-gallery.md`
 
 - `13-cellular-connectivity.md` (epic)
   - `13a-cellular-runbook.md`

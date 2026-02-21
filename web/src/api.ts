@@ -169,6 +169,23 @@ export type ExportBatchOut = {
   error_message: string | null
 }
 
+export type MediaObjectOut = {
+  id: string
+  device_id: string
+  camera_id: string
+  message_id: string
+  captured_at: string
+  reason: string
+  sha256: string
+  bytes: number
+  mime_type: string
+  object_path: string
+  gcs_uri: string | null
+  local_path: string | null
+  uploaded_at: string | null
+  created_at: string
+}
+
 export type TelemetryPoint = {
   message_id: string
   device_id: string
@@ -221,9 +238,34 @@ async function sendJSON<T>(
   return res.json() as Promise<T>
 }
 
+async function getBlob(
+  path: string,
+  opts?: { headers?: Record<string, string>; cache?: RequestCache },
+): Promise<Blob> {
+  const headers: Record<string, string> = {}
+  if (opts?.headers) {
+    for (const [k, v] of Object.entries(opts.headers)) headers[k] = v
+  }
+  const res = await fetch(path, {
+    headers,
+    cache: opts?.cache ?? 'no-store',
+  })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '')
+    throw new Error(`${res.status} ${res.statusText}${body ? ` - ${body}` : ''}`)
+  }
+  return res.blob()
+}
+
 function adminHeaders(adminKey: string | null | undefined): Record<string, string> {
   const k = (adminKey ?? '').trim()
   return k ? { 'X-Admin-Key': k } : {}
+}
+
+function bearerHeaders(token: string | null | undefined): Record<string, string> {
+  const t = (token ?? '').trim()
+  return t ? { Authorization: `Bearer ${t}` } : {}
 }
 
 export const api = {
@@ -324,6 +366,22 @@ export const api = {
     getJSON<TelemetryPoint[]>(
       `/api/v1/devices/${encodeURIComponent(device_id)}/telemetry?limit=1`,
     ).then((rows) => rows[0] ?? null),
+  media: {
+    list: (deviceId: string, opts: { token: string; limit?: number }) => {
+      const params = new URLSearchParams()
+      params.set('limit', String(opts.limit ?? 200))
+      return getJSON<MediaObjectOut[]>(
+        `/api/v1/devices/${encodeURIComponent(deviceId)}/media?${params.toString()}`,
+        { headers: bearerHeaders(opts.token) },
+      )
+    },
+    downloadPath: (mediaId: string) => `/api/v1/media/${encodeURIComponent(mediaId)}/download`,
+    downloadBlob: (mediaId: string, token: string) =>
+      getBlob(`/api/v1/media/${encodeURIComponent(mediaId)}/download`, {
+        headers: bearerHeaders(token),
+        cache: 'no-store',
+      }),
+  },
 
   admin: {
     devices: (adminKey: string) => getJSON<DeviceOut[]>('/api/v1/admin/devices', { headers: adminHeaders(adminKey) }),
