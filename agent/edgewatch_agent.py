@@ -62,6 +62,60 @@ def _parse_retry_after_seconds(headers: Mapping[str, Any]) -> float | None:
         return None
 
 
+def _parse_positive_int_env(name: str, *, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        print(f"[edgewatch-agent] invalid {name}={raw!r}; using {default}")
+        return default
+    if value <= 0:
+        print(f"[edgewatch-agent] invalid {name}={raw!r}; using {default}")
+        return default
+    return value
+
+
+def _parse_optional_nonnegative_int_env(name: str) -> int | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        print(f"[edgewatch-agent] invalid {name}={raw!r}; using unbounded")
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _parse_bool_env(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    print(f"[edgewatch-agent] invalid {name}={raw!r}; using {default}")
+    return default
+
+
+def build_buffer_from_env(path: str) -> SqliteBuffer:
+    return SqliteBuffer(
+        path,
+        max_db_bytes=_parse_optional_nonnegative_int_env("BUFFER_MAX_DB_BYTES"),
+        journal_mode=os.getenv("BUFFER_SQLITE_JOURNAL_MODE", "WAL"),
+        synchronous=os.getenv("BUFFER_SQLITE_SYNCHRONOUS", "NORMAL"),
+        temp_store=os.getenv("BUFFER_SQLITE_TEMP_STORE", "MEMORY"),
+        eviction_batch_size=_parse_positive_int_env("BUFFER_EVICTION_BATCH_SIZE", default=100),
+        recover_corruption=_parse_bool_env("BUFFER_RECOVER_CORRUPTION", default=True),
+    )
+
+
 def post_points(
     session: requests.Session,
     api_url: str,
@@ -477,7 +531,7 @@ def main() -> None:
     token = os.getenv("EDGEWATCH_DEVICE_TOKEN", "dev-device-token-001")
 
     buffer_path = os.getenv("BUFFER_DB_PATH", "./edgewatch_buffer.sqlite")
-    buf = SqliteBuffer(buffer_path)
+    buf = build_buffer_from_env(buffer_path)
 
     try:
         sensor_config = load_sensor_config_from_env()
@@ -631,6 +685,7 @@ def main() -> None:
                 dict(payload_metrics) if send_reason in {"delta", "heartbeat"} else dict(metrics)
             )
 
+            payload_metrics.update(buf.metrics())
             payload_metrics["device_state"] = current_state
             payload_metrics.update(cost_cap_state.audit_metrics(policy.cost_caps))
 

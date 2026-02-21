@@ -16,6 +16,20 @@ The agent is designed to be realistic for constrained field devices:
 - ETag-cached policy/config so devices don't re-download settings
 - dead-letter handling so a single bad point doesn't block offline flush
 
+## Buffer hardening (Task 19)
+
+The SQLite buffer is configured for field resilience:
+
+- WAL mode + tuned pragmas (`journal_mode`, `synchronous`, `temp_store`)
+- optional DB quota (`BUFFER_MAX_DB_BYTES`) with oldest-first eviction
+- best-effort corruption recovery (malformed DB files are moved aside and recreated)
+- audit metrics emitted in telemetry:
+  - `buffer_db_bytes`
+  - `buffer_queue_depth`
+  - `buffer_evictions_total`
+
+Relevant env vars are documented in `agent/.env.example`.
+
 ## Setup
 
 ```bash

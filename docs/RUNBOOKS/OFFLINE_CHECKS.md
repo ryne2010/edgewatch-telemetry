@@ -63,3 +63,29 @@ Typical approach:
 - If alerts flap frequently:
   - increase offline threshold
   - verify agent buffering is working (store-and-forward)
+
+## Agent buffer diagnostics (Task 19)
+
+The edge agent now emits buffer audit metrics in telemetry:
+
+- `buffer_db_bytes`
+- `buffer_queue_depth`
+- `buffer_evictions_total`
+
+Quick local checks on a device:
+
+```bash
+# Inspect queue depth + bytes directly from the buffer DB
+uv run --locked python - <<'PY'
+from agent.buffer import SqliteBuffer
+buf = SqliteBuffer("./edgewatch_buffer.sqlite")
+print(buf.metrics())
+PY
+
+# Check for corruption-recovery artifacts
+ls -1 ./edgewatch_buffer.sqlite.corrupt-* 2>/dev/null || echo "no corruption backups"
+```
+
+If `buffer_evictions_total` is increasing, the device is dropping oldest buffered
+points due quota/disk pressure. Increase `BUFFER_MAX_DB_BYTES` if retention needs
+to be longer on that node.
