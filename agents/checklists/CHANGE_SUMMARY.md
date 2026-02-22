@@ -1617,3 +1617,36 @@
 ### Follow-ups / tech debt
 
 - [ ] Optional: expose demo center/radius as configuration instead of code constants.
+
+## Dashboard Tile Navigation (2026-02-22)
+
+### What changed
+
+- Made dashboard metric tiles keyboard/click navigable:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+  - top summary tiles now route on activation:
+    - `Total devices`, `Online`, `Offline` -> `/devices`
+    - `Open alerts` -> `/alerts`
+  - vitals/threshold tiles now route on activation:
+    - `Low water pressure`, `Low battery`, `Weak signal`, `Low oil pressure`, `Low oil level`, `Low drip oil`, `Oil life low`, `No telemetry yet` -> `/devices`
+- Added accessibility/interaction behavior:
+  - card tiles get `role="button"`, `tabIndex=0`, Enter/Space activation, and focus ring styling.
+  - nested interactive controls (existing device links inside tiles) are preserved and do not trigger tile-level navigation.
+
+### Why it changed
+
+- Supports direct dashboard navigation workflow from tile summaries (including the requested alerts tile behavior).
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+
+### Risks / rollout notes
+
+- Tiles route to page-level destinations, not pre-filtered deep links; users may still need to apply filters after navigation.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add route search params for status/threshold filters and wire each tile to a pre-filtered destination.

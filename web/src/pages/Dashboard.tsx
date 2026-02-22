@@ -1,7 +1,7 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { api, type AlertOut, type DeviceSummaryOut } from '../api'
 import { FleetMap } from '../components/FleetMap'
 import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page } from '../ui-kit'
@@ -44,6 +44,34 @@ function TopDeviceLinks(props: { deviceIds: string[] }) {
 }
 
 export function DashboardPage() {
+  const navigate = useNavigate()
+
+  const tileCardProps = React.useCallback(
+    (to: '/devices' | '/alerts') => ({
+      role: 'button' as const,
+      tabIndex: 0,
+      className:
+        'cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+      onClick: (event: React.MouseEvent<HTMLDivElement>) => {
+        const interactive = (event.target as HTMLElement | null)?.closest(
+          'a,button,input,textarea,select,[role="button"]',
+        )
+        if (interactive && interactive !== event.currentTarget) return
+        navigate({ to })
+      },
+      onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        const interactive = (event.target as HTMLElement | null)?.closest(
+          'a,button,input,textarea,select,[role="button"]',
+        )
+        if (interactive && interactive !== event.currentTarget) return
+        event.preventDefault()
+        navigate({ to })
+      },
+    }),
+    [navigate],
+  )
+
   const healthQ = useQuery({ queryKey: ['health'], queryFn: api.health, refetchInterval: 60_000 })
   const edgePolicyQ = useQuery({ queryKey: ['edgePolicyContract'], queryFn: api.edgePolicyContract, staleTime: 5 * 60_000 })
 
@@ -250,7 +278,7 @@ export function DashboardPage() {
       }
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Total devices</CardTitle>
             <CardDescription>Fleet size (enabled + disabled)</CardDescription>
@@ -260,7 +288,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Online</CardTitle>
             <CardDescription>Within offline window</CardDescription>
@@ -273,7 +301,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Offline</CardTitle>
             <CardDescription>Exceeded offline window</CardDescription>
@@ -286,7 +314,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/alerts')}>
           <CardHeader>
             <CardTitle>Open alerts</CardTitle>
             <CardDescription>Unresolved alerts (latest 50)</CardDescription>
@@ -298,7 +326,7 @@ export function DashboardPage() {
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Low water pressure</CardTitle>
             <CardDescription>
@@ -312,7 +340,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Low battery</CardTitle>
             <CardDescription>Below threshold ({battLow.toFixed(2)} V)</CardDescription>
@@ -323,7 +351,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Weak signal</CardTitle>
             <CardDescription>Below threshold ({sigLow} dBm)</CardDescription>
@@ -334,7 +362,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Low oil pressure</CardTitle>
             <CardDescription>Below threshold ({oilPressureLow.toFixed(1)} psi)</CardDescription>
@@ -345,7 +373,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Low oil level</CardTitle>
             <CardDescription>Below threshold ({oilLevelLow.toFixed(1)}%)</CardDescription>
@@ -356,7 +384,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Low drip oil</CardTitle>
             <CardDescription>Below threshold ({dripOilLevelLow.toFixed(1)}%)</CardDescription>
@@ -367,7 +395,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>Oil life low</CardTitle>
             <CardDescription>Below threshold ({oilLifeLow.toFixed(0)}%)</CardDescription>
@@ -378,7 +406,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card {...tileCardProps('/devices')}>
           <CardHeader>
             <CardTitle>No telemetry yet</CardTitle>
             <CardDescription>Devices without a point ingested</CardDescription>
