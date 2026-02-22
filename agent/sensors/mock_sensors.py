@@ -11,6 +11,11 @@ from typing import Any, Dict
 _rng_by_device: dict[str, random.Random] = {}
 _location_by_device: dict[str, tuple[float, float]] = {}
 
+SPRINGFIELD_CO_CENTER_LAT = 37.4083
+SPRINGFIELD_CO_CENTER_LON = -102.6144
+SPRINGFIELD_CO_RADIUS_MI = 50.0
+EARTH_RADIUS_MI = 3958.7613
+
 
 def _device_index(device_id: str) -> int:
     m = re.search(r"(\d+)$", device_id)
@@ -33,14 +38,36 @@ def _rng_for(device_id: str) -> random.Random:
     return rng
 
 
+def _normalize_lon(lon_deg: float) -> float:
+    return ((lon_deg + 180.0) % 360.0) - 180.0
+
+
 def _location_for(device_id: str) -> tuple[float, float]:
     location = _location_by_device.get(device_id)
     if location is not None:
         return location
     seed_bytes = hashlib.sha256(f"{device_id}:geo".encode("utf-8")).digest()
-    # Center demo devices in a plausible U.S. oilfield region with small deterministic spread.
-    lat = 31.78 + ((seed_bytes[0] / 255.0) - 0.5) * 0.9
-    lon = -102.22 + ((seed_bytes[1] / 255.0) - 0.5) * 0.9
+    # Deterministically place demo devices within a 50-mile radius of Springfield, CO.
+    u = int.from_bytes(seed_bytes[:8], "big") / float((1 << 64) - 1)
+    v = int.from_bytes(seed_bytes[8:16], "big") / float((1 << 64) - 1)
+    distance_mi = SPRINGFIELD_CO_RADIUS_MI * math.sqrt(u)
+    bearing_rad = 2.0 * math.pi * v
+
+    lat1_rad = math.radians(SPRINGFIELD_CO_CENTER_LAT)
+    lon1_rad = math.radians(SPRINGFIELD_CO_CENTER_LON)
+    angular_distance = distance_mi / EARTH_RADIUS_MI
+
+    lat2_rad = math.asin(
+        math.sin(lat1_rad) * math.cos(angular_distance)
+        + math.cos(lat1_rad) * math.sin(angular_distance) * math.cos(bearing_rad)
+    )
+    lon2_rad = lon1_rad + math.atan2(
+        math.sin(bearing_rad) * math.sin(angular_distance) * math.cos(lat1_rad),
+        math.cos(angular_distance) - math.sin(lat1_rad) * math.sin(lat2_rad),
+    )
+
+    lat = math.degrees(lat2_rad)
+    lon = _normalize_lon(math.degrees(lon2_rad))
     location = (round(lat, 6), round(lon, 6))
     _location_by_device[device_id] = location
     return location

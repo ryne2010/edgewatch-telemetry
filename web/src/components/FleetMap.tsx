@@ -20,8 +20,9 @@ type FleetMapProps = {
 
 const MAP_DEFAULT_CENTER: [number, number] = [39.5, -98.35]
 const MAP_DEFAULT_ZOOM = 4
-const DEMO_CENTER: [number, number] = [31.78, -102.22]
-const DEMO_RADIUS_DEG = 0.5
+const DEMO_CENTER: [number, number] = [37.4083, -102.6144]
+const DEMO_RADIUS_MI = 50
+const EARTH_RADIUS_MI = 3958.7613
 
 const LOCATION_KEY_PAIRS: readonly (readonly [string, string])[] = [
   ['latitude', 'longitude'],
@@ -64,13 +65,36 @@ function hash32(input: string): number {
   return hash >>> 0
 }
 
+function normalizeLon(lonDeg: number): number {
+  return ((lonDeg + 180) % 360) - 180
+}
+
 function demoFallbackLocation(deviceId: string): { lat: number; lon: number } {
-  const hash = hash32(deviceId)
-  const latOffset = (((hash % 10_000) / 10_000) * 2 - 1) * DEMO_RADIUS_DEG
-  const lonOffset = ((((Math.floor(hash / 10_000)) % 10_000) / 10_000) * 2 - 1) * DEMO_RADIUS_DEG
+  const distanceHash = hash32(`${deviceId}:distance`)
+  const bearingHash = hash32(`${deviceId}:bearing`)
+  const u = distanceHash / 0xffffffff
+  const v = bearingHash / 0xffffffff
+  const distanceMi = DEMO_RADIUS_MI * Math.sqrt(u)
+  const bearingRad = 2 * Math.PI * v
+
+  const lat1Rad = (DEMO_CENTER[0] * Math.PI) / 180
+  const lon1Rad = (DEMO_CENTER[1] * Math.PI) / 180
+  const angularDistance = distanceMi / EARTH_RADIUS_MI
+
+  const lat2Rad = Math.asin(
+    Math.sin(lat1Rad) * Math.cos(angularDistance)
+      + Math.cos(lat1Rad) * Math.sin(angularDistance) * Math.cos(bearingRad),
+  )
+  const lon2Rad =
+    lon1Rad +
+    Math.atan2(
+      Math.sin(bearingRad) * Math.sin(angularDistance) * Math.cos(lat1Rad),
+      Math.cos(angularDistance) - Math.sin(lat1Rad) * Math.sin(lat2Rad),
+    )
+
   return {
-    lat: DEMO_CENTER[0] + latOffset,
-    lon: DEMO_CENTER[1] + lonOffset,
+    lat: Number(((lat2Rad * 180) / Math.PI).toFixed(6)),
+    lon: Number(normalizeLon((lon2Rad * 180) / Math.PI).toFixed(6)),
   }
 }
 

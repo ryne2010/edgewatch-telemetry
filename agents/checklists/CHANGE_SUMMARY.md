@@ -1586,3 +1586,34 @@
 ### Follow-ups / tech debt
 
 - [ ] Optional: support a configurable internal tile source for private/air-gapped deployments.
+
+## Springfield, CO Device Radius (2026-02-22)
+
+### What changed
+
+- Updated demo/mock telemetry location generation to place devices within 50 miles of Springfield, Colorado:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/mock_sensors.py`
+  - switched from fixed degree offsets to deterministic geodesic placement with a 50-mile cap.
+- Updated dashboard demo fallback location logic to the same Springfield, CO + 50-mile radius model:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
+  - uses deterministic distance/bearing math for fallback markers.
+
+### Why it changed
+
+- Aligns the fleet geography with your requested area while keeping deterministic placement behavior.
+- Ensures both telemetry-based coordinates and map fallback coordinates use the same regional constraints.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+
+### Risks / rollout notes
+
+- Existing telemetry points already stored in the database keep their old coordinates; new simulated points use Springfield-area coordinates.
+- Map fallback applies only when location metrics are missing for demo devices.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: expose demo center/radius as configuration instead of code constants.
