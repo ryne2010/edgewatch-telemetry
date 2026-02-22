@@ -31,6 +31,7 @@ import {
 } from '../ui-kit'
 import { useAppSettings } from '../app/settings'
 import { fmtDateTime, fmtNumber } from '../utils/format'
+import { adminAccessHint } from '../utils/adminAuth'
 
 type Bucket = 'minute' | 'hour'
 type TabKey = 'overview' | 'telemetry' | 'ingestions' | 'drift' | 'notifications' | 'media'
@@ -456,6 +457,15 @@ export function DeviceDetailPage() {
     queryFn: () => api.admin.notifications(adminCred, { device_id: deviceId, limit: 200 }),
     enabled: tab === 'notifications' && adminAccess,
   })
+  const ingestionsAccessHint = React.useMemo(
+    () => adminAccessHint(ingestionsQ.error, adminAuthMode),
+    [ingestionsQ.error, adminAuthMode],
+  )
+  const driftAccessHint = React.useMemo(() => adminAccessHint(driftQ.error, adminAuthMode), [driftQ.error, adminAuthMode])
+  const notificationsAccessHint = React.useMemo(
+    () => adminAccessHint(notificationsQ.error, adminAuthMode),
+    [notificationsQ.error, adminAuthMode],
+  )
 
   const mediaQ = useQuery({
     queryKey: ['media', deviceId, mediaToken],
@@ -1104,6 +1114,9 @@ export function DeviceDetailPage() {
             <CardContent>
               {ingestionsQ.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
               {ingestionsQ.isError ? <div className="text-sm text-destructive">Error: {(ingestionsQ.error as Error).message}</div> : null}
+              {ingestionsQ.isError && ingestionsAccessHint ? (
+                <Callout title="Access guidance">{ingestionsAccessHint}</Callout>
+              ) : null}
               <DataTable<IngestionBatchOut>
                 data={ingestionsQ.data ?? []}
                 columns={ingestionCols}
@@ -1133,6 +1146,9 @@ export function DeviceDetailPage() {
             <CardContent>
               {driftQ.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
               {driftQ.isError ? <div className="text-sm text-destructive">Error: {(driftQ.error as Error).message}</div> : null}
+              {driftQ.isError && driftAccessHint ? (
+                <Callout title="Access guidance">{driftAccessHint}</Callout>
+              ) : null}
               <DataTable<DriftEventOut>
                 data={driftQ.data ?? []}
                 columns={driftCols}
@@ -1163,6 +1179,9 @@ export function DeviceDetailPage() {
             <CardContent>
               {notificationsQ.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
               {notificationsQ.isError ? <div className="text-sm text-destructive">Error: {(notificationsQ.error as Error).message}</div> : null}
+              {notificationsQ.isError && notificationsAccessHint ? (
+                <Callout title="Access guidance">{notificationsAccessHint}</Callout>
+              ) : null}
               <DataTable<NotificationEventOut>
                 data={notificationsQ.data ?? []}
                 columns={notificationCols}

@@ -1332,3 +1332,48 @@
 ### Follow-ups / tech debt
 
 - [ ] Add a CI smoke target that exercises Cloud Armor preview-mode logs in a staging project.
+
+## Task 14 — UI/UX Polish (IAP operator posture) (2026-02-22)
+
+### What changed
+
+- Added shared admin auth-error guidance utilities:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/utils/adminAuth.ts`
+  - parses HTTP status from client errors and returns mode-aware operator guidance.
+- Fixed app shell capability wiring:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/RootLayout.tsx`
+  - now passes `adminEnabled` and `adminAuthMode` from `/api/v1/health` into `AppShell`, so Admin nav/badges correctly reflect backend posture.
+- Improved IAP/key recovery UX on admin audit surfaces:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+  - each view now shows actionable guidance on 401/403 failures:
+    - `ADMIN_AUTH_MODE=none`: sign-in/perimeter + role guidance
+    - `ADMIN_AUTH_MODE=key`: admin-key recovery guidance
+- Updated docs/task status:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/14-ui-ux-polish.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+
+### Why it changed
+
+- Task 14’s final remaining item was IAP operator login/access UX after Task 18.
+- Operators previously saw raw 401/403 strings in some audit views, which is not enough for production troubleshooting.
+- The shell capability wiring fix ensures role/posture indicators are trustworthy across environments.
+
+### How it was validated
+
+- `make harness` ✅
+- `pnpm -r --if-present build` ✅
+- `pnpm -C web typecheck` ✅
+- `make lint` ✅
+- `make test` ✅
+
+### Risks / rollout notes
+
+- Guidance is intentionally based on HTTP status categories (401/403), not brittle backend string matching.
+- No backend auth behavior changed; this is UI/operator guidance and shell capability wiring only.
+
+### Follow-ups / tech debt
+
+- [ ] Consider adding dedicated frontend component tests when a web test harness is introduced (currently repo gates web typecheck/build).

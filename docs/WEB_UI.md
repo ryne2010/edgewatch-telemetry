@@ -60,6 +60,8 @@ The UI reads `/api/v1/health` and automatically:
 
 - hides the Admin navigation when admin routes are disabled
 - removes the “admin key required” UX when `ADMIN_AUTH_MODE=none`
+- shows actionable auth guidance on admin/audit views when requests fail with `401` or `403`
+  (IAP/IAM sign-in guidance for `none`, admin-key guidance for `key`)
 
 ### Using an admin key (dev/local)
 

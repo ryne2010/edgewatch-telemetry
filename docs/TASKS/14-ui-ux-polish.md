@@ -1,6 +1,6 @@
 # Task 14 — UI/UX polish (production-grade operator dashboard)
 
-🟡 **Status: In progress (core UX shipped; only IAP posture polish remains after Task 18)**
+✅ **Status: Implemented**
 
 ## Intent
 
@@ -11,7 +11,7 @@ Upgrade the web UI from "minimal demo" to a **production-grade** operator dashbo
 - clear alert timelines + routing visibility
 - clean empty states, loading states, and error recovery
 
-This task is intentionally ongoing: the UI is the first thing users judge.
+This task delivered the core operator UX baseline for production use.
 
 ## Non-goals
 
@@ -49,7 +49,7 @@ The UI reads `/api/v1/health` feature flags and:
 - Telemetry explorer tab (metric picker + chart)
 - Admin/audit lanes when enabled
 
-## Remaining work (next iteration)
+## Completed scope
 
 ### Devices list
 
@@ -79,7 +79,10 @@ The UI reads `/api/v1/health` feature flags and:
 
 ### IAP operator posture
 
-- Once IAP lands (Task 18), improve the UX for operator login flows.
+- ✅ Improved operator login/access UX for `ADMIN_AUTH_MODE=none`:
+  - IAP/IAM-oriented access guidance is shown for 401/403 failures on admin/audit views.
+  - Key-mode deployments still show admin-key-specific recovery guidance.
+  - Admin shell badge/navigation now correctly tracks `/api/v1/health` capability flags.
 
 ## Design notes
 

@@ -28,6 +28,7 @@ import {
   useToast,
 } from '../ui-kit'
 import { fmtDateTime } from '../utils/format'
+import { adminAccessHint } from '../utils/adminAuth'
 
 type AdminTab = 'events' | 'ingestions' | 'drift' | 'notifications' | 'exports'
 
@@ -251,6 +252,7 @@ export function AdminPage() {
   ]
 
   const active = tab === 'events' ? eventsQ : tab === 'ingestions' ? ingestionsQ : tab === 'drift' ? driftQ : tab === 'notifications' ? notificationsQ : exportsQ
+  const activeAccessHint = React.useMemo(() => adminAccessHint(active.error, adminAuthMode), [active.error, adminAuthMode])
 
   return (
     <Page
@@ -417,6 +419,9 @@ export function AdminPage() {
               {active.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
               {active.isError ? (
                 <div className="text-sm text-destructive">Error: {(active.error as Error).message}</div>
+              ) : null}
+              {active.isError && activeAccessHint ? (
+                <Callout title="Access guidance">{activeAccessHint}</Callout>
               ) : null}
               {tab === 'ingestions' ? (
                 <DataTable<IngestionBatchOut>

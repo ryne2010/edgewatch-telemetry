@@ -34,6 +34,8 @@ export function RootLayout() {
     <AppShell
       appName="EdgeWatch Telemetry"
       appBadge={badge}
+      adminEnabled={adminEnabled}
+      adminAuthMode={adminAuthMode}
       nav={[
         { to: '/', label: 'Dashboard', icon: <IconDashboard /> },
         { to: '/devices', label: 'Devices', icon: <IconDevices /> },

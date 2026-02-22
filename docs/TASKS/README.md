@@ -71,10 +71,7 @@ python scripts/harness.py lint --only node
 - `18-iap-identity-perimeter.md`
 - `19-agent-buffer-hardening.md` (WAL mode, disk quota, corruption recovery)
 - `20-edge-protection-cloud-armor.md` (Cloud Armor / API Gateway posture for public ingest)
-
-### In progress / partial
-
-- `14-ui-ux-polish.md` (core UX shipped; remaining items tracked inside)
+- `14-ui-ux-polish.md` (IAP operator posture polish complete)
 
 ### Planned
 
