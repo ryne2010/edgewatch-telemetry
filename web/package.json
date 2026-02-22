@@ -11,32 +11,34 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "@tanstack/react-form": "^0.41.4",
+    "@tanstack/react-pacer": "^0.19.0",
     "@tanstack/react-query": "^5.90.0",
-    "@tanstack/react-table": "^8.21.0",
+    "@tanstack/react-ranger": "^0.0.5",
     "@tanstack/react-router": "^1.157.0",
     "@tanstack/react-router-devtools": "^1.157.0",
+    "@tanstack/react-table": "^8.21.0",
     "@tanstack/react-virtual": "^3.13.0",
-    "@tanstack/react-pacer": "^0.19.0",
-    "@tanstack/react-ranger": "^0.0.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.0",
-    "tailwind-merge": "^2.5.4",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.515.0",
-    "@tanstack/react-form": "^0.41.4"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.5.4"
   },
   "devDependencies": {
+    "@tanstack/react-devtools": "^0.9.0",
+    "@tanstack/react-pacer-devtools": "^0.5.0",
+    "@tanstack/react-query-devtools": "^5.91.0",
+    "@types/leaflet": "^1.9.21",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
-    "typescript": "^5.5.4",
-    "vite": "^5.4.8",
-    "tailwindcss": "^3.4.13",
-    "postcss": "^8.4.47",
     "autoprefixer": "^10.4.20",
-    "@tanstack/react-devtools": "^0.9.0",
-    "@tanstack/react-query-devtools": "^5.91.0",
-    "@tanstack/react-pacer-devtools": "^0.5.0"
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
   }
 }

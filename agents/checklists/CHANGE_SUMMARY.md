@@ -1505,3 +1505,36 @@
 ### Follow-ups / tech debt
 
 - [ ] If any table grows to very large row counts, reintroduce virtualization with a width-safe row layout strategy and variable-height support.
+
+## Dashboard Map Restore (2026-02-22)
+
+### What changed
+
+- Restored the dashboard map implementation into the active branch:
+  - Added `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
+  - Wired map rendering in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+  - Added location metric keys to dashboard summary query (`latitude/longitude`, `lat/lon/lng`, `gps_latitude/gps_longitude`, `location_lat/location_lon`)
+- Added required Leaflet dependencies:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/package.json`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pnpm-lock.yaml`
+
+### Why it changed
+
+- The map feature was previously committed on branch `codex/dashboard-device-map` (`6690ec4`), but the current working branch did not contain those web source changes.
+- As a result, the dashboard had no map component mounted, so no map could render.
+
+### How it was validated
+
+- `pnpm install` ✅
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+
+### Risks / rollout notes
+
+- Markers only appear when devices provide location metrics or match demo fallback IDs (`demo-well-*`); otherwise the map still renders with a “no mappable locations” hint.
+- No API contract, auth, migration, or Terraform behavior changed.
+
+### Follow-ups / tech debt
+
+- [ ] If non-demo devices should appear on the map immediately, ensure agents emit contracted location metrics (`latitude`, `longitude`).
