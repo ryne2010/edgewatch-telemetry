@@ -22,6 +22,7 @@ import {
 import { Sparkline } from '../ui/Sparkline'
 import type { Point } from '../ui/LineChart'
 import { fmtAlertType, fmtDateTime, timeAgo } from '../utils/format'
+import { adminAccessHint } from '../utils/adminAuth'
 
 type SeverityFilter = 'all' | 'critical' | 'warning' | 'info'
 type SeverityKind = Exclude<SeverityFilter, 'all'>
@@ -216,6 +217,10 @@ export function AlertsPage() {
     enabled: adminAccess,
     refetchInterval: 15_000,
   })
+  const routingAuditAccessHint = React.useMemo(
+    () => adminAccessHint(notificationsQ.error, adminAuthMode),
+    [notificationsQ.error, adminAuthMode],
+  )
 
   const notificationByAlertId = React.useMemo(() => {
     const out = new Map<string, NotificationEventOut>()
@@ -473,6 +478,11 @@ export function AlertsPage() {
               {notificationsQ.isLoading ? <div className="text-sm text-muted-foreground">Loading routing events...</div> : null}
               {notificationsQ.isError ? (
                 <div className="text-sm text-destructive">Routing audit error: {(notificationsQ.error as Error).message}</div>
+              ) : null}
+              {notificationsQ.isError && routingAuditAccessHint ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-muted-foreground">
+                  {routingAuditAccessHint}
+                </div>
               ) : null}
               {!notificationsQ.isLoading && !notificationsQ.isError ? (
                 <>
