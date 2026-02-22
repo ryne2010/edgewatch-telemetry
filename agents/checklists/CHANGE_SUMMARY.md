@@ -1473,35 +1473,50 @@
 
 - [ ] Optional: add a small integration smoke test that exercises media upload loop against a live API fixture.
 
-## Web Tables — Overflow + Alignment Fix (2026-02-22)
+## Dashboard Fleet Map (2026-02-22)
 
 ### What changed
 
-- Stabilized all app tables by updating the shared table component:
-  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/DataTable.tsx`
-- Removed absolute-position virtualization rows that caused header/body misalignment and row overlap with variable-height cell content.
-- Switched to native `<tbody>/<tr>` rendering so column widths and row geometry stay consistent across all pages.
-- Tightened cell styles to improve overflow behavior:
-  - headers stay on one line (`whitespace-nowrap`)
-  - cell content wraps safely (`overflow-wrap:anywhere`)
-  - cell content container uses `min-w-0` to prevent spillover.
+- Added an interactive fleet map to the dashboard:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+- Map behavior:
+  - reads device coordinates from latest telemetry metrics (`latitude/longitude`, `lat/lon`, `lat/lng`, `gps_latitude/gps_longitude`, `location_lat/location_lon`)
+  - renders status-colored markers (online/offline/unknown)
+  - supports click selection with device details and open-alert count
+  - includes recenter control and map coverage badges
+- Added local-demo compatibility so map is useful immediately:
+  - mock sensor backend now emits deterministic coordinates per device:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/mock_sensors.py`
+  - telemetry contract now includes:
+    - `latitude`
+    - `longitude`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+- Added Leaflet dependency for interactive mapping:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/package.json`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pnpm-lock.yaml`
+- Updated UI docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
 
 ### Why it changed
 
-- Multiple pages were showing text overflow and visibly misaligned columns because every table uses this shared component.
-- The previous virtualization strategy assumed fixed-height rows (`44px`) while many cells contain variable-height content (`details`, JSON previews, badges), which broke layout.
+- Operators need spatial awareness in the dashboard to correlate device status/alerts by location instead of scanning only tables/cards.
+- Local simulator and mock-sensor workflows should show useful map output out-of-the-box.
 
 ### How it was validated
 
 - `pnpm -C web typecheck` ✅
 - `pnpm -C web build` ✅
+- `uv run --locked pytest -q tests/test_sensor_scaling.py tests/test_contracts.py` ✅
 - `make harness` ✅
 
 ### Risks / rollout notes
 
-- Rendering is now non-virtualized; this trades some performance headroom on very large tables for consistent, correct layout.
-- No API, auth, migration, or Terraform behavior changed.
+- Web bundle size increased due Leaflet (still within existing build warnings).
+- Dashboard map relies on OpenStreetMap tile requests at runtime; operator environments with strict egress policies may require an internal tile source later.
+- No API route/auth/Terraform changes.
 
 ### Follow-ups / tech debt
 
-- [ ] If any table grows to very large row counts, reintroduce virtualization with a width-safe row layout strategy and variable-height support.
+- [ ] Optional: add dashboard-side location filter controls (status + bounding-box).
+- [ ] Optional: support configurable tile providers for private/air-gapped deployments.
