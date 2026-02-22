@@ -42,24 +42,9 @@ python scripts/harness.py lint --only node
 
 If you want the fastest path to “real field node”:
 
-1) Sensors framework + real sensors
-   - `docs/TASKS/11a-agent-sensor-framework.md`
-   - `docs/TASKS/11b-rpi-i2c-temp-humidity.md`
-   - `docs/TASKS/11c-rpi-adc-pressures-levels.md`
-   - `docs/TASKS/11d-derived-oil-life-reset.md`
-
-2) Camera lane
-   - `docs/TASKS/12a-agent-camera-capture-ring-buffer.md`
-   - `docs/TASKS/12b-api-media-metadata-storage.md`
-   - `docs/TASKS/12c-web-media-gallery.md`
-
-3) Cellular + cost hygiene
-   - `docs/TASKS/13a-cellular-runbook.md`
-   - `docs/TASKS/13b-agent-cellular-metrics-watchdog.md`
-   - `docs/TASKS/13c-cost-caps-policy.md`
-
-4) UI/UX polish (ongoing)
-   - `docs/TASKS/14-ui-ux-polish.md`
+1) Camera epic closeout
+   - `docs/TASKS/12-camera-capture-upload.md`
+   - Note: slices `12a`, `12b`, `12c` are already implemented; this is queue/status closeout.
 
 If you want the fastest path to “enterprise operator posture”:
 

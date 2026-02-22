@@ -8,6 +8,8 @@ def test_load_contract_v1_has_expected_keys() -> None:
     assert c.version == "v1"
     assert "water_pressure_psi" in c.metrics
     assert c.metrics["water_pressure_psi"].type == "number"
+    assert "oil_life_reset_at" in c.metrics
+    assert c.metrics["oil_life_reset_at"].type == "string"
 
 
 def test_validate_metrics_unknown_keys_are_allowed_but_visible() -> None:

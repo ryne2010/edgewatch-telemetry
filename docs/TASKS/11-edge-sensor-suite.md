@@ -1,6 +1,6 @@
 # Task 11 (Epic) — Edge sensor suite (temp/humidity/pressures/levels)
 
-🟡 **Status: Planned (decomposed into smaller Codex tasks)**
+✅ **Status: Implemented (2026-02-22)**
 
 ## Intent
 
@@ -25,14 +25,14 @@ Related ADRs:
 
 ## Implementation plan (Codex-friendly slices)
 
-This epic is intentionally decomposed into smaller tasks:
+This epic was decomposed into smaller tasks and completed end-to-end:
 
-1) **Framework + config** → `11a-agent-sensor-framework.md`
-2) **I2C temp/humidity** → `11b-rpi-i2c-temp-humidity.md`
-3) **ADC pressures/levels** → `11c-rpi-adc-pressures-levels.md`
-4) **Derived oil life + reset** → `11d-derived-oil-life-reset.md`
+1) ✅ **Framework + config** → `11a-agent-sensor-framework.md`
+2) ✅ **I2C temp/humidity** → `11b-rpi-i2c-temp-humidity.md`
+3) ✅ **ADC pressures/levels** → `11c-rpi-adc-pressures-levels.md`
+4) ✅ **Derived oil life + reset** → `11d-derived-oil-life-reset.md`
 
-Each slice should land with tests and docs updates.
+All slices landed with tests and docs updates.
 
 ## Non-goals
 

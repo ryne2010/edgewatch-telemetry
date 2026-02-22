@@ -37,23 +37,26 @@ def test_derived_oil_life_decreases_only_while_running(tmp_path: Path) -> None:
         warning_interval_s=0.0,
     )
 
-    assert backend.read_metrics_with_context({"pump_on": True})["oil_life_pct"] == 100.0
+    first = backend.read_metrics_with_context({"pump_on": True})
+    assert first["oil_life_pct"] == 100.0
+    reset_at = first["oil_life_reset_at"]
+    assert isinstance(reset_at, str) and reset_at
 
     clock.advance(1800)
-    assert backend.read_metrics_with_context({"pump_on": True})["oil_life_pct"] == pytest.approx(
-        50.0, abs=0.2
-    )
+    mid = backend.read_metrics_with_context({"pump_on": True})
+    assert mid["oil_life_pct"] == pytest.approx(50.0, abs=0.2)
+    assert mid["oil_life_reset_at"] == reset_at
 
     clock.advance(1800)
-    assert backend.read_metrics_with_context({"pump_on": False})["oil_life_pct"] == pytest.approx(
-        0.0, abs=0.1
-    )
+    end = backend.read_metrics_with_context({"pump_on": False})
+    assert end["oil_life_pct"] == pytest.approx(0.0, abs=0.1)
+    assert end["oil_life_reset_at"] == reset_at
 
     clock.advance(1800)
     # Stopped interval should not decrease further.
-    assert backend.read_metrics_with_context({"pump_on": False})["oil_life_pct"] == pytest.approx(
-        0.0, abs=0.1
-    )
+    final = backend.read_metrics_with_context({"pump_on": False})
+    assert final["oil_life_pct"] == pytest.approx(0.0, abs=0.1)
+    assert final["oil_life_reset_at"] == reset_at
 
 
 def test_derived_oil_life_hysteresis_when_pump_flag_missing(tmp_path: Path) -> None:
