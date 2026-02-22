@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Link } from '@tanstack/react-router'
 import { api, type AlertOut, type DeviceSummaryOut } from '../api'
+import { FleetMap } from '../components/FleetMap'
 import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page } from '../ui-kit'
 import { fmtAlertType, fmtDateTime, timeAgo } from '../utils/format'
 
@@ -60,6 +61,13 @@ export function DashboardPage() {
         'humidity_pct',
         'battery_v',
         'signal_rssi_dbm',
+        'latitude',
+        'longitude',
+        'lat',
+        'lon',
+        'lng',
+        'gps_latitude',
+        'gps_longitude',
       ],
       }),
     refetchInterval: 10_000,
@@ -376,6 +384,20 @@ export function DashboardPage() {
           <CardContent>
             <div className="text-3xl font-semibold tracking-tight">{noTelemetry.length}</div>
             <TopDeviceLinks deviceIds={noTelemetry.map((d) => d.device_id)} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="mt-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Fleet map</CardTitle>
+            <CardDescription>
+              Interactive location view with status markers, selected-device details, and open-alert context.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FleetMap devices={devices} openAlerts={openAlerts} />
           </CardContent>
         </Card>
       </div>

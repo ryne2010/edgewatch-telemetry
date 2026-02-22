@@ -1472,3 +1472,51 @@
 ### Follow-ups / tech debt
 
 - [ ] Optional: add a small integration smoke test that exercises media upload loop against a live API fixture.
+
+## Dashboard Fleet Map (2026-02-22)
+
+### What changed
+
+- Added an interactive fleet map to the dashboard:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+- Map behavior:
+  - reads device coordinates from latest telemetry metrics (`latitude/longitude`, `lat/lon`, `lat/lng`, `gps_latitude/gps_longitude`, `location_lat/location_lon`)
+  - renders status-colored markers (online/offline/unknown)
+  - supports click selection with device details and open-alert count
+  - includes recenter control and map coverage badges
+- Added local-demo compatibility so map is useful immediately:
+  - mock sensor backend now emits deterministic coordinates per device:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/mock_sensors.py`
+  - telemetry contract now includes:
+    - `latitude`
+    - `longitude`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+- Added Leaflet dependency for interactive mapping:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/package.json`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pnpm-lock.yaml`
+- Updated UI docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+
+### Why it changed
+
+- Operators need spatial awareness in the dashboard to correlate device status/alerts by location instead of scanning only tables/cards.
+- Local simulator and mock-sensor workflows should show useful map output out-of-the-box.
+
+### How it was validated
+
+- `pnpm -C web typecheck` ✅
+- `pnpm -C web build` ✅
+- `uv run --locked pytest -q tests/test_sensor_scaling.py tests/test_contracts.py` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Web bundle size increased due Leaflet (still within existing build warnings).
+- Dashboard map relies on OpenStreetMap tile requests at runtime; operator environments with strict egress policies may require an internal tile source later.
+- No API route/auth/Terraform changes.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add dashboard-side location filter controls (status + bounding-box).
+- [ ] Optional: support configurable tile providers for private/air-gapped deployments.
