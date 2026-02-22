@@ -68,6 +68,8 @@ export function DashboardPage() {
         'lng',
         'gps_latitude',
         'gps_longitude',
+        'location_lat',
+        'location_lon',
       ],
       }),
     refetchInterval: 10_000,
