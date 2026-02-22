@@ -1472,3 +1472,36 @@
 ### Follow-ups / tech debt
 
 - [ ] Optional: add a small integration smoke test that exercises media upload loop against a live API fixture.
+
+## Web Tables — Overflow + Alignment Fix (2026-02-22)
+
+### What changed
+
+- Stabilized all app tables by updating the shared table component:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/DataTable.tsx`
+- Removed absolute-position virtualization rows that caused header/body misalignment and row overlap with variable-height cell content.
+- Switched to native `<tbody>/<tr>` rendering so column widths and row geometry stay consistent across all pages.
+- Tightened cell styles to improve overflow behavior:
+  - headers stay on one line (`whitespace-nowrap`)
+  - cell content wraps safely (`overflow-wrap:anywhere`)
+  - cell content container uses `min-w-0` to prevent spillover.
+
+### Why it changed
+
+- Multiple pages were showing text overflow and visibly misaligned columns because every table uses this shared component.
+- The previous virtualization strategy assumed fixed-height rows (`44px`) while many cells contain variable-height content (`details`, JSON previews, badges), which broke layout.
+
+### How it was validated
+
+- `pnpm -C web typecheck` ✅
+- `pnpm -C web build` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Rendering is now non-virtualized; this trades some performance headroom on very large tables for consistent, correct layout.
+- No API, auth, migration, or Terraform behavior changed.
+
+### Follow-ups / tech debt
+
+- [ ] If any table grows to very large row counts, reintroduce virtualization with a width-safe row layout strategy and variable-height support.
