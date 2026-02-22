@@ -207,6 +207,10 @@ class MediaRingBuffer:
 
         return evicted
 
+    def delete_asset(self, asset: StoredMediaAsset) -> None:
+        """Remove an asset + sidecar from the ring buffer."""
+        self._delete_asset(asset)
+
     def _iter_assets(self, *, clean_orphans: bool) -> Iterable[StoredMediaAsset]:
         if not self.root_dir.exists():
             return

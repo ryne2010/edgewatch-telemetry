@@ -80,9 +80,9 @@ python -m agent.tools.camera cam1 \
 
 This prints JSON containing `asset_path`, `sidecar_path`, and persisted metadata.
 
-## 5) EdgeWatch 12b validation (API metadata + upload + view)
+## 5) API metadata + upload + view
 
-Task 12b adds API media endpoints:
+The media pipeline uses these device-auth endpoints:
 
 - `POST /api/v1/media`
 - `PUT /api/v1/media/{media_id}/upload`
@@ -135,7 +135,20 @@ Expected behavior:
 - media list is ordered by latest `captured_at`
 - downloads require device auth and return original media bytes
 
-## 6) Field diagnostics to collect
+## 6) Agent auto-upload behavior
+
+When `MEDIA_ENABLED=true`, the agent now:
+- captures scheduled snapshots into the local ring buffer
+- captures alert-transition snapshots with reason `alert_transition` (cooldown controlled)
+- uploads oldest pending assets to the API with retry backoff
+
+Key env vars:
+- `MEDIA_UPLOAD_RETRY_S`
+- `MEDIA_UPLOAD_BACKOFF_MAX_S`
+- `MEDIA_UPLOAD_TIMEOUT_S`
+- `MEDIA_ALERT_TRANSITION_MIN_INTERVAL_S`
+
+## 7) Field diagnostics to collect
 
 If captures fail:
 - camera stack test output
