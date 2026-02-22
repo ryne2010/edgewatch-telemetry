@@ -1377,3 +1377,49 @@
 ### Follow-ups / tech debt
 
 - [ ] Consider adding dedicated frontend component tests when a web test harness is introduced (currently repo gates web typecheck/build).
+
+## Task 11 (Epic) — Edge Sensor Suite closeout (2026-02-22)
+
+### What changed
+
+- Closed the Task 11 epic status and queue docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/11-edge-sensor-suite.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CODEX_HANDOFF.md`
+- Updated sensor runbook wording from planned posture to implemented posture:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SENSORS.md`
+- Completed the remaining Task 11 UI acceptance gap by exposing oil-life reset timestamp end-to-end:
+  - agent derived backend now emits `oil_life_reset_at` alongside `oil_life_pct`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/derived.py`
+  - telemetry contract now includes `oil_life_reset_at` as a string metric
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+  - device detail oil-life gauge now renders “Last reset” when present
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+  - docs and tests updated:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_derived.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_contracts.py`
+
+### Why it changed
+
+- Task 11 remained in queue as an epic wrapper even though `11a..11d` were shipped.
+- The epic acceptance criteria called for oil-life gauge visibility with last reset context; this change makes that operator context available in the UI via contract-backed telemetry.
+
+### How it was validated
+
+- `make harness` ✅
+- `make lint` ✅
+- `make test` ✅
+- `pnpm -C web typecheck` ✅
+- `pnpm -r --if-present build` ✅
+
+### Risks / rollout notes
+
+- `oil_life_reset_at` is additive and backward compatible; devices that do not emit it continue to work.
+- No API route or auth behavior changed.
+- No Terraform or migration changes.
+
+### Follow-ups / tech debt
+
+- [ ] Camera epic (`docs/TASKS/12-camera-capture-upload.md`) remains the final queue item to close out.

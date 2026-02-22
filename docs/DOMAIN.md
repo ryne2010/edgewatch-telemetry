@@ -83,6 +83,7 @@ Common operational metrics:
 - `humidity_pct`
 - `oil_level_pct`
 - `oil_life_pct`
+- `oil_life_reset_at`
 - `drip_oil_level_pct`
 - `battery_v`
 - `signal_rssi_dbm`

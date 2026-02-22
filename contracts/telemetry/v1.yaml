@@ -40,6 +40,10 @@ metrics:
     unit: percent
     description: Remaining oil life percentage (runtime-derived; manual reset).
 
+  oil_life_reset_at:
+    type: string
+    description: Timestamp of the most recent manual oil-life reset in ISO-8601 UTC format.
+
   drip_oil_level_pct:
     type: number
     unit: percent

@@ -84,6 +84,7 @@ Prefer Cloud Run IAM/IAP and `ADMIN_AUTH_MODE=none`, or deploy a separate privat
 The device page provides:
 
 - **Overview**: heartbeat status + curated “latest telemetry” panel + quick chart + oil life service gauge + vitals sparklines
+  - oil life panel includes the most recent reset timestamp when devices publish `oil_life_reset_at`
 - **Telemetry**: metric selector + chart (numeric metrics) + raw point explorer
 - **Admin tabs** (if enabled): events, ingestions, drift events, notification audits
 - **Media**:

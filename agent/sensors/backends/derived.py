@@ -29,7 +29,9 @@ class DerivedOilLifeBackend:
     now_fn: Callable[[], datetime] = now_utc
     monotonic: Callable[[], float] = time.monotonic
     state_store_factory: Callable[[str | Path], OilLifeStateStore] = OilLifeStateStore
-    metric_keys: frozenset[str] = field(default_factory=lambda: frozenset({"oil_life_pct"}))
+    metric_keys: frozenset[str] = field(
+        default_factory=lambda: frozenset({"oil_life_pct", "oil_life_reset_at"})
+    )
     _state_store: OilLifeStateStore | None = field(default=None, init=False, repr=False)
     _state: OilLifeState | None = field(default=None, init=False, repr=False)
     _last_warning_at: float | None = field(default=None, init=False, repr=False)
@@ -116,7 +118,10 @@ class DerivedOilLifeBackend:
 
     def read_metrics_with_context(self, context: Mapping[str, Any]) -> Metrics:
         state = self._advance(metrics=context)
-        return {"oil_life_pct": round(float(self._oil_life_pct(state)), 1)}
+        return {
+            "oil_life_pct": round(float(self._oil_life_pct(state)), 1),
+            "oil_life_reset_at": state.oil_life_reset_at,
+        }
 
     def read_metrics(self) -> Metrics:
         return self.read_metrics_with_context({})

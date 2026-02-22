@@ -3,13 +3,13 @@
 This runbook is a practical checklist for bringing up a new EdgeWatch node with
 real sensors on a Raspberry Pi.
 
-Scope (planned/target):
+Scope:
 - temp + humidity (I2C)
 - pressures + levels (ADC)
 - oil life % (runtime-derived; manual reset)
 
-> Note: the "real sensor" implementation is tracked by `docs/TASKS/11-edge-sensor-suite.md`.
-> This runbook is written ahead of time so field bring-up has a target procedure.
+Status:
+- implemented as part of `docs/TASKS/11-edge-sensor-suite.md`
 
 ## 1) Pre-flight checklist
 

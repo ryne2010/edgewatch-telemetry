@@ -210,7 +210,7 @@ function oilLifeState(percent: number): {
   }
 }
 
-function OilLifeGauge(props: { percent: number | null; updatedAt?: string; hasMetric: boolean }) {
+function OilLifeGauge(props: { percent: number | null; updatedAt?: string; resetAt?: string | null; hasMetric: boolean }) {
   if (!props.hasMetric) {
     return (
       <div className="text-sm text-muted-foreground">
@@ -263,6 +263,11 @@ function OilLifeGauge(props: { percent: number | null; updatedAt?: string; hasMe
         {props.updatedAt ? (
           <div className="text-xs text-muted-foreground">
             Last telemetry point: <span className="font-mono">{fmtDateTime(props.updatedAt)}</span>
+          </div>
+        ) : null}
+        {props.resetAt ? (
+          <div className="text-xs text-muted-foreground">
+            Last reset: <span className="font-mono">{fmtDateTime(props.resetAt)}</span>
           </div>
         ) : null}
       </div>
@@ -482,6 +487,10 @@ export function DeviceDetailPage() {
     const value = (latestMetrics as Record<string, unknown> | null)?.oil_life_pct
     if (typeof value !== 'number' || !Number.isFinite(value)) return null
     return clampPercent(value)
+  }, [latestMetrics])
+  const oilLifeResetAt = React.useMemo(() => {
+    const value = (latestMetrics as Record<string, unknown> | null)?.oil_life_reset_at
+    return typeof value === 'string' && value.trim() ? value.trim() : null
   }, [latestMetrics])
 
   React.useEffect(() => {
@@ -944,6 +953,7 @@ export function DeviceDetailPage() {
                 <OilLifeGauge
                   percent={oilLifePercent}
                   updatedAt={latestQ.data?.ts}
+                  resetAt={oilLifeResetAt}
                   hasMetric={Boolean(contract?.metrics?.oil_life_pct)}
                 />
               )}
