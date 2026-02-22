@@ -1553,3 +1553,36 @@
 ### Follow-ups / tech debt
 
 - [ ] If any table grows to very large row counts, reintroduce virtualization with a width-safe row layout strategy and variable-height support.
+
+## Map Rendering + Table Hardening (2026-02-22)
+
+### What changed
+
+- Updated CSP headers to allow OpenStreetMap tile image domains so Leaflet can render map tiles in the dashboard:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/main.py`
+  - added `https://tile.openstreetmap.org` and `https://*.tile.openstreetmap.org` to `img-src` for docs and non-docs responses.
+- Hardened shared table layout behavior to prevent content overflow and column drift:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/DataTable.tsx`
+  - switched table layout to fixed-width columns (`table-fixed`, `w-full`)
+  - added `max-w-0` + stronger word wrapping on headers and cells
+  - split scroll behavior into explicit `overflow-x-auto overflow-y-auto`.
+
+### Why it changed
+
+- Dashboard map could appear blank when served by the API because strict CSP blocked external OSM tile images.
+- Some data-heavy tables still exhibited overflow/misalignment with long values; stronger shared table constraints were needed to keep all pages stable.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+
+### Risks / rollout notes
+
+- CSP now permits OSM tile images; if your environment disallows public egress, map tiles will still be blocked by network policy.
+- `table-fixed` prioritizes layout stability; very dense tables may wrap more aggressively than before.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: support a configurable internal tile source for private/air-gapped deployments.

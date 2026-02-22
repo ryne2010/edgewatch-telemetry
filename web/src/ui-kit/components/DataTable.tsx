@@ -38,12 +38,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
     <div
       className={cn(
         'rounded-md border bg-card text-card-foreground',
-        'overflow-auto',
+        'overflow-x-auto overflow-y-auto',
         props.className,
       )}
       style={{ height: props.height ?? 520 }}
     >
-      <table className="min-w-full table-auto text-sm">
+      <table className="w-full min-w-full table-fixed text-sm">
         <thead className="sticky top-0 z-10 bg-card">
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id} className="border-b">
@@ -51,7 +51,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 <th
                   key={header.id}
                   className={cn(
-                    'whitespace-nowrap px-4 py-2 text-left align-middle font-medium text-muted-foreground',
+                    'max-w-0 px-4 py-2 text-left align-top font-medium text-muted-foreground [overflow-wrap:anywhere]',
                     props.enableSorting && header.column.getCanSort() ? 'cursor-pointer select-none' : '',
                   )}
                   onClick={props.enableSorting ? header.column.getToggleSortingHandler() : undefined}
@@ -62,10 +62,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
                         ? 'ascending'
                         : header.column.getIsSorted() === 'desc'
                           ? 'descending'
-                          : 'none'
+                      : 'none'
                   }
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-start gap-2">
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                     {props.enableSorting && header.column.getCanSort() ? (
                       <span className="text-xs text-muted-foreground">
@@ -104,8 +104,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
               onClick={props.onRowClick ? () => props.onRowClick?.(row.original) : undefined}
             >
               {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="px-4 py-2 align-top [overflow-wrap:anywhere]">
-                  <div className="min-w-0">
+                <td key={cell.id} className="max-w-0 px-4 py-2 align-top [overflow-wrap:anywhere]">
+                  <div className="min-w-0 whitespace-normal break-words">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </div>
                 </td>
