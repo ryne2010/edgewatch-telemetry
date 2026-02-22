@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/v1", tags=["devices"])
 
 
 METRIC_KEY_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+NUMERIC_TEXT_RE = r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
 
 
 DEFAULT_SUMMARY_METRICS: list[str] = [
@@ -48,6 +49,13 @@ def _normalize_opt_utc(dt: Optional[datetime]) -> Optional[datetime]:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _json_metric_text_expr(metric_key: str, dialect_name: str):
+    # SQLAlchemy 2 no longer exposes .astext on JSON index expressions.
+    if dialect_name == "sqlite":
+        return func.json_extract(TelemetryPoint.metrics, f"$.{metric_key}")
+    return TelemetryPoint.metrics.op("->>")(metric_key)
 
 
 @router.get("/devices", response_model=List[DeviceOut])
@@ -242,9 +250,12 @@ def get_timeseries(
     limit: int = Query(default=1000, ge=1, le=5000),
 ):
     """Return bucketed time series (server-side aggregation)."""
-    from sqlalchemy import Float, case, cast, func
+    from sqlalchemy import Float, String, case, cast, func
 
     date_trunc_unit = "minute" if bucket == "minute" else "hour"
+    metric = metric.strip()
+    if not METRIC_KEY_RE.fullmatch(metric):
+        raise HTTPException(status_code=400, detail="metric must match ^[A-Za-z0-9_]{1,64}$")
 
     since = _normalize_opt_utc(since)
     until = _normalize_opt_utc(until)
@@ -272,23 +283,26 @@ def get_timeseries(
                     if r.value is not None
                 ]
 
-        value_text = TelemetryPoint.metrics[metric].astext
-        # Avoid runtime errors when the JSON value isn't numeric (bad data / drift).
-        numeric_value = case(
-            (
-                value_text.op("~")(r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"),
-                cast(value_text, Float),
-            ),
-            else_=None,
-        )
+        dialect_name = session.bind.dialect.name if session.bind is not None else ""
+        value_text = _json_metric_text_expr(metric, dialect_name)
+        if dialect_name == "postgresql":
+            # Avoid runtime errors when the JSON value isn't numeric (bad data / drift).
+            text_value = cast(value_text, String)
+            numeric_value = case(
+                (text_value.op("~")(NUMERIC_TEXT_RE), cast(text_value, Float)),
+                else_=None,
+            )
+        else:
+            # SQLite/json_extract returns NULL when absent and tolerates casts to float.
+            numeric_value = cast(value_text, Float)
 
         q = session.query(
             func.date_trunc(date_trunc_unit, TelemetryPoint.ts).label("bucket_ts"),
             func.avg(numeric_value).label("value"),
         ).filter(TelemetryPoint.device_id == device_id)
 
-        # Only include points that have the metric key
-        q = q.filter(TelemetryPoint.metrics.has_key(metric))
+        # Only include points that have the metric key.
+        q = q.filter(value_text.is_not(None))
 
         if since is not None:
             q = q.filter(TelemetryPoint.ts >= since)
@@ -321,7 +335,7 @@ def get_timeseries_multi(
 
     Uses a single GROUP BY with per-metric FILTER aggregations, so the UI can switch metrics instantly.
     """
-    from sqlalchemy import Float, case, cast, func
+    from sqlalchemy import Float, String, case, cast, func
 
     date_trunc_unit = "minute" if bucket == "minute" else "hour"
 
@@ -337,6 +351,8 @@ def get_timeseries_multi(
         mm = (m or "").strip()
         if not mm:
             continue
+        if not METRIC_KEY_RE.fullmatch(mm):
+            raise HTTPException(status_code=400, detail=f"invalid metric key: {mm}")
         if mm in seen:
             continue
         seen.add(mm)
@@ -346,22 +362,25 @@ def get_timeseries_multi(
     if len(unique_metrics) > 10:
         raise HTTPException(status_code=400, detail="metrics must include at most 10 metric keys")
 
-    bucket_ts = func.date_trunc(date_trunc_unit, TelemetryPoint.ts).label("bucket_ts")
-    cols = [bucket_ts]
-    for m in unique_metrics:
-        value_text = TelemetryPoint.metrics[m].astext
-        numeric_value = case(
-            (
-                value_text.op("~")(r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"),
-                cast(value_text, Float),
-            ),
-            else_=None,
-        )
-
-        value = func.avg(numeric_value).filter(TelemetryPoint.metrics.has_key(m)).label(m)
-        cols.append(value)
-
     with db_session() as session:
+        dialect_name = session.bind.dialect.name if session.bind is not None else ""
+
+        bucket_ts = func.date_trunc(date_trunc_unit, TelemetryPoint.ts).label("bucket_ts")
+        cols = [bucket_ts]
+        for m in unique_metrics:
+            value_text = _json_metric_text_expr(m, dialect_name)
+            if dialect_name == "postgresql":
+                text_value = cast(value_text, String)
+                numeric_value = case(
+                    (text_value.op("~")(NUMERIC_TEXT_RE), cast(text_value, Float)),
+                    else_=None,
+                )
+            else:
+                numeric_value = cast(value_text, Float)
+
+            value = func.avg(numeric_value).filter(value_text.is_not(None)).label(m)
+            cols.append(value)
+
         if bucket == "hour" and settings.telemetry_rollups_enabled:
             bucket_q = session.query(TelemetryRollupHourly.bucket_ts).filter(
                 TelemetryRollupHourly.device_id == device_id,

@@ -1650,3 +1650,39 @@
 ### Follow-ups / tech debt
 
 - [ ] Optional: add route search params for status/threshold filters and wire each tile to a pre-filtered destination.
+
+## Device Detail Timeseries 500 Fix (2026-02-22)
+
+### What changed
+
+- Fixed SQLAlchemy 2 JSON extraction breakage in timeseries routes:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/devices.py`
+  - replaced deprecated `.astext` usage with dialect-aware JSON text extraction helper (`->>` for Postgres, `json_extract` for SQLite).
+- Hardened metric key handling:
+  - validates metric keys against `^[A-Za-z0-9_]{1,64}$` in `/timeseries` and `/timeseries_multi`.
+- Kept numeric aggregation safe:
+  - Postgres uses regex-guarded cast to avoid invalid numeric cast errors.
+  - non-Postgres uses float casting on extracted JSON text.
+- Added regression tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_timeseries_routes.py`
+  - verifies SQL compilation path for Postgres/SQLite extraction and invalid metric-key rejection.
+
+### Why it changed
+
+- Device detail chart requests to `/api/v1/devices/{id}/timeseries_multi` were returning `500` due `AttributeError` (`.astext`) under SQLAlchemy 2.
+
+### How it was validated
+
+- Reproduced failing request locally against running API (`500`) before patch.
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+- Retested failing endpoint request locally after patch (`200`) ✅
+
+### Risks / rollout notes
+
+- Metric-key validation now returns `400` for invalid keys that were previously accepted implicitly.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add full integration tests for `/timeseries` and `/timeseries_multi` with a Postgres test fixture.
