@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 
 _rng_by_device: dict[str, random.Random] = {}
+_location_by_device: dict[str, tuple[float, float]] = {}
 
 
 def _device_index(device_id: str) -> int:
@@ -30,6 +31,19 @@ def _rng_for(device_id: str) -> random.Random:
     rng = random.Random(seed)
     _rng_by_device[device_id] = rng
     return rng
+
+
+def _location_for(device_id: str) -> tuple[float, float]:
+    location = _location_by_device.get(device_id)
+    if location is not None:
+        return location
+    seed_bytes = hashlib.sha256(f"{device_id}:geo".encode("utf-8")).digest()
+    # Center demo devices in a plausible U.S. oilfield region with small deterministic spread.
+    lat = 31.78 + ((seed_bytes[0] / 255.0) - 0.5) * 0.9
+    lon = -102.22 + ((seed_bytes[1] / 255.0) - 0.5) * 0.9
+    location = (round(lat, 6), round(lon, 6))
+    _location_by_device[device_id] = location
+    return location
 
 
 def read_metrics(device_id: str) -> Dict[str, Any]:
@@ -78,6 +92,7 @@ def read_metrics(device_id: str) -> Dict[str, Any]:
 
     battery_v = round(battery_base + rng.uniform(-0.2, 0.2), 2)
     signal_rssi_dbm = int(-65 + (idx - 1) * -2 + rng.uniform(-5, 5))
+    latitude, longitude = _location_for(device_id)
 
     # Simple flow model so dashboards can render a plausible gpm trace.
     flow_rate_gpm = 0.0
@@ -102,4 +117,6 @@ def read_metrics(device_id: str) -> Dict[str, Any]:
         "device_state": device_state,
         "battery_v": battery_v,
         "signal_rssi_dbm": signal_rssi_dbm,
+        "latitude": latitude,
+        "longitude": longitude,
     }

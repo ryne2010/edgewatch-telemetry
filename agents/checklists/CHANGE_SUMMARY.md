@@ -1473,6 +1473,54 @@
 
 - [ ] Optional: add a small integration smoke test that exercises media upload loop against a live API fixture.
 
+## Dashboard Fleet Map (2026-02-22)
+
+### What changed
+
+- Added an interactive fleet map to the dashboard:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+- Map behavior:
+  - reads device coordinates from latest telemetry metrics (`latitude/longitude`, `lat/lon`, `lat/lng`, `gps_latitude/gps_longitude`, `location_lat/location_lon`)
+  - renders status-colored markers (online/offline/unknown)
+  - supports click selection with device details and open-alert count
+  - includes recenter control and map coverage badges
+- Added local-demo compatibility so map is useful immediately:
+  - mock sensor backend now emits deterministic coordinates per device:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/mock_sensors.py`
+  - telemetry contract now includes:
+    - `latitude`
+    - `longitude`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+- Added Leaflet dependency for interactive mapping:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/package.json`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pnpm-lock.yaml`
+- Updated UI docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+
+### Why it changed
+
+- Operators need spatial awareness in the dashboard to correlate device status/alerts by location instead of scanning only tables/cards.
+- Local simulator and mock-sensor workflows should show useful map output out-of-the-box.
+
+### How it was validated
+
+- `pnpm -C web typecheck` ✅
+- `pnpm -C web build` ✅
+- `uv run --locked pytest -q tests/test_sensor_scaling.py tests/test_contracts.py` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Web bundle size increased due Leaflet (still within existing build warnings).
+- Dashboard map relies on OpenStreetMap tile requests at runtime; operator environments with strict egress policies may require an internal tile source later.
+- No API route/auth/Terraform changes.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add dashboard-side location filter controls (status + bounding-box).
+- [ ] Optional: support configurable tile providers for private/air-gapped deployments.
+
 ## Web Tables — Overflow + Alignment Fix (2026-02-22)
 
 ### What changed
@@ -1505,36 +1553,3 @@
 ### Follow-ups / tech debt
 
 - [ ] If any table grows to very large row counts, reintroduce virtualization with a width-safe row layout strategy and variable-height support.
-
-## Dashboard Map Restore (2026-02-22)
-
-### What changed
-
-- Restored the dashboard map implementation into the active branch:
-  - Added `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
-  - Wired map rendering in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
-  - Added location metric keys to dashboard summary query (`latitude/longitude`, `lat/lon/lng`, `gps_latitude/gps_longitude`, `location_lat/location_lon`)
-- Added required Leaflet dependencies:
-  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/package.json`
-  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pnpm-lock.yaml`
-
-### Why it changed
-
-- The map feature was previously committed on branch `codex/dashboard-device-map` (`6690ec4`), but the current working branch did not contain those web source changes.
-- As a result, the dashboard had no map component mounted, so no map could render.
-
-### How it was validated
-
-- `pnpm install` ✅
-- `python scripts/harness.py lint` ✅
-- `python scripts/harness.py typecheck` ✅
-- `python scripts/harness.py test` ✅
-
-### Risks / rollout notes
-
-- Markers only appear when devices provide location metrics or match demo fallback IDs (`demo-well-*`); otherwise the map still renders with a “no mappable locations” hint.
-- No API contract, auth, migration, or Terraform behavior changed.
-
-### Follow-ups / tech debt
-
-- [ ] If non-demo devices should appear on the map immediately, ensure agents emit contracted location metrics (`latitude`, `longitude`).

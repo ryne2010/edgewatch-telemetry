@@ -59,6 +59,16 @@ metrics:
     unit: dBm
     description: Cellular/WiFi RSSI (dBm).
 
+  latitude:
+    type: number
+    unit: degrees
+    description: Device latitude in WGS84 decimal degrees.
+
+  longitude:
+    type: number
+    unit: degrees
+    description: Device longitude in WGS84 decimal degrees.
+
   cellular_rsrp_dbm:
     type: number
     unit: dBm
