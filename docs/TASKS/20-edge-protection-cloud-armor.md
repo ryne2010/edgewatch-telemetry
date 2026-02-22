@@ -1,6 +1,6 @@
 # Task 20 — Edge protection for public ingest (Cloud Armor / API Gateway)
 
-🟡 **Status: Planned**
+✅ **Status: Implemented**
 
 ## Objective
 

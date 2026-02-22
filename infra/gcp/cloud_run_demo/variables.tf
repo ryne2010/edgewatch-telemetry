@@ -209,6 +209,84 @@ variable "dashboard_allow_unauthenticated" {
 }
 
 
+# --- Optional: Cloud Armor perimeter for public ingest ----------------------
+#
+# Design:
+# - Keep ingest public for edge devices when needed.
+# - Front ingest with HTTPS LB + Cloud Armor edge throttling.
+# - Optionally bypass rate limits for trusted source CIDRs.
+
+variable "enable_ingest_edge_protection" {
+  type        = bool
+  description = "If true, create HTTPS LB + Cloud Armor in front of the primary ingest service."
+  default     = false
+
+  validation {
+    condition     = !var.enable_ingest_edge_protection || (var.enable_ingest_routes && var.allow_unauthenticated)
+    error_message = "enable_ingest_edge_protection=true requires enable_ingest_routes=true and allow_unauthenticated=true on the primary service."
+  }
+}
+
+variable "ingest_edge_domain" {
+  type        = string
+  description = "FQDN for the ingest HTTPS load balancer (for example: ingest.example.com)."
+  default     = null
+
+  validation {
+    condition     = !var.enable_ingest_edge_protection || (var.ingest_edge_domain != null && trimspace(var.ingest_edge_domain) != "")
+    error_message = "ingest_edge_domain is required when enable_ingest_edge_protection=true."
+  }
+}
+
+variable "ingest_edge_rate_limit_count" {
+  type        = number
+  description = "Cloud Armor per-key request threshold before edge throttling applies."
+  default     = 1200
+
+  validation {
+    condition     = var.ingest_edge_rate_limit_count > 0
+    error_message = "ingest_edge_rate_limit_count must be > 0."
+  }
+}
+
+variable "ingest_edge_rate_limit_interval_sec" {
+  type        = number
+  description = "Cloud Armor rate-limit interval in seconds."
+  default     = 60
+
+  validation {
+    condition     = var.ingest_edge_rate_limit_interval_sec > 0
+    error_message = "ingest_edge_rate_limit_interval_sec must be > 0."
+  }
+}
+
+variable "ingest_edge_rate_limit_enforce_on_key" {
+  type        = string
+  description = "Cloud Armor key used for throttling (ALL, IP, or XFF_IP)."
+  default     = "IP"
+
+  validation {
+    condition = contains(
+      ["ALL", "IP", "XFF_IP"],
+      upper(trimspace(var.ingest_edge_rate_limit_enforce_on_key)),
+    )
+    error_message = "ingest_edge_rate_limit_enforce_on_key must be one of: ALL, IP, XFF_IP."
+  }
+}
+
+variable "ingest_edge_allowlist_cidrs" {
+  type        = list(string)
+  description = "Optional CIDRs that bypass edge throttling (for example office egress IPs)."
+  default     = []
+}
+
+variable "ingest_edge_rate_limit_preview" {
+  type        = bool
+  description = "If true, run Cloud Armor throttle rule in preview mode (log-only)."
+  default     = false
+}
+
+
 # --- Optional: IAP identity perimeter for dashboard/admin services ----------
 #
 # Design:

@@ -57,3 +57,4 @@ make deploy-gcp-prod  PROJECT_ID=... REGION=us-central1
 - If you use `enable_admin_service=true`, the module outputs `admin_service_url` in addition to `service_url`.
 - If you use `enable_dashboard_service=true`, the module outputs `dashboard_service_url`.
 - If you enable IAP, use `admin_iap_url` / `dashboard_iap_url` outputs as operator entrypoints.
+- If you enable Cloud Armor edge protection for ingest, use `ingest_edge_url` as the device ingest entrypoint.

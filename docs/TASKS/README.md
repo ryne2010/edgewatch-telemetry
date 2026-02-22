@@ -70,6 +70,7 @@ python scripts/harness.py lint --only node
 - `17-telemetry-partitioning-rollups.md` (Postgres scale path)
 - `18-iap-identity-perimeter.md`
 - `19-agent-buffer-hardening.md` (WAL mode, disk quota, corruption recovery)
+- `20-edge-protection-cloud-armor.md` (Cloud Armor / API Gateway posture for public ingest)
 
 ### In progress / partial
 
@@ -82,7 +83,3 @@ python scripts/harness.py lint --only node
 - `11-edge-sensor-suite.md` (epic)
 
 - `12-camera-capture-upload.md` (epic)
-
-#### Production upgrades
-
-- `20-edge-protection-cloud-armor.md` (Cloud Armor / API Gateway posture for public ingest)

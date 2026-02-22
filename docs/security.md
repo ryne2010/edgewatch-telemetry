@@ -135,6 +135,19 @@ This is a backstop. For a real internet-exposed service, prefer:
 - Cloud Armor rate limiting
 - Load balancer WAF policies
 
+Cloud Armor edge protection can be enabled in Terraform:
+
+- `enable_ingest_edge_protection=true`
+- `ingest_edge_domain=<public-fqdn>`
+- tune thresholds with:
+  - `ingest_edge_rate_limit_count`
+  - `ingest_edge_rate_limit_interval_sec`
+  - `ingest_edge_rate_limit_enforce_on_key`
+- optional trusted CIDR bypass: `ingest_edge_allowlist_cidrs`
+
+Operational procedure and tuning guidance:
+- `docs/RUNBOOKS/EDGE_PROTECTION.md`
+
 ### 4) Error hygiene
 
 - All error responses include an `X-Request-ID` header.

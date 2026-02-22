@@ -63,8 +63,7 @@ If you want the fastest path to “real field node”:
 
 If you want the fastest path to “enterprise operator posture”:
 
-- Ingest perimeter hardening
-  - `docs/TASKS/20-edge-protection-cloud-armor.md`
+- Enterprise operator posture queue is complete (`19` and `20` implemented).
 
 ## Working agreements
 
