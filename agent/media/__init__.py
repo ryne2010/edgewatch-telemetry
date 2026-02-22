@@ -6,7 +6,14 @@ from .capture import (
     MediaCaptureService,
     parse_camera_id,
 )
-from .runtime import MediaConfig, MediaConfigError, MediaRuntime, build_media_runtime_from_env
+from .runtime import (
+    MediaConfig,
+    MediaConfigError,
+    MediaRuntime,
+    MediaUploadError,
+    build_media_message_id,
+    build_media_runtime_from_env,
+)
 from .storage import MediaAssetMetadata, MediaRingBuffer, MediaStorageError, StoredMediaAsset
 
 __all__ = [
@@ -18,10 +25,12 @@ __all__ = [
     "MediaConfig",
     "MediaConfigError",
     "MediaRuntime",
+    "MediaUploadError",
     "MediaAssetMetadata",
     "MediaRingBuffer",
     "MediaStorageError",
     "StoredMediaAsset",
+    "build_media_message_id",
     "build_media_runtime_from_env",
     "parse_camera_id",
 ]

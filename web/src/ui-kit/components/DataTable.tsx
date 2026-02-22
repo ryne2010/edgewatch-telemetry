@@ -1,5 +1,4 @@
 import * as React from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   type ColumnDef,
   flexRender,
@@ -22,8 +21,6 @@ export type DataTableProps<T> = {
 }
 
 export function DataTable<T>(props: DataTableProps<T>) {
-  const parentRef = React.useRef<HTMLDivElement>(null)
-
   const [sorting, setSorting] = React.useState<SortingState>(() => props.initialSorting ?? [])
 
   const table = useReactTable({
@@ -37,16 +34,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   const rows = table.getRowModel().rows
 
-  const rowVirtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 44,
-    overscan: 10,
-  })
-
   return (
     <div
-      ref={parentRef}
       className={cn(
         'rounded-md border bg-card text-card-foreground',
         'overflow-auto',
@@ -54,7 +43,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
       )}
       style={{ height: props.height ?? 520 }}
     >
-      <table className="w-full text-sm">
+      <table className="min-w-full table-auto text-sm">
         <thead className="sticky top-0 z-10 bg-card">
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id} className="border-b">
@@ -62,7 +51,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 <th
                   key={header.id}
                   className={cn(
-                    'px-4 py-2 text-left font-medium text-muted-foreground',
+                    'whitespace-nowrap px-4 py-2 text-left align-middle font-medium text-muted-foreground',
                     props.enableSorting && header.column.getCanSort() ? 'cursor-pointer select-none' : '',
                   )}
                   onClick={props.enableSorting ? header.column.getToggleSortingHandler() : undefined}
@@ -93,10 +82,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             </tr>
           ))}
         </thead>
-        <tbody
-          className={rows.length ? 'relative' : undefined}
-          style={rows.length ? { height: rowVirtualizer.getTotalSize() } : undefined}
-        >
+        <tbody>
           {rows.length === 0 ? (
             <tr>
               <td
@@ -108,26 +94,24 @@ export function DataTable<T>(props: DataTableProps<T>) {
             </tr>
           ) : null}
 
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const row = rows[virtualRow.index]
-            return (
-              <tr
-                key={row.id}
-                className={cn(
-                  'absolute left-0 right-0 border-b last:border-b-0',
-                  props.onRowClick ? 'cursor-pointer hover:bg-accent/50' : 'hover:bg-accent/50',
-                )}
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-                onClick={props.onRowClick ? () => props.onRowClick?.(row.original) : undefined}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-4 py-2 align-middle">
+          {rows.map((row) => (
+            <tr
+              key={row.id}
+              className={cn(
+                'border-b last:border-b-0',
+                props.onRowClick ? 'cursor-pointer hover:bg-accent/50' : 'hover:bg-accent/50',
+              )}
+              onClick={props.onRowClick ? () => props.onRowClick?.(row.original) : undefined}
+            >
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id} className="px-4 py-2 align-top [overflow-wrap:anywhere]">
+                  <div className="min-w-0">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            )
-          })}
+                  </div>
+                </td>
+              ))}
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>

@@ -40,15 +40,9 @@ python scripts/harness.py lint --only node
 
 ## Recommended execution order (remaining work)
 
-If you want the fastest path to “real field node”:
-
-1) Camera epic closeout
-   - `docs/TASKS/12-camera-capture-upload.md`
-   - Note: slices `12a`, `12b`, `12c` are already implemented; this is queue/status closeout.
-
-If you want the fastest path to “enterprise operator posture”:
-
+- Task queue is complete as of 2026-02-22.
 - Enterprise operator posture queue is complete (`19` and `20` implemented).
+- Field-realistic edge-node queue is complete (`11` and `12` epics closed, plus `13`).
 
 ## Working agreements
 

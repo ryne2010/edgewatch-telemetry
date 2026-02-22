@@ -1422,4 +1422,101 @@
 
 ### Follow-ups / tech debt
 
-- [ ] Camera epic (`docs/TASKS/12-camera-capture-upload.md`) remains the final queue item to close out.
+- [x] Camera epic (`docs/TASKS/12-camera-capture-upload.md`) closeout completed on 2026-02-22.
+
+## Task 12 (Epic) — Camera capture + media upload closeout (2026-02-22)
+
+### What changed
+
+- Completed the remaining agent integration work for the Task 12 epic:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/media/runtime.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/media/storage.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/media/__init__.py`
+- Added alert-transition photo capture support in the runtime loop (edge-triggered with cooldown).
+- Added metadata-first media upload pipeline in the agent:
+  - `POST /api/v1/media` then `PUT /api/v1/media/{id}/upload`
+  - deterministic media message IDs for retry idempotency
+  - oldest-first upload from ring buffer with per-asset retry backoff
+  - successful uploads delete local assets from the ring buffer
+- Added/updated operator docs and env knobs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CAMERA.md`
+- Closed queue bookkeeping docs for Task 12:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/12-camera-capture-upload.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TASKS/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CODEX_HANDOFF.md`
+- Added deterministic tests for upload + alert-transition behavior:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_media_runtime.py`
+
+### Why it changed
+
+- Task 12 was still open at the epic level even though `12a/12b/12c` were shipped.
+- The missing production slice was device-side upload orchestration from the local ring buffer to the existing API media endpoints.
+
+### How it was validated
+
+- `uv run --locked pytest -q tests/test_media_runtime.py` ✅
+- `python scripts/harness.py lint --only python` ✅
+- `python scripts/harness.py test --only python` ✅
+- `python scripts/harness.py typecheck --only python` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Upload retries are per-asset in-memory; after agent restart, pending ring-buffer assets are still retried, but backoff timing state resets.
+- Video capture remains out of scope for this epic closeout and should be handled as a separate follow-on task.
+- No Terraform/auth/public API contract changes in this PR.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add a small integration smoke test that exercises media upload loop against a live API fixture.
+
+## Dashboard Fleet Map (2026-02-22)
+
+### What changed
+
+- Added an interactive fleet map to the dashboard:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+- Map behavior:
+  - reads device coordinates from latest telemetry metrics (`latitude/longitude`, `lat/lon`, `lat/lng`, `gps_latitude/gps_longitude`, `location_lat/location_lon`)
+  - renders status-colored markers (online/offline/unknown)
+  - supports click selection with device details and open-alert count
+  - includes recenter control and map coverage badges
+- Added local-demo compatibility so map is useful immediately:
+  - mock sensor backend now emits deterministic coordinates per device:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/mock_sensors.py`
+  - telemetry contract now includes:
+    - `latitude`
+    - `longitude`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+- Added Leaflet dependency for interactive mapping:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/package.json`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/pnpm-lock.yaml`
+- Updated UI docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/WEB_UI.md`
+
+### Why it changed
+
+- Operators need spatial awareness in the dashboard to correlate device status/alerts by location instead of scanning only tables/cards.
+- Local simulator and mock-sensor workflows should show useful map output out-of-the-box.
+
+### How it was validated
+
+- `pnpm -C web typecheck` ✅
+- `pnpm -C web build` ✅
+- `uv run --locked pytest -q tests/test_sensor_scaling.py tests/test_contracts.py` ✅
+- `make harness` ✅
+
+### Risks / rollout notes
+
+- Web bundle size increased due Leaflet (still within existing build warnings).
+- Dashboard map relies on OpenStreetMap tile requests at runtime; operator environments with strict egress policies may require an internal tile source later.
+- No API route/auth/Terraform changes.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add dashboard-side location filter controls (status + bounding-box).
+- [ ] Optional: support configurable tile providers for private/air-gapped deployments.

@@ -37,9 +37,10 @@ make up
 
 The left sidebar (desktop) / drawer (mobile) includes:
 
-- **Dashboard**: fleet overview (device counts, open alerts, offline devices) + vitals threshold cards.
+- **Dashboard**: fleet overview (device counts, open alerts, offline devices), interactive fleet map, and vitals threshold cards.
   - Uses `GET /api/v1/devices/summary` to avoid N+1 calls.
   - Uses `GET /api/v1/contracts/edge_policy` for thresholds.
+  - Map reads location metrics from telemetry (`latitude/longitude`, `lat/lon`, `lat/lng`, or `gps_latitude/gps_longitude`).
 - **Devices**: searchable fleet table with quick filters (`online/offline/unknown/open alerts`), health explanations, and latest vitals chips.
 - **Alerts**: alert feed with severity/device/type/open filters, volume sparklines, grouped timeline views, and routing decision audit details (when admin notifications are enabled).
 - **Contracts**: telemetry contract + edge policy contract (cadence/thresholds).

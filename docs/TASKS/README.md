@@ -62,6 +62,7 @@ python scripts/harness.py lint --only node
 - `12a-agent-camera-capture-ring-buffer.md`
 - `12b-api-media-metadata-storage.md`
 - `12c-web-media-gallery.md`
+- `12-camera-capture-upload.md` (epic)
 - `13-cellular-connectivity.md` (epic)
 - `13a-cellular-runbook.md`
 - `13b-agent-cellular-metrics-watchdog.md`
@@ -76,6 +77,4 @@ python scripts/harness.py lint --only node
 
 ### Planned
 
-#### Requested “field-realistic edge node” scope
-
-- `12-camera-capture-upload.md` (epic)
+- none
