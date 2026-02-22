@@ -1,6 +1,6 @@
 # Task 12 (Epic) — Camera capture + media upload (up to 4 cameras)
 
-🟡 **Status: Planned (decomposed into smaller Codex tasks)**
+✅ **Status: Implemented (2026-02-22)**
 
 ## Intent
 
@@ -9,7 +9,7 @@ Add a "media lane" to EdgeWatch so each Raspberry Pi node can support:
 - up to 4 cameras (`cam1..cam4`)
 - scheduled snapshots (photo)
 - event-driven snapshots (ex: on alert transitions)
-- short video clips (bounded duration/size)
+- photo-focused production lane now; short video clips can be added as a bounded follow-up
 
 Design assumptions (per ADR):
 
@@ -26,11 +26,11 @@ The design must respect real-world constraints:
 
 ## Implementation plan (Codex-friendly slices)
 
-1) Device capture + ring buffer → `12a-agent-camera-capture-ring-buffer.md`
-2) API metadata + storage (local+GCS) → `12b-api-media-metadata-storage.md`
-3) Web UI gallery → `12c-web-media-gallery.md`
+1) ✅ Device capture + ring buffer → `12a-agent-camera-capture-ring-buffer.md`
+2) ✅ API metadata + storage (local+GCS) → `12b-api-media-metadata-storage.md`
+3) ✅ Web UI gallery → `12c-web-media-gallery.md`
 
-Video clips can be added after photo lane is stable.
+Photo lane is production-ready for this epic. Video clips remain an optional follow-up.
 
 ## Non-goals
 

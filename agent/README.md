@@ -146,9 +146,9 @@ Behavior:
 Durable counters are stored in:
 - `EDGEWATCH_COST_CAP_STATE_PATH` (default: `./edgewatch_cost_caps_<device_id>.json`)
 
-## Camera snapshots + local ring buffer (MVP)
+## Camera snapshots + upload pipeline
 
-Enable scheduled photo snapshots with a local disk ring buffer:
+Enable scheduled photo snapshots with a local disk ring buffer and automatic upload:
 
 ```bash
 MEDIA_ENABLED=true \
@@ -161,6 +161,14 @@ Notes:
 - capture backend: `libcamera-still` (Raspberry Pi camera stack)
 - capture is serialized with a lock (one active camera at a time)
 - assets + sidecar metadata are stored under `MEDIA_RING_DIR` and oldest assets are evicted when `MEDIA_RING_MAX_BYTES` is exceeded
+- alert transitions can trigger immediate captures (reason: `alert_transition`) with cooldown control
+- uploads are metadata-first (`POST /api/v1/media` then `PUT /api/v1/media/{id}/upload`) with deterministic media `message_id` and retry backoff
+
+Tuning knobs:
+- `MEDIA_UPLOAD_RETRY_S`
+- `MEDIA_UPLOAD_BACKOFF_MAX_S`
+- `MEDIA_UPLOAD_TIMEOUT_S`
+- `MEDIA_ALERT_TRANSITION_MIN_INTERVAL_S`
 
 Manual capture helper:
 

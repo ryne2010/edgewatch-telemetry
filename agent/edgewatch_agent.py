@@ -23,7 +23,7 @@ from device_policy import (
     load_cached_policy,
     save_cached_policy,
 )
-from media import MediaConfigError, build_media_runtime_from_env
+from media import MediaConfigError, MediaUploadError, build_media_runtime_from_env
 from sensors import SensorConfigError, build_sensor_backend, load_sensor_config_from_env
 
 
@@ -609,6 +609,7 @@ def main() -> None:
                 metrics.update(cellular_metrics)
 
         current_state, current_alerts = _compute_state(metrics, state.last_alerts, policy)
+        alert_transition = current_alerts != state.last_alerts
         critical_active = "WATER_PRESSURE_LOW" in current_alerts
         heartbeat_only_mode = cost_cap_state.telemetry_heartbeat_only(policy.cost_caps)
         cost_cap_active = cost_cap_state.cost_cap_active(policy.cost_caps)
@@ -651,7 +652,7 @@ def main() -> None:
                 payload_metrics = dict(metrics)
 
             # Immediate send on alert transitions (including transitions between different alert sets).
-            elif current_alerts != state.last_alerts:
+            elif alert_transition:
                 send_reason = "state_change" if current_state != state.last_state else "alert_change"
                 payload_metrics = dict(metrics)
 
@@ -765,22 +766,30 @@ def main() -> None:
 
             state.last_state = current_state
             state.last_alerts = set(current_alerts)
+        elif alert_transition:
+            # Keep alert transition handling edge-triggered even when telemetry send is deferred.
+            state.last_state = current_state
+            state.last_alerts = set(current_alerts)
 
         if media_runtime is not None:
             try:
+                captured_asset = None
                 if cost_cap_state.allow_snapshot_capture(policy.cost_caps):
-                    media_asset = media_runtime.maybe_capture_scheduled(now_s=time.time())
-                    if media_asset is not None:
+                    if alert_transition:
+                        captured_asset = media_runtime.maybe_capture_alert_transition(now_s=time.time())
+                    if captured_asset is None:
+                        captured_asset = media_runtime.maybe_capture_scheduled(now_s=time.time())
+                    if captured_asset is not None:
                         cost_cap_state.record_snapshot_capture()
                         counters = cost_cap_state.counters()
                         print(
                             "[edgewatch-agent] media captured camera=%s reason=%s bytes=%s path=%s "
                             "snapshots=%s/%s uploads=%s/%s"
                             % (
-                                media_asset.metadata.camera_id,
-                                media_asset.metadata.reason,
-                                media_asset.metadata.bytes,
-                                media_asset.asset_path,
+                                captured_asset.metadata.camera_id,
+                                captured_asset.metadata.reason,
+                                captured_asset.metadata.bytes,
+                                captured_asset.asset_path,
                                 counters.snapshots_today,
                                 policy.cost_caps.max_snapshots_per_day,
                                 counters.media_uploads_today,
@@ -803,6 +812,29 @@ def main() -> None:
                         state.last_snapshot_cap_log_at = now
             except Exception as exc:
                 print(f"[edgewatch-agent] media capture failed: {exc!r}")
+
+            if now >= state.next_network_attempt_at:
+                try:
+                    uploaded_asset = media_runtime.maybe_upload_pending(
+                        session=session,
+                        api_url=api_url,
+                        token=token,
+                        now_s=time.time(),
+                    )
+                    if uploaded_asset is not None:
+                        print(
+                            "[edgewatch-agent] media uploaded camera=%s reason=%s bytes=%s asset=%s"
+                            % (
+                                uploaded_asset.metadata.camera_id,
+                                uploaded_asset.metadata.reason,
+                                uploaded_asset.metadata.bytes,
+                                uploaded_asset.asset_path.name,
+                            )
+                        )
+                except MediaUploadError as exc:
+                    print(f"[edgewatch-agent] media upload deferred: {exc}")
+                except Exception as exc:
+                    print(f"[edgewatch-agent] media upload failed: {exc!r}")
 
         _sleep(sample_s)
 
