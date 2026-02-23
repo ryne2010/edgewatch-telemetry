@@ -1,5 +1,34 @@
 # Change Summary
 
+## Hosted dev device-list hardening (2026-02-23)
+
+### What changed
+
+- Added `safe_display_name(device_id, display_name)` in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/device_identity.py`
+- Updated device serialization paths to use fallback `display_name`:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/devices.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+- Added regression tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_identity.py`
+
+### Why it changed
+
+- Hosted dev returned HTTP 500 on `GET /api/v1/devices` because legacy rows had `display_name = NULL`.
+- `DeviceOut.display_name` is a required string; direct serialization raised Pydantic validation errors.
+- Fallback to `device_id` prevents endpoint-wide failure from a single malformed historical row.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (127 passed)
+
+### Risks / rollout notes
+
+- This is a defensive read-path fix; existing malformed rows are still present until explicitly backfilled.
+- UI/API behavior remains stable; fallback display label is deterministic (`device_id`).
+
 ## CI IAM hardening + apply image guard (2026-02-23)
 
 ### What changed

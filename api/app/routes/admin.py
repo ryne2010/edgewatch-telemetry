@@ -44,6 +44,7 @@ from ..schemas import (
 )
 from ..security import hash_token, token_fingerprint
 from ..services.admin_audit import record_admin_event
+from ..services.device_identity import safe_display_name
 from ..services.monitor import compute_status
 from ..services.notifications import destination_fingerprint, mask_webhook_url
 
@@ -215,7 +216,7 @@ def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require
         status_str, seconds = compute_status(d, now)
         return DeviceOut(
             device_id=d.device_id,
-            display_name=d.display_name,
+            display_name=safe_display_name(d.device_id, d.display_name),
             heartbeat_interval_s=d.heartbeat_interval_s,
             offline_after_s=d.offline_after_s,
             last_seen_at=d.last_seen_at,
@@ -273,7 +274,7 @@ def update_device(
         status_str, seconds = compute_status(d, now)
         return DeviceOut(
             device_id=d.device_id,
-            display_name=d.display_name,
+            display_name=safe_display_name(d.device_id, d.display_name),
             heartbeat_interval_s=d.heartbeat_interval_s,
             offline_after_s=d.offline_after_s,
             last_seen_at=d.last_seen_at,
@@ -294,7 +295,7 @@ def list_devices_admin() -> List[DeviceOut]:
             out.append(
                 DeviceOut(
                     device_id=d.device_id,
-                    display_name=d.display_name,
+                    display_name=safe_display_name(d.device_id, d.display_name),
                     heartbeat_interval_s=d.heartbeat_interval_s,
                     offline_after_s=d.offline_after_s,
                     last_seen_at=d.last_seen_at,

@@ -11,6 +11,7 @@ from ..config import settings
 from ..db import db_session
 from ..models import Device, TelemetryPoint, TelemetryRollupHourly
 from ..schemas import DeviceOut, TimeseriesMultiPointOut, TimeseriesPointOut, DeviceSummaryOut
+from ..services.device_identity import safe_display_name
 from ..services.monitor import compute_status
 
 router = APIRouter(prefix="/api/v1", tags=["devices"])
@@ -69,7 +70,7 @@ def list_devices() -> List[DeviceOut]:
             out.append(
                 DeviceOut(
                     device_id=d.device_id,
-                    display_name=d.display_name,
+                    display_name=safe_display_name(d.device_id, d.display_name),
                     heartbeat_interval_s=d.heartbeat_interval_s,
                     offline_after_s=d.offline_after_s,
                     last_seen_at=d.last_seen_at,
@@ -162,7 +163,7 @@ def list_device_summaries(
             out.append(
                 DeviceSummaryOut(
                     device_id=d.device_id,
-                    display_name=d.display_name,
+                    display_name=safe_display_name(d.device_id, d.display_name),
                     heartbeat_interval_s=d.heartbeat_interval_s,
                     offline_after_s=d.offline_after_s,
                     last_seen_at=d.last_seen_at,
@@ -189,7 +190,7 @@ def get_device(device_id: str) -> DeviceOut:
         device_status, seconds = compute_status(d, now)
         return DeviceOut(
             device_id=d.device_id,
-            display_name=d.display_name,
+            display_name=safe_display_name(d.device_id, d.display_name),
             heartbeat_interval_s=d.heartbeat_interval_s,
             offline_after_s=d.offline_after_s,
             last_seen_at=d.last_seen_at,
