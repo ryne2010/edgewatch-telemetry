@@ -7,10 +7,6 @@ on:
         description: "Environment name (dev/prod/etc). Controls service_name prefix + tfstate prefix."
         required: true
         default: "dev"
-      tfvars:
-        description: "Optional Terraform var-file path (e.g., infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars)"
-        required: false
-        default: ""
       image_tag:
         description: "Optional Artifact Registry image tag to pin for terraform apply (defaults to latest existing tag)."
         required: false
@@ -92,7 +88,6 @@ jobs:
       - name: Terraform apply
         env:
           ENV: ${{ github.event.inputs.env }}
-          TFVARS_INPUT: ${{ github.event.inputs.tfvars }}
           IMAGE_TAG_INPUT: ${{ github.event.inputs.image_tag }}
         shell: bash
         run: |
@@ -104,7 +99,6 @@ jobs:
           IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/edgewatch-api"
 
           TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
-          TFVARS_EFFECTIVE="${TFVARS_INPUT}"
           TAG_EFFECTIVE="${IMAGE_TAG_INPUT}"
 
           # Apply should reference a real image tag; default to latest pushed tag in Artifact Registry.
@@ -130,5 +124,4 @@ jobs:
             TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
             AR_REPO="${AR_REPO_EFFECTIVE}" \
             TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}" \
-            TFVARS="${TFVARS_EFFECTIVE}" \
             TAG="${TAG_EFFECTIVE}"

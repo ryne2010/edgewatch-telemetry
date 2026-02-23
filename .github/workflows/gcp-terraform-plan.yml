@@ -7,10 +7,6 @@ on:
         description: "Environment name (dev/prod/etc). Controls service_name prefix + tfstate prefix."
         required: true
         default: "dev"
-      tfvars:
-        description: "Optional Terraform var-file path (e.g., infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars)"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -88,7 +84,6 @@ jobs:
       - name: Terraform plan
         env:
           ENV: ${{ github.event.inputs.env }}
-          TFVARS_INPUT: ${{ github.event.inputs.tfvars }}
           TAG: ${{ github.sha }}
         shell: bash
         run: |
@@ -99,11 +94,9 @@ jobs:
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
 
           TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
-          TFVARS_EFFECTIVE="${TFVARS_INPUT}"
 
           make plan-gcp \
             TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
             TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
             AR_REPO="${AR_REPO_EFFECTIVE}" \
-            TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}" \
-            TFVARS="${TFVARS_EFFECTIVE}"
+            TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}"

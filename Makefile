@@ -781,8 +781,26 @@ build-multiarch: doctor doctor-gcp infra-gcp buildx-init docker-login-gcp
 deploy-gcp-safe-multiarch: build-multiarch apply-gcp migrate-gcp verify-gcp-ready
 
 build-gcp: doctor-gcp infra-gcp grant-cloudbuild-gcp
-	@echo "Building + pushing via Cloud Build: $(IMAGE)"
-	gcloud builds submit --suppress-logs --tag "$(IMAGE)" .
+	@set -euo pipefail; \
+	echo "Building + pushing via Cloud Build: $(IMAGE)"; \
+	BUILD_ID=$$(gcloud builds submit --async --suppress-logs --tag "$(IMAGE)" . --format='value(metadata.build.id)'); \
+	test -n "$$BUILD_ID" || (echo "Failed to start Cloud Build."; exit 1); \
+	echo "Cloud Build started: $$BUILD_ID"; \
+	while true; do \
+		STATUS=$$(gcloud builds describe "$$BUILD_ID" --format='value(status)'); \
+		case "$$STATUS" in \
+			SUCCESS) \
+				echo "Cloud Build succeeded: $$BUILD_ID"; \
+				break ;; \
+			FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED) \
+				echo "Cloud Build failed: $$BUILD_ID (status=$$STATUS)"; \
+				gcloud builds describe "$$BUILD_ID" --format='yaml(id,status,logUrl,results.images)' || true; \
+				exit 1 ;; \
+			*) \
+				echo "Cloud Build status: $$STATUS (build=$$BUILD_ID)"; \
+				sleep 5 ;; \
+		esac; \
+	done
 
 deploy-gcp: build-gcp apply-gcp verify-gcp
 

@@ -7,10 +7,6 @@ on:
         description: "Environment to deploy (dev/prod/etc)."
         required: true
         default: "dev"
-      tfvars:
-        description: "Optional Terraform var-file path (profile)."
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -88,7 +84,6 @@ jobs:
       - name: Build + deploy (safe sequence)
         env:
           ENV: ${{ github.event.inputs.env }}
-          TFVARS_INPUT: ${{ github.event.inputs.tfvars }}
           TAG: ${{ github.sha }}
         shell: bash
         run: |
@@ -99,11 +94,9 @@ jobs:
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
 
           TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
-          TFVARS_EFFECTIVE="${TFVARS_INPUT}"
 
           make deploy-gcp-safe \
             TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
             TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
             AR_REPO="${AR_REPO_EFFECTIVE}" \
-            TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}" \
-            TFVARS="${TFVARS_EFFECTIVE}"
+            TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}"

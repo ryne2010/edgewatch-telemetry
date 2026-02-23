@@ -10,10 +10,6 @@ on:
         description: "Environment to check (dev/prod/etc)."
         required: true
         default: "prod"
-      tfvars:
-        description: "Optional Terraform var-file path."
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -91,7 +87,6 @@ jobs:
       - name: Terraform drift check (plan -detailed-exitcode)
         env:
           ENV: ${{ github.event.inputs.env || 'prod' }}
-          TFVARS_INPUT: ${{ github.event.inputs.tfvars || '' }}
           TAG: ${{ github.sha }}
         shell: bash
         run: |
@@ -102,23 +97,16 @@ jobs:
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
 
           TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
-          TFVARS_EFFECTIVE="${TFVARS_INPUT}"
 
           make tf-init-gcp \
             TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
             TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
             TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}"
 
-          TFVARS_ARG=""
-          if [ -n "${TFVARS_EFFECTIVE}" ]; then
-            TFVARS_ARG="-var-file=${TFVARS_EFFECTIVE}"
-          fi
-
           IMAGE_EFFECTIVE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/edgewatch-api:${TAG}"
 
           set +e
           terraform -chdir="${TF_DIR}" plan -detailed-exitcode -no-color \
-            ${TFVARS_ARG} \
             -var "project_id=${PROJECT_ID}" \
             -var "region=${REGION}" \
             -var "env=${ENV}" \

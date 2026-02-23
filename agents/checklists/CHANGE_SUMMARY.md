@@ -17,6 +17,7 @@
   - `/.github/workflows/terraform-drift.yml`
   - `/.github/workflows/gcp-terraform-plan.yml`
   - all now require `GCP_TF_CONFIG_GCS_PATH` and always fetch `backend.hcl` + `terraform.tfvars` from GCS.
+  - all workflow dispatch `tfvars` inputs were removed (strict GCS-only config source in CI).
   - all now pass `TF_BACKEND_HCL=backend.hcl` so CI does not run tfstate bucket bootstrap requiring bucket-admin privileges.
 - Prevented non-existent image usage in apply:
   - `terraform-apply-gcp` now accepts optional `image_tag` input.
@@ -30,6 +31,7 @@
 - The previous apply path could try to deploy an image tag that was never built in Artifact Registry.
 - CI had temporary broad storage/viewer roles to get unstuck; those are now reduced while preserving deploy capability.
 - Enforcing GCS-backed Terraform config keeps workflow behavior deterministic across envs and avoids bucket-admin operations during routine applies.
+- Removing workflow `tfvars` inputs prevents accidental profile/path drift between local runs and CI deploy lanes.
 
 ### Validation
 
@@ -40,6 +42,8 @@
   - `python scripts/harness.py lint` (fails on existing unrelated notification tests)
   - `python scripts/harness.py typecheck` (pass)
   - `python scripts/harness.py test` (fails on same 3 notification tests)
+- Workflow YAML validation:
+  - `pre-commit run check-yaml --files .github/workflows/terraform-apply-gcp.yml .github/workflows/deploy-gcp.yml .github/workflows/terraform-drift.yml .github/workflows/gcp-terraform-plan.yml` (pass)
 - Reproduced/confirmed old remote workflow failure cause:
   - old `Terraform apply (GCP)` run failed in `bootstrap-state-gcp` due missing `storage.buckets.update` after IAM tightening.
   - local workflow fixes remove that fallback path by requiring `GCP_TF_CONFIG_GCS_PATH` + `TF_BACKEND_HCL`.
