@@ -783,7 +783,7 @@ deploy-gcp-safe-multiarch: build-multiarch apply-gcp migrate-gcp verify-gcp-read
 build-gcp: doctor-gcp infra-gcp grant-cloudbuild-gcp
 	@set -euo pipefail; \
 	echo "Building + pushing via Cloud Build: $(IMAGE)"; \
-	BUILD_ID=$$(gcloud builds submit --async --suppress-logs --tag "$(IMAGE)" . --format='value(metadata.build.id)'); \
+	BUILD_ID=$$(gcloud builds submit --async --suppress-logs --tag "$(IMAGE)" . --format='value(id)' | tr -d '[:space:]'); \
 	test -n "$$BUILD_ID" || (echo "Failed to start Cloud Build."; exit 1); \
 	echo "Cloud Build started: $$BUILD_ID"; \
 	while true; do \
