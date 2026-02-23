@@ -12,6 +12,9 @@ from api.app.models import Alert, AlertPolicy, Device, NotificationDestination, 
 from api.app.services.notifications import process_alert_notification
 
 
+TEST_NOW_UTC = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+
+
 def _settings(**overrides: Any) -> SimpleNamespace:
     state = {
         "alert_webhook_url": "",
@@ -79,7 +82,7 @@ def test_process_alert_notification_records_suppressed_no_adapter(monkeypatch) -
 
     with _create_session() as session:
         alert = _seed_alert(session)
-        process_alert_notification(session, alert, now=datetime.now(timezone.utc))
+        process_alert_notification(session, alert, now=TEST_NOW_UTC)
         session.commit()
 
         rows = session.query(NotificationEvent).all()
@@ -133,7 +136,7 @@ def test_process_alert_notification_delivers_to_all_enabled_destinations(monkeyp
         )
         session.flush()
 
-        process_alert_notification(session, alert, now=datetime.now(timezone.utc))
+        process_alert_notification(session, alert, now=TEST_NOW_UTC)
         session.commit()
 
         assert sorted(calls) == [
@@ -175,7 +178,7 @@ def test_process_alert_notification_telegram_requires_chat_id(monkeypatch) -> No
         )
         session.flush()
 
-        process_alert_notification(session, alert, now=datetime.now(timezone.utc))
+        process_alert_notification(session, alert, now=TEST_NOW_UTC)
         session.commit()
 
         assert calls == []
@@ -202,7 +205,7 @@ def test_process_alert_notification_uses_env_fallback_when_db_destinations_missi
 
     with _create_session() as session:
         alert = _seed_alert(session)
-        process_alert_notification(session, alert, now=datetime.now(timezone.utc))
+        process_alert_notification(session, alert, now=TEST_NOW_UTC)
         session.commit()
 
         assert calls == ["https://hooks.example.com/env-default"]
