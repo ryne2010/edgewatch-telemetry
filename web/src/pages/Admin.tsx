@@ -12,6 +12,7 @@ import {
   type NotificationEventOut,
 } from '../api'
 import { useAppSettings } from '../app/settings'
+import { useAdminAccess } from '../hooks/useAdminAccess'
 import {
   Badge,
   Button,
@@ -32,11 +33,12 @@ import { adminAccessHint } from '../utils/adminAuth'
 
 type AdminTab = 'events' | 'ingestions' | 'drift' | 'notifications' | 'exports'
 
-function Callout(props: { title: string; children: React.ReactNode }) {
+function Callout(props: { title: string; children: React.ReactNode; tone?: 'default' | 'warning' }) {
+  const warning = props.tone === 'warning'
   return (
-    <div className="rounded-lg border bg-muted/30 p-4">
-      <div className="text-sm font-medium">{props.title}</div>
-      <div className="mt-1 text-sm text-muted-foreground">{props.children}</div>
+    <div className={warning ? 'rounded-lg border border-destructive/60 bg-destructive/10 p-4 shadow-sm' : 'rounded-lg border bg-muted/30 p-4'}>
+      <div className={warning ? 'text-sm font-semibold text-destructive' : 'text-sm font-medium'}>{props.title}</div>
+      <div className={warning ? 'mt-1 text-sm text-foreground' : 'mt-1 text-sm text-muted-foreground'}>{props.children}</div>
     </div>
   )
 }
@@ -53,13 +55,23 @@ export function AdminPage() {
 
   const adminEnabled = Boolean(healthQ.data?.features?.admin?.enabled)
   const adminAuthMode = String(healthQ.data?.features?.admin?.auth_mode ?? 'key').toLowerCase()
-  const adminAccess = adminEnabled && (adminAuthMode === 'none' || Boolean(adminKey))
-  const adminCred = adminAuthMode === 'key' ? (adminKey ?? '') : ''
+  const { adminAccess, adminCred, keyRequired, keyInvalid, keyValidating } = useAdminAccess({
+    adminEnabled,
+    adminAuthMode,
+    adminKey,
+  })
+  const inputsDisabled = !adminAccess
 
   const { toast } = useToast()
   const [tab, setTab] = React.useState<AdminTab>('ingestions')
 
   const qc = useQueryClient()
+
+  React.useEffect(() => {
+    // Ensure admin datasets refetch whenever auth posture changes (mode or key),
+    // so stale 401 errors from a previous key do not stick around.
+    qc.invalidateQueries({ queryKey: ['admin'] })
+  }, [qc, adminAuthMode, adminKey])
 
   // Device provisioning (admin-only).
   const [provId, setProvId] = React.useState('')
@@ -74,7 +86,7 @@ export function AdminPage() {
     mutationFn: async () => {
       const id = provId.trim()
       const token = provToken.trim()
-      if (adminAuthMode === 'key' && !adminKey) throw new Error('Admin key missing')
+      if (adminAuthMode === 'key' && !adminAccess) throw new Error('Valid admin key required')
       if (!id) throw new Error('Device ID is required')
       if (!token) throw new Error('Token is required')
 
@@ -277,9 +289,17 @@ export function AdminPage() {
             <Badge variant="success" className="ml-auto">
               admin: IAM
             </Badge>
-          ) : adminKey ? (
+          ) : keyValidating ? (
+            <Badge variant="outline" className="ml-auto">
+              validating key…
+            </Badge>
+          ) : adminAccess ? (
             <Badge variant="success" className="ml-auto">
               admin: key
+            </Badge>
+          ) : keyInvalid ? (
+            <Badge variant="destructive" className="ml-auto">
+              invalid key
             </Badge>
           ) : (
             <Badge variant="outline" className="ml-auto">
@@ -299,9 +319,15 @@ export function AdminPage() {
           Use the dedicated admin service (recommended) or enable admin routes for this service.
           See <Link to="/meta" className="underline">System</Link> for environment details.
         </Callout>
-      ) : adminAuthMode === 'key' && !adminKey ? (
-        <Callout title="Admin key required">
+      ) : keyRequired ? (
+        <Callout title="Admin key required" tone="warning">
           Configure an admin key in <Link to="/settings" className="underline">Settings</Link>.
+        </Callout>
+      ) : keyValidating ? (
+        <Callout title="Validating admin key">Checking admin access…</Callout>
+      ) : keyInvalid ? (
+        <Callout title="Invalid admin key" tone="warning">
+          The configured key was rejected. Update it in <Link to="/settings" className="underline">Settings</Link>.
         </Callout>
       ) : null}
 
@@ -317,19 +343,25 @@ export function AdminPage() {
           <CardContent className="grid gap-4 lg:grid-cols-3">
             <div className="space-y-2">
               <Label>Device ID</Label>
-              <Input value={provId} onChange={(e) => setProvId(e.target.value)} placeholder="well-001" />
+              <Input value={provId} onChange={(e) => setProvId(e.target.value)} placeholder="well-001" disabled={inputsDisabled} />
             </div>
             <div className="space-y-2">
               <Label>Display name (optional)</Label>
-              <Input value={provName} onChange={(e) => setProvName(e.target.value)} placeholder="Well 001" />
+              <Input value={provName} onChange={(e) => setProvName(e.target.value)} placeholder="Well 001" disabled={inputsDisabled} />
             </div>
             <div className="space-y-2">
               <Label>Token</Label>
               <div className="flex gap-2">
-                <Input value={provToken} onChange={(e) => setProvToken(e.target.value)} placeholder="paste or generate" />
+                <Input
+                  value={provToken}
+                  onChange={(e) => setProvToken(e.target.value)}
+                  placeholder="paste or generate"
+                  disabled={inputsDisabled}
+                />
                 <Button
                   type="button"
                   variant="outline"
+                  disabled={inputsDisabled}
                   onClick={() => {
                     const t = (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).replace(/-/g, '')
                     setProvToken(t)
@@ -343,16 +375,26 @@ export function AdminPage() {
 
             <div className="space-y-2">
               <Label>Heartbeat interval (seconds)</Label>
-              <Input value={provHeartbeat} onChange={(e) => setProvHeartbeat(e.target.value)} placeholder="300" />
+              <Input
+                value={provHeartbeat}
+                onChange={(e) => setProvHeartbeat(e.target.value)}
+                placeholder="300"
+                disabled={inputsDisabled}
+              />
             </div>
             <div className="space-y-2">
               <Label>Offline after (seconds)</Label>
-              <Input value={provOfflineAfter} onChange={(e) => setProvOfflineAfter(e.target.value)} placeholder="900" />
+              <Input
+                value={provOfflineAfter}
+                onChange={(e) => setProvOfflineAfter(e.target.value)}
+                placeholder="900"
+                disabled={inputsDisabled}
+              />
             </div>
             <div className="space-y-2">
               <Label>Enabled</Label>
               <div className="flex items-center gap-2">
-                <Checkbox checked={provEnabled} onChange={(e) => setProvEnabled(e.target.checked)} />
+                <Checkbox checked={provEnabled} onChange={(e) => setProvEnabled(e.target.checked)} disabled={inputsDisabled} />
                 <span className="text-sm text-muted-foreground">Device can ingest telemetry</span>
               </div>
             </div>
@@ -360,7 +402,7 @@ export function AdminPage() {
             <div className="lg:col-span-3 flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                disabled={upsertMutation.isPending}
+                disabled={inputsDisabled || upsertMutation.isPending}
                 onClick={() => upsertMutation.mutate()}
               >
                 {upsertMutation.isPending ? 'Saving…' : 'Create / Update device'}
@@ -381,7 +423,12 @@ export function AdminPage() {
             <CardContent className="grid gap-4 lg:grid-cols-3">
               <div className="space-y-2">
                 <Label>Device ID (optional)</Label>
-                <Input value={deviceRaw} onChange={(e) => setDeviceRaw(e.target.value)} placeholder="device-001" />
+                <Input
+                  value={deviceRaw}
+                  onChange={(e) => setDeviceRaw(e.target.value)}
+                  placeholder="device-001"
+                  disabled={inputsDisabled}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Status (exports tab)</Label>
@@ -389,6 +436,7 @@ export function AdminPage() {
                   value={statusRaw}
                   onChange={(e) => setStatusRaw(e.target.value)}
                   placeholder="success | failed | running"
+                  disabled={inputsDisabled}
                 />
               </div>
               <div className="space-y-2">

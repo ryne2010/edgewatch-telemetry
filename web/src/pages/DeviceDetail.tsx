@@ -1,5 +1,5 @@
 import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Link, useParams } from '@tanstack/react-router'
 import {
@@ -30,6 +30,7 @@ import {
   useToast,
 } from '../ui-kit'
 import { useAppSettings } from '../app/settings'
+import { useAdminAccess } from '../hooks/useAdminAccess'
 import { fmtDateTime, fmtNumber } from '../utils/format'
 import { adminAccessHint } from '../utils/adminAuth'
 
@@ -320,6 +321,7 @@ export function DeviceDetailPage() {
   const { deviceId } = useParams({ from: '/devices/$deviceId' })
   const { adminKey } = useAppSettings()
   const { toast } = useToast()
+  const qc = useQueryClient()
 
   const healthQ = useQuery({
     queryKey: ['health'],
@@ -331,8 +333,16 @@ export function DeviceDetailPage() {
 
   const adminEnabled = Boolean(healthQ.data?.features?.admin?.enabled)
   const adminAuthMode = String(healthQ.data?.features?.admin?.auth_mode ?? 'key').toLowerCase()
-  const adminAccess = adminEnabled && (adminAuthMode === 'none' || Boolean(adminKey))
-  const adminCred = adminAuthMode === 'key' ? (adminKey ?? '') : ''
+  const { adminAccess, adminCred, keyRequired, keyValidating, keyInvalid } = useAdminAccess({
+    adminEnabled,
+    adminAuthMode,
+    adminKey,
+  })
+
+  React.useEffect(() => {
+    // Refresh cached admin queries when key/mode changes to avoid sticky auth errors.
+    qc.invalidateQueries({ queryKey: ['admin'] })
+  }, [qc, adminAuthMode, adminKey])
 
   const [tab, setTab] = React.useState<TabKey>('overview')
   const [bucket, setBucket] = React.useState<Bucket>('minute')
@@ -699,9 +709,17 @@ export function DeviceDetailPage() {
         <Badge variant="outline" className="ml-auto">
           Admin (IAM)
         </Badge>
-      ) : adminKey ? (
+      ) : keyValidating ? (
+        <Badge variant="outline" className="ml-auto">
+          Validating admin key…
+        </Badge>
+      ) : adminAccess ? (
         <Badge variant="outline" className="ml-auto">
           Admin (key)
+        </Badge>
+      ) : keyInvalid ? (
+        <Badge variant="destructive" className="ml-auto">
+          Invalid admin key
         </Badge>
       ) : (
         <Badge variant="outline" className="ml-auto">
@@ -995,12 +1013,6 @@ export function DeviceDetailPage() {
             </CardContent>
           </Card>
 
-          {!contractQ.isLoading && contract ? (
-            <Callout title="Telemetry contract">
-              UI options are driven by <code className="font-mono">/api/v1/contracts/telemetry</code>. Version{' '}
-              <span className="font-mono">{contract.version}</span> ({contract.sha256.slice(0, 12)}…).
-            </Callout>
-          ) : null}
         </div>
       ) : null}
 
@@ -1110,9 +1122,16 @@ export function DeviceDetailPage() {
 
       {tab === 'ingestions' ? (
         <div className="space-y-6">
-          {adminAuthMode === 'key' && !adminKey ? (
-            <Callout title="Admin key required">
-              To view ingestion audit trails, configure an admin key in <Link to="/settings" className="underline">Settings</Link>.
+          {adminAuthMode === 'key' && !adminAccess ? (
+            <Callout title={keyValidating ? 'Validating admin key' : keyInvalid ? 'Invalid admin key' : 'Admin key required'}>
+              {keyValidating ? (
+                'Checking admin access…'
+              ) : (
+                <>
+                  To view ingestion audit trails, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
+                  <Link to="/settings" className="underline">Settings</Link>.
+                </>
+              )}
             </Callout>
           ) : null}
 
@@ -1142,9 +1161,16 @@ export function DeviceDetailPage() {
 
       {tab === 'drift' ? (
         <div className="space-y-6">
-          {adminAuthMode === 'key' && !adminKey ? (
-            <Callout title="Admin key required">
-              To view drift events, configure an admin key in <Link to="/settings" className="underline">Settings</Link>.
+          {adminAuthMode === 'key' && !adminAccess ? (
+            <Callout title={keyValidating ? 'Validating admin key' : keyInvalid ? 'Invalid admin key' : 'Admin key required'}>
+              {keyValidating ? (
+                'Checking admin access…'
+              ) : (
+                <>
+                  To view drift events, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
+                  <Link to="/settings" className="underline">Settings</Link>.
+                </>
+              )}
             </Callout>
           ) : null}
 
@@ -1174,10 +1200,16 @@ export function DeviceDetailPage() {
 
       {tab === 'notifications' ? (
         <div className="space-y-6">
-          {adminAuthMode === 'key' && !adminKey ? (
-            <Callout title="Admin key required">
-              To view notification audit trails, configure an admin key in{' '}
-              <Link to="/settings" className="underline">Settings</Link>.
+          {adminAuthMode === 'key' && !adminAccess ? (
+            <Callout title={keyValidating ? 'Validating admin key' : keyInvalid ? 'Invalid admin key' : 'Admin key required'}>
+              {keyValidating ? (
+                'Checking admin access…'
+              ) : (
+                <>
+                  To view notification audit trails, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
+                  <Link to="/settings" className="underline">Settings</Link>.
+                </>
+              )}
             </Callout>
           ) : null}
 

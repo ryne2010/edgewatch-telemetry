@@ -124,11 +124,25 @@ Endpoints:
 Fast dev lane (tight edit → reload loop):
 
 ```bash
+make dev      # db + api hot reload + web dev + simulator fleet
+```
+
+Manual equivalent:
+
+```bash
 make db-up
 make api-dev   # API w/ hot reload on http://localhost:8080
 
 # In a second terminal:
 make web-dev   # UI dev server on http://localhost:5173 (proxies /api to :8080)
+```
+
+Optional toggles:
+
+```bash
+DEV_START_SIMULATE=0 make dev         # disable simulator
+DEV_STOP_DB_ON_EXIT=1 make dev        # also stop DB when exiting
+DEV_BOOTSTRAP_DEMO_DEVICE=0 make dev  # skip demo-device bootstrap
 ```
 
 ### 4) Create a demo device (admin)

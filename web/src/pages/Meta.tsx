@@ -156,7 +156,9 @@ export function MetaPage() {
         <Card>
           <CardHeader>
             <CardTitle>Contracts</CardTitle>
-            <CardDescription>Contracts drive edge optimization, UI options, and ingest validation.</CardDescription>
+            <CardDescription>
+              Active telemetry and edge-policy contracts used for ingest validation, policy enforcement, and UI behavior.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div>

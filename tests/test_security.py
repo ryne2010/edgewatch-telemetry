@@ -64,3 +64,17 @@ def test_require_admin_key_mode_uses_admin_key_fallback_actor(monkeypatch) -> No
 
     actor = require_admin(x_admin_key="top-secret")
     assert actor == "dev-admin@local.edgewatch"
+
+
+def test_require_admin_key_mode_accepts_assignment_style_header(monkeypatch) -> None:
+    _set_security_settings(monkeypatch, admin_auth_mode="key", admin_api_key="top-secret")
+
+    actor = require_admin(x_admin_key="ADMIN_API_KEY=top-secret")
+    assert actor == "dev-admin@local.edgewatch"
+
+
+def test_require_admin_key_mode_accepts_quoted_header(monkeypatch) -> None:
+    _set_security_settings(monkeypatch, admin_auth_mode="key", admin_api_key="top-secret")
+
+    actor = require_admin(x_admin_key='"top-secret"')
+    assert actor == "dev-admin@local.edgewatch"

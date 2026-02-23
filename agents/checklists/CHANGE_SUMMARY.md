@@ -1576,6 +1576,114 @@
 
 - `python scripts/harness.py lint` ✅
 - `python scripts/harness.py typecheck` ✅
+
+## Strict Admin Key Gating (2026-02-23)
+
+### What changed
+
+- Added shared admin-access validation hook:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/hooks/useAdminAccess.ts`
+  - validates key-mode admin access against `/api/v1/admin/events?limit=1`.
+- Wired validated admin state into app shell/nav:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/RootLayout.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx`
+- Updated admin access gating in pages to rely on validated access (not just non-empty key):
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Contracts.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+
+### Why it changed
+
+- Prevented admin-only UI affordances (for example, Contracts nav/page visibility) from appearing when an incorrect key is present in browser state.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+
+## Settings Admin Key Validation UX (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+- Changed `Save (session)` and `Save + persist` behavior:
+  - key is now validated against admin API before being stored
+  - success toast is shown only when validation succeeds
+  - invalid key now returns an error toast with access guidance
+- Replaced raw inline JSON error blocks in Settings with user-facing guidance callouts for admin access/load/save failures.
+
+### Why it changed
+
+- Prevented misleading success toasts when an invalid admin key is entered and removed raw backend error payloads from visible UI content.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+
+## Devices Page Policy Blurb Removal (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx`
+- Removed the right-side `Policy` info block containing:
+  - `policy: v1 · <sha>`
+  - implementation note about `/api/v1/devices/summary` + `/api/v1/alerts?open_only=true`
+- Adjusted the filters grid from three columns to two columns to match remaining content.
+
+### Why it changed
+
+- Simplified the Devices page by removing low-value implementation-detail text from the UI.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+
+## Device Detail Cleanup (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+- Removed the `Telemetry contract` callout card from the device detail page (`/devices/:deviceId`) overview section.
+
+### Why it changed
+
+- Simplified the page and removed low-value duplicate contract context from the bottom of the device detail view.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+
+## Settings: Contract Policy Controls (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+- Added a new admin-only `Contract policy controls` card on Settings.
+- Added a curated UI for high-signal edge policy values:
+  - reporting cadence
+  - key alert thresholds
+  - selected cost caps
+- Added a full `Edit edge policy contract (YAML)` editor section on Settings.
+- Both save paths use existing admin contract endpoints and remain inactive when admin mode is not active.
+- Kept `/contracts` page behavior intact.
+
+### Why it changed
+
+- Allows operators to manage important contract policy settings directly from Settings while preserving full YAML control for advanced edits.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
 - `python scripts/harness.py test` ✅
 
 ### Risks / rollout notes
@@ -1686,3 +1794,654 @@
 ### Follow-ups / tech debt
 
 - [ ] Optional: add full integration tests for `/timeseries` and `/timeseries_multi` with a Postgres test fixture.
+
+## Professional Copy Refresh (2026-02-22)
+
+### What changed
+
+- Updated `Meta` contracts description for clearer operational intent:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Meta.tsx`
+  - now describes contracts as active telemetry/edge-policy artifacts used for validation, policy enforcement, and UI behavior.
+- Refined `Settings` copy to a professional operations tone:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+  - removed the explicit “Theme is stored in localStorage.” wording
+  - removed informal “Tip” style helper text (including demo-device references)
+  - tightened security and admin-access descriptions for production posture
+  - updated links card description to “Operational links.”
+
+### Why it changed
+
+- Improve clarity and professionalism of operator-facing language and remove tutorial/portfolio-style wording.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+
+### Risks / rollout notes
+
+- Copy-only change; no API behavior, auth model, or data contract changes.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: perform a broader UX copy pass for consistent enterprise tone across all pages.
+
+## Admin Key UX Clarification (2026-02-22)
+
+### What changed
+
+- Clarified admin auth failure guidance:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/utils/adminAuth.ts`
+  - 401 hint now explicitly states the key must exactly match server `ADMIN_API_KEY` and includes the local default (`dev-admin-key`).
+- Clarified settings helper copy:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+  - admin key help text now explicitly states the key must match server `ADMIN_API_KEY`.
+
+### Why it changed
+
+- Reduce operator confusion when a saved key still fails with `401 Invalid admin key` by making the mismatch cause explicit in-product.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+- Manual verification against local API:
+  - `X-Admin-Key: dev-admin-key` returns `200` on `/api/v1/admin/events`
+  - mismatched key returns `401 Invalid admin key`
+
+### Risks / rollout notes
+
+- Copy-only UX clarification; no auth logic or API contract changes.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add a “Validate admin key” action on Settings to test credentials before navigating to Admin pages.
+
+## Admin Key 401 Persistence Fix (2026-02-22)
+
+### What changed
+
+- Forced admin-query refetch on credential posture changes:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+  - invalidates cached `['admin', ...]` queries when auth mode or admin key changes to prevent sticky 401 states from prior credentials.
+- Normalized backend admin key input:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/config.py`
+  - reads `ADMIN_API_KEY` via trimmed optional-string helper to avoid hidden leading/trailing whitespace mismatches.
+- Added regression coverage:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_route_surface_toggles.py`
+  - verifies `load_settings()` trims `ADMIN_API_KEY`.
+
+### Why it changed
+
+- Resolve repeated `401 Invalid admin key` outcomes after key updates by ensuring the frontend does not keep stale auth-query state, and by hardening server-side key parsing against accidental whitespace.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`116 passed`)
+
+### Risks / rollout notes
+
+- Frontend now performs extra admin-query invalidation when key/mode changes; expected to be low-cost and bounded to admin query namespace.
+- `ADMIN_API_KEY` trimming changes behavior only for accidental surrounding whitespace.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add a one-click “validate key” probe in Settings for immediate credential verification.
+
+## Admin Key Normalization Hardening (2026-02-22)
+
+### What changed
+
+- Normalized admin key input client-side before storage and request headers:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/app/settings.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+  - accepts common paste formats (`ADMIN_API_KEY=...`, `export ADMIN_API_KEY=...`, quoted values).
+- Normalized admin key server-side before HMAC compare:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/auth/principal.py`
+  - prevents format/paste artifacts from causing false `401 Invalid admin key`.
+- Added backend regression tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_security.py`
+  - covers assignment-style and quoted admin-key headers.
+
+### Why it changed
+
+- Repeated operator reports of `401 Invalid admin key` despite saving keys indicated key-format mismatch risk (copied env syntax/quotes), not only value mismatch.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`118 passed`)
+- Manual curl verification against local API:
+  - `X-Admin-Key: "dev-admin-key"` -> `200`
+  - `X-Admin-Key: ADMIN_API_KEY=dev-admin-key` -> `200`
+  - `X-Admin-Key: export ADMIN_API_KEY=dev-admin-key` -> `200`
+
+### Risks / rollout notes
+
+- Admin key parser is now intentionally tolerant of common env/paste wrappers; auth still requires exact normalized key match.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add a dedicated Settings “Validate key” action that probes `/api/v1/admin/events?limit=1` and surfaces immediate pass/fail.
+
+## UI-Managed Alert Webhook Destinations (2026-02-22)
+
+### What changed
+
+- Added persistent notification destination model and migration:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0011_notification_destinations.py`
+  - new table: `notification_destinations` (name, channel, kind, webhook_url, enabled, timestamps).
+- Added admin API for destination management:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+  - endpoints:
+    - `GET /api/v1/admin/notification-destinations`
+    - `POST /api/v1/admin/notification-destinations`
+    - `PATCH /api/v1/admin/notification-destinations/{destination_id}`
+    - `DELETE /api/v1/admin/notification-destinations/{destination_id}`
+  - includes URL validation, masked URL responses, and admin audit events.
+- Extended schemas for destination CRUD:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+- Updated notification delivery pipeline:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/notifications.py`
+  - uses all enabled UI-configured destinations (supports multiple webhooks).
+  - keeps backward compatibility fallback to `ALERT_WEBHOOK_URL` when no DB destinations are configured.
+- Added Settings UI management for webhook destinations:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+  - users can add, list, enable/disable, and remove multiple webhook destinations.
+- Added frontend API bindings/types:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+- Added notification service tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_notifications_service.py`
+  - covers no-adapter behavior, multi-destination delivery, and env fallback.
+
+### Why it changed
+
+- Enable operators to configure alert webhook URLs directly in the UI and support multiple destinations without editing deployment environment variables.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`121 passed`)
+- Runtime verification:
+  - rebuilt and restarted compose services with migration (`docker compose up -d --build migrate api`)
+  - verified `POST` + `GET` + `DELETE` on `/api/v1/admin/notification-destinations` with `X-Admin-Key`.
+
+### Risks / rollout notes
+
+- Webhook URLs are persisted in database storage for UI management; responses expose only masked URL + fingerprint.
+- If at least one DB destination exists, delivery uses DB destinations; env `ALERT_WEBHOOK_URL` remains fallback only when no DB destination is configured.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add per-destination test-send action in Settings.
+- [ ] Optional: add destination-level rate controls / channel-specific routing policy.
+
+## Discord/Telegram Notification Kinds (2026-02-22)
+
+### What changed
+
+- Extended alert delivery kind support:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/config.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - allowed kinds now include `discord` and `telegram` (while keeping `generic` and `slack` for compatibility).
+- Implemented Discord/Telegram payload behavior:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/notifications.py`
+  - `discord`: sends `content` message payload.
+  - `telegram`: requires `chat_id` in webhook URL query and sends Telegram-style payload.
+- Updated Settings UI webhook kind options:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+  - primary options now `Discord`, `Telegram`, plus `Generic`.
+  - added Telegram guidance for `chat_id` query requirement.
+- Updated frontend API typing:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+- Added test coverage:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_notifications_service.py`
+  - validates multi-destination delivery including Discord+Telegram and Telegram missing-`chat_id` failure behavior.
+
+### Why it changed
+
+- Align notification delivery with operator requirements to use Discord/Telegram instead of Slack.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`122 passed`)
+- Runtime verification:
+  - rebuilt API container (`docker compose up -d --build api`)
+  - confirmed admin destination API accepts `discord` and `telegram` kinds.
+
+### Risks / rollout notes
+
+- Telegram delivery now requires `chat_id` on the configured URL query string; otherwise events are recorded as `delivery_failed` with explicit reason.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: support Telegram `chat_id` as a dedicated field instead of URL query parsing.
+
+## Admin-Only Contracts + Edge Policy Editing (2026-02-22)
+
+### What changed
+
+- Restricted Contracts navigation visibility to authenticated admin access:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/RootLayout.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx`
+  - Contracts now require both admin routes enabled and active admin access.
+- Added Contracts page admin gating + edit UX:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Contracts.tsx`
+  - non-admin users now see explicit access callouts.
+  - admins can edit active edge-policy YAML inline and save/reset changes.
+- Added admin contract source/update API bindings:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+- Added backend support for editable edge policy contract:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/edge_policy.py`
+  - new helpers to read/write YAML source with full policy validation and cache invalidation.
+- Added admin endpoints for edge policy contract management:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+  - `GET /api/v1/admin/contracts/edge-policy/source`
+  - `PATCH /api/v1/admin/contracts/edge-policy`
+  - update calls are audit-attributed via `admin_events`.
+- Added schemas/docs/tests for the new contract edit surface:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_route_surface_toggles.py`
+
+### Why it changed
+
+- Ensure contract controls are limited to admin users.
+- Enable direct admin management of the active edge policy contract without manual file edits outside the UI.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`125 passed`)
+
+### Risks / rollout notes
+
+- Contract edits persist to the active YAML artifact on disk; in ephemeral/readonly runtimes this can fail with a server error.
+- Validation prevents saving malformed policy content or version mismatches.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: add optimistic concurrency (expected hash) for multi-admin edit collisions.
+
+## Admin Page Input Lock + Key Callout Emphasis (2026-02-22)
+
+### What changed
+
+- Updated admin input behavior in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+- Added a shared `inputsDisabled` guard tied to admin access state.
+- Applied disabled state to all Admin page text inputs (and related provisioning controls), so fields are inactive when admin is inactive.
+- Updated `Callout` to support a warning tone and applied it to the `Admin key required` message for stronger visual emphasis.
+
+### Why it changed
+
+- Prevent accidental interaction with admin form controls when no active admin access is present.
+- Make missing-admin-key state more obvious and actionable.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+
+### Risks / rollout notes
+
+- None beyond presentation/state changes in the Admin UI.
+
+### Follow-ups / tech debt
+
+- [ ] Optional: apply warning callout variant to other access-blocked admin contexts for consistency.
+
+## Sidebar Footer Reachability (2026-02-22)
+
+### What changed
+
+- Updated desktop shell layout in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx`
+- Made the desktop sidebar viewport-pinned (`sticky top-0 h-screen`) instead of stretching with full page content height.
+- Enabled internal scrolling for long nav lists (`overflow-y-auto`) so footer actions remain reachable.
+
+### Why it changed
+
+- Prevented a UX issue where users had to scroll to the bottom of long pages to access sidebar footer controls (Theme toggle / API Docs links).
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+
+### Risks / rollout notes
+
+- Low risk CSS-only layout change scoped to desktop sidebar behavior.
+
+## Idempotent Demo Device Bootstrap (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile`
+- `make demo-device` is now idempotent:
+  - first attempts `POST /api/v1/admin/devices`
+  - on `409 Conflict`, automatically falls back to `PATCH /api/v1/admin/devices/{device_id}`
+  - prints final response body in either path
+
+### Why it changed
+
+- Rerunning local setup was failing when the demo device already existed, causing noisy failures during normal iteration.
+
+### How it was validated
+
+- `make demo-device` ✅
+  - returned `Demo device already existed; updated: demo-well-001`
+
+### Risks / rollout notes
+
+- Low risk; scoped to local developer tooling behavior.
+
+## Settings Layout Cleanup (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+- Removed the `Links` card from the Settings page.
+- Adjusted the Settings card grid to `items-start` so cards keep natural height and `Appearance` no longer stretches to the full row height.
+
+### Why it changed
+
+- Simplified the Settings page and corrected card sizing behavior for a cleaner professional layout.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+
+## Settings YAML-to-Controls Sync Hardening (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+- Hardened contract YAML numeric extraction used by `Contract policy controls`:
+  - accepts `key : value` and `key: value` spacing variants
+  - normalizes quoted numeric literals and numeric underscores (for example `"30"`, `50_000_000`)
+- Updated contract control sync behavior so YAML edits re-sync controls even when the draft initializes later:
+  - `policyYamlDraft` changes now sync against `importantDraft` with fallback to `importantInitial`
+  - effect now depends on both `policyYamlDraft` and `importantInitial`
+- Updated YAML key replacement regex used by `Save policy values` to also support `key : value` formatting.
+
+### Why it changed
+
+- Users editing `Edit edge policy contract (YAML)` could end up with stale values in `Contract policy controls` when YAML formatting varied or when YAML was edited before the controls draft state fully initialized.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`125 passed`)
+
+### Risks / rollout notes
+
+- YAML-to-controls sync still intentionally targets the explicit high-signal key list shown in `Contract policy controls`; non-exposed contract keys remain YAML-only.
+
+## Contracts UI Consolidation Into Settings (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Settings.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Contracts.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/RootLayout.tsx`
+- Moved contract details previously shown on `/contracts` into Settings (admin-active only):
+  - telemetry contract table (metrics/types/units/descriptions)
+  - edge policy contract summary (reporting + alert thresholds)
+  - delta thresholds table
+- Kept existing quick `Contract policy controls` and full `Edit edge policy contract (YAML)` sections in Settings.
+- Contract sections on Settings now render only when admin mode is active.
+- Removed `Contracts` from sidebar navigation.
+- Simplified `/contracts` page to a handoff card linking users to Settings.
+
+### Why it changed
+
+- Consolidates all contract management and visibility into one admin-focused page and removes duplicate surfaces.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`125 passed`)
+
+### Risks / rollout notes
+
+- Users with old `/contracts` bookmarks are not blocked (page remains), but editing/inspection now happens in Settings.
+
+## One-Command Host Dev Lane (`make dev`) (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEV_FAST.md`
+- Added `make dev` target to run the fast host dev loop in one command:
+  - starts local DB container (`db-up` equivalent)
+  - starts API with hot reload on `http://localhost:8080`
+  - waits for API readiness (`/readyz`)
+  - bootstraps demo device by default (`make demo-device` against `:8080`)
+  - starts Vite dev server on `http://localhost:5173`
+  - starts simulator fleet against host API by default
+  - handles Ctrl-C cleanup for spawned host processes
+- Added `make dev` tuning env vars:
+  - `DEV_START_SIMULATE=0`
+  - `DEV_BOOTSTRAP_DEMO_DEVICE=0`
+  - `DEV_STOP_DB_ON_EXIT=1`
+
+### Why it changed
+
+- Simplifies local development into a single command while retaining hot reload for API and UI.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`125 passed`)
+
+### Risks / rollout notes
+
+- `make dev` intentionally runs long-lived processes in one terminal; logs from API/UI/simulators are interleaved.
+- Default behavior leaves the DB container running after exit (`DEV_STOP_DB_ON_EXIT=0`) for faster restarts.
+
+## Dashboard Tile Filter Navigation Sync (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+- Dashboard stat tiles now navigate with filter-aware query params:
+  - `Online` -> `/devices?status=online`
+  - `Offline` -> `/devices?status=offline`
+  - `Open alerts` -> `/alerts?openOnly=true`
+- Devices page now initializes and syncs filter state from URL search params (`status`, `q`/`search`, `openAlertsOnly`).
+- Alerts page now initializes and syncs the `openOnly` filter from URL search params (`openOnly`/`open_only`).
+
+### Why it changed
+
+- Tile clicks previously navigated to the correct page path but did not carry or apply the expected filter state, causing mismatch between dashboard intent and destination-page filters.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`125 passed`)
+
+### Risks / rollout notes
+
+- URL filter sync currently targets the filters wired from dashboard tiles and common aliases; additional advanced filter state remains local unless explicitly encoded in search params.
+
+## Alerts Page Routing Audit Card Removal (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+- Removed the `Routing audit` card section from the Alerts page.
+- Removed card-only derived state and access-hint wiring that became unused after card removal.
+- Updated Alerts page description copy to remove routing-audit wording.
+
+### Why it changed
+
+- Simplify the Alerts page by removing the routing-audit panel per product direction.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`125 passed`)
+
+## Alerts Summary Tiles: Interactive Feed Filters (2026-02-23)
+
+### What changed
+
+- Updated:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`
+- Made top summary tiles interactive (keyboard + click):
+  - `Total` tile -> sets feed resolution filter to `all` and scrolls to Feed
+  - `Open` tile -> sets feed resolution filter to `open` and scrolls to Feed
+  - `Resolved` tile -> sets feed resolution filter to `resolved` and scrolls to Feed
+  - `Page size` tile -> scrolls to Feed controls
+- Added a tri-state feed resolution filter model (`all|open|resolved`) and corresponding Feed buttons.
+- Extended alert search-param parsing to support resolution filter mapping:
+  - `openOnly/open_only` -> `open`
+  - `resolvedOnly/resolved_only` -> `resolved`
+  - optional explicit `resolution=all|open|resolved`
+- Kept dashboard deep-link behavior compatible (`/alerts?openOnly=true`).
+
+### Why it changed
+
+- Align tile interactions with operator expectations so summary cards act as quick pivots into the Feed with the correct filter state.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`125 passed`)
+
+## Dashboard Timeline Relocation + Expansion (2026-02-23)
+
+### What changed
+
+- Moved timeline functionality off Alerts and onto Dashboard:
+  - Added a new, richer `Timeline` card to `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`.
+  - Removed the old timeline card from `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx`.
+- Expanded timeline capability on Dashboard:
+  - Added window controls (`24h`, `72h`, `7d`, `14d`).
+  - Added status scope controls (`Open only`, `Open + resolved`).
+  - Added severity scope controls (`All`, `Critical`, `Warning`, `Info`).
+  - Added summary tiles: alerts in scope, distinct devices, peak hour, latest alert.
+  - Added severity sparklines (`total`, `critical`, `warning`, `info`).
+  - Added daily drill-down with per-day totals and sample alert rows.
+  - Added top impacted devices and top alert types panels.
+  - Added “Open in Alerts” deep-link preserving resolution/severity context.
+- Improved Alerts page filter parsing to support `severity` query parameter initialization, so links from Dashboard apply expected feed filters.
+
+### Why it changed
+
+- You requested that Timeline live on Dashboard instead of Alerts.
+- The prior Timeline card had limited utility; the new Dashboard version adds practical incident-triage functionality and faster drill-down paths.
+
+### How it was validated
+
+- `python scripts/harness.py lint` (pass)
+- `python scripts/harness.py typecheck` (pass)
+- `python scripts/harness.py test` (pass, 125 tests)
+
+### Risks / rollout notes
+
+- Timeline data is built from the most recent alert page query (`limit=500`), so very high-volume fleets may need pagination or server-side aggregated endpoints for full historical completeness.
+- Existing dashboard sections remain unchanged outside timeline relocation/addition.
+
+### Follow-ups
+
+- [ ] If needed, add a backend timeline aggregation endpoint to avoid client-side grouping limits at larger fleet sizes.
+- [ ] Optionally persist dashboard timeline filter selections in URL/search params for shareable triage views.
+
+## Dashboard Open Alerts Clarity Fix (2026-02-23)
+
+### What changed
+
+- Updated Dashboard open-alert semantics to show only actionable unresolved incidents.
+- Added resolution-event filtering in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`:
+  - excludes `DEVICE_ONLINE` and `*_OK` events from Dashboard “Open alerts”.
+- Applied the same filter consistently to:
+  - top “Open alerts” tile count,
+  - Fleet map open-alert context,
+  - “Open alerts” table card rows/empty state.
+- Updated card copy to explicitly say recovery events are excluded.
+- Also aligned Dashboard Timeline “Open only” mode to exclude resolution events.
+
+### Why it changed
+
+- Recovery/info events were appearing as “open” because they are unresolved event records by design, which made the dashboard look like active issues still existed.
+- Dashboard now reflects user intent: show actionable unresolved problems.
+
+### How it was validated
+
+- `python scripts/harness.py lint` (pass)
+- `python scripts/harness.py typecheck` (pass)
+- `python scripts/harness.py test` (pass, 125 tests)
+
+## Pre-Push Review Fixes (2026-02-23)
+
+### What changed
+
+- Fixed contracts access control gap in web UI:
+  - `/contracts` now validates admin mode/access and redirects to `/settings` when admin is not active.
+  - File: `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Contracts.tsx`.
+- Removed raw admin key value from React Query cache keys:
+  - `useAdminAccess` now uses a non-sensitive fingerprint for `key-validation` query key.
+  - File: `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/hooks/useAdminAccess.ts`.
+- Addressed pre-commit completeness risk:
+  - Added required new source files to git tracking:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/hooks/useAdminAccess.ts`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0011_notification_destinations.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_notifications_service.py`
+- Reduced local runtime artifact noise in working tree:
+  - Added ignore rules for `edgewatch_buffer_*.sqlite-shm` and `edgewatch_buffer_*.sqlite-wal`.
+  - File: `/Users/ryneschroder/Developer/git/edgewatch-telemetry/.gitignore`.
+
+### How it was validated
+
+- `python scripts/harness.py lint` (pass)
+- `python scripts/harness.py typecheck` (pass)
+- `python scripts/harness.py test` (pass, 125 tests)
+
+## Remove Legacy Contracts Page Route (2026-02-23)
+
+### What changed
+
+- Removed the legacy frontend `/contracts` route from the router.
+- Deleted the obsolete contracts page component; contract management remains in Settings (admin-gated).
+
+Files:
+- `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/router.tsx`
+- `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Contracts.tsx` (deleted)
+
+### How it was validated
+
+- `python scripts/harness.py lint` (pass)
+- `python scripts/harness.py typecheck` (pass)
+- `python scripts/harness.py test` (pass, 125 tests)

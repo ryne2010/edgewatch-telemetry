@@ -36,6 +36,9 @@ def test_default_route_surface_includes_ui_read_ingest(monkeypatch) -> None:
     assert "/api/v1/alerts" in paths
     assert "/api/v1/contracts/telemetry" in paths
 
+    # Admin surface
+    assert "/api/v1/admin/contracts/edge-policy" in paths
+
 
 def test_disable_ui_removes_ui_routes(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "dev")
@@ -80,3 +83,26 @@ def test_disable_ingest_routes_removes_ingest_endpoints(monkeypatch) -> None:
     assert "/api/v1/ingest" not in paths
     assert "/api/v1/device-policy" not in paths
     assert "/api/v1/internal/pubsub/push" not in paths
+
+
+def test_disable_admin_routes_removes_admin_endpoints(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///./test_toggle.db")
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
+    monkeypatch.setenv("ENABLE_ADMIN_ROUTES", "0")
+
+    settings = load_settings()
+    app = create_app(settings)
+
+    paths = _paths(app)
+
+    assert "/api/v1/admin/contracts/edge-policy" not in paths
+
+
+def test_admin_api_key_is_trimmed(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///./test_toggle.db")
+    monkeypatch.setenv("ADMIN_API_KEY", "  test-admin-key  ")
+
+    settings = load_settings()
+    assert settings.admin_api_key == "test-admin-key"

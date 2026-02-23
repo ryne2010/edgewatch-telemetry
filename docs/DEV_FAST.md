@@ -47,6 +47,14 @@ This boots the **Docker Compose lane**:
 If you want the fastest edit → reload loop, use the **host dev lane** instead:
 
 ```bash
+make dev
+```
+
+This starts DB + API hot reload + Vite + simulator in one command.
+
+Manual equivalent:
+
+```bash
 # Start only the DB container
 make db-up
 
@@ -59,6 +67,14 @@ In a second terminal:
 ```bash
 # Run the UI dev server (http://localhost:5173)
 make web-dev
+```
+
+Useful flags:
+
+```bash
+DEV_START_SIMULATE=0 make dev
+DEV_STOP_DB_ON_EXIT=1 make dev
+DEV_BOOTSTRAP_DEMO_DEVICE=0 make dev
 ```
 
 ## Simulate a field device

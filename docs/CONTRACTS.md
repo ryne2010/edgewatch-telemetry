@@ -30,6 +30,12 @@ Base: `/api/v1`
 - `GET  /admin/notifications` — notification routing/delivery audit events (admin surface; optional)
 - `GET  /admin/exports` — analytics export batch audit (admin surface; optional)
 - `GET  /admin/events` — admin mutation audit events (actor attribution)
+- `GET  /admin/notification-destinations` — list configured alert webhook destinations (admin surface)
+- `POST /admin/notification-destinations` — create alert webhook destination (admin surface)
+- `PATCH /admin/notification-destinations/{destination_id}` — update alert webhook destination (admin surface)
+- `DELETE /admin/notification-destinations/{destination_id}` — delete alert webhook destination (admin surface)
+- `GET  /admin/contracts/edge-policy/source` — active edge policy YAML source (admin surface)
+- `PATCH /admin/contracts/edge-policy` — validate + persist active edge policy YAML (admin surface)
 
 
 Admin surface controls:

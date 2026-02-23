@@ -241,6 +241,24 @@ class NotificationEvent(Base):
     )
 
 
+class NotificationDestination(Base):
+    __tablename__ = "notification_destinations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="webhook")
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="generic")
+    webhook_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_notification_destinations_name"),
+        Index("ix_notification_destinations_enabled_created", "enabled", "created_at"),
+    )
+
+
 class AdminEvent(Base):
     __tablename__ = "admin_events"
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -21,6 +22,23 @@ class Principal:
 
 
 _VALID_ROLES: set[str] = {"viewer", "operator", "admin"}
+
+
+def _normalize_admin_key(raw: object) -> str:
+    if not isinstance(raw, str):
+        return ""
+    value = raw.strip()
+    if not value:
+        return ""
+
+    assign_match = re.match(r"^(?:export\s+)?admin_api_key\s*=\s*(.+)$", value, flags=re.IGNORECASE)
+    if assign_match:
+        value = assign_match.group(1).strip()
+
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        value = value[1:-1].strip()
+
+    return value
 
 
 def _normalize_iap_email(raw: object) -> str | None:
@@ -190,11 +208,12 @@ def require_admin_principal(
         )
 
     # key mode
+    provided_admin_key = _normalize_admin_key(x_admin_key)
+    expected_admin_key = _normalize_admin_key(settings.admin_api_key)
     if (
-        not isinstance(x_admin_key, str)
-        or not x_admin_key
-        or not settings.admin_api_key
-        or not hmac.compare_digest(x_admin_key, settings.admin_api_key)
+        not provided_admin_key
+        or not expected_admin_key
+        or not hmac.compare_digest(provided_admin_key, expected_admin_key)
     ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin key")
 

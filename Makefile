@@ -25,6 +25,13 @@ EDGEWATCH_DEVICE_TOKEN ?= dev-device-token-001
 ADMIN_API_KEY ?= dev-admin-key
 SIMULATE_FLEET_SIZE ?= 3
 
+# Fast host-dev lane defaults (used by `make dev`)
+DEV_API_URL ?= http://localhost:8080
+DEV_WEB_URL ?= http://localhost:5173
+DEV_START_SIMULATE ?= 1
+DEV_BOOTSTRAP_DEMO_DEVICE ?= 1
+DEV_STOP_DB_ON_EXIT ?= 0
+
 # -----------------------------
 # GCP deployment defaults
 # -----------------------------
@@ -79,7 +86,7 @@ endef
 	doctor doctor-dev doctor-gcp \
 	buildx-init docker-login-gcp build-multiarch deploy-gcp-safe-multiarch \
 	clean \
-	db-up db-down api-dev web-install web-dev \
+	db-up db-down api-dev web-install web-dev dev \
 	up down reset logs db-migrate db-revision \
 	demo-device devices alerts simulate retention \
 	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp grant-cloudbuild-gcp build-gcp \
@@ -109,6 +116,7 @@ help:
 	@echo "  api-dev          Run FastAPI on the host with hot reload (port 8080)"
 	@echo "  web-install      Install UI deps (pnpm workspace)"
 	@echo "  web-dev          Run UI dev server (Vite) on the host (port 5173)"
+	@echo "  dev              One-command host dev lane: db + api-dev + web-dev (+simulate by default)"
 	@echo "  up               Start local stack"
 	@echo "  down             Stop local stack"
 	@echo "  reset            Remove volumes and reset local data"
@@ -439,6 +447,112 @@ web-dev: doctor-dev
 	corepack enable; \
 	pnpm -C web dev --host 0.0.0.0 --port 5173
 
+# One-command host dev lane:
+# - db container
+# - API hot reload (host, :8080)
+# - Vite dev server (host, :5173)
+# - optional simulator fleet (default on)
+#
+# Tuning knobs:
+# - DEV_START_SIMULATE=0        disable simulator
+# - DEV_BOOTSTRAP_DEMO_DEVICE=0 skip `make demo-device`
+# - DEV_STOP_DB_ON_EXIT=1       stop DB when dev exits
+dev: doctor-dev db-up
+	cp -n .env.example .env || true
+	cp -n agent/.env.example agent/.env || true
+	@set -euo pipefail; \
+	pids=""; \
+	cleanup() { \
+	  local code=$$?; \
+	  trap - INT TERM EXIT; \
+	  if [ -n "$$pids" ]; then \
+	    kill $$pids 2>/dev/null || true; \
+	    wait $$pids 2>/dev/null || true; \
+	  fi; \
+	  if [ "$(DEV_STOP_DB_ON_EXIT)" = "1" ]; then \
+	    $(COMPOSE) stop db >/dev/null 2>&1 || true; \
+	  fi; \
+	  exit $$code; \
+	}; \
+	trap cleanup INT TERM EXIT; \
+	echo "Starting API dev server (hot reload) on $(DEV_API_URL)"; \
+	DATABASE_URL="postgresql+psycopg://edgewatch:edgewatch@localhost:5435/edgewatch" \
+	APP_ENV=dev AUTO_MIGRATE=1 ENABLE_SCHEDULER=1 LOG_FORMAT=text \
+	uv run --locked uvicorn api.app.main:app --reload --host 0.0.0.0 --port 8080 & \
+	api_pid=$$!; \
+	pids="$$pids $$api_pid"; \
+	echo "Waiting for API readiness at $(DEV_API_URL)/readyz ..."; \
+	ready=0; \
+	for _ in $$(seq 1 120); do \
+	  if curl -fsS "$(DEV_API_URL)/readyz" >/dev/null 2>&1; then \
+	    ready=1; \
+	    break; \
+	  fi; \
+	  if ! kill -0 "$$api_pid" >/dev/null 2>&1; then \
+	    echo "API dev server exited before becoming ready."; \
+	    exit 1; \
+	  fi; \
+	  sleep 1; \
+	done; \
+	if [ "$$ready" != "1" ]; then \
+	  echo "API did not become ready in time."; \
+	  exit 1; \
+	fi; \
+	if [ "$(DEV_BOOTSTRAP_DEMO_DEVICE)" = "1" ]; then \
+	  echo "Ensuring demo device exists on $(DEV_API_URL)"; \
+	  resp_file=$$(mktemp); \
+	  create_payload=$$(printf '{"device_id":"%s","display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900}' \
+	    "$(EDGEWATCH_DEVICE_ID)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	  create_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X POST "$(DEV_API_URL)/api/v1/admin/devices" \
+	    -H "X-Admin-Key: $(ADMIN_API_KEY)" \
+	    -H "Content-Type: application/json" \
+	    -d "$$create_payload" || true); \
+	  if [ "$$create_code" = "200" ] || [ "$$create_code" = "201" ]; then \
+	    echo "Demo device created: $(EDGEWATCH_DEVICE_ID)"; \
+	  elif [ "$$create_code" = "409" ]; then \
+	    update_payload=$$(printf '{"display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900,"enabled":true}' \
+	      "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	    update_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X PATCH "$(DEV_API_URL)/api/v1/admin/devices/$(EDGEWATCH_DEVICE_ID)" \
+	      -H "X-Admin-Key: $(ADMIN_API_KEY)" \
+	      -H "Content-Type: application/json" \
+	      -d "$$update_payload" || true); \
+	    if [ "$$update_code" = "200" ]; then \
+	      echo "Demo device already existed; updated: $(EDGEWATCH_DEVICE_ID)"; \
+	    else \
+	      echo "Demo device bootstrap failed (HTTP $$update_code)"; \
+	    fi; \
+	  else \
+	    echo "Demo device bootstrap skipped (HTTP $$create_code)"; \
+	  fi; \
+	  rm -f "$$resp_file"; \
+	fi; \
+	echo "Starting UI dev server on $(DEV_WEB_URL)"; \
+	corepack enable; \
+	pnpm -C web dev --host 0.0.0.0 --port 5173 & \
+	web_pid=$$!; \
+	pids="$$pids $$web_pid"; \
+	if [ "$(DEV_START_SIMULATE)" = "1" ]; then \
+	  base_id="$(EDGEWATCH_DEVICE_ID)"; \
+	  base_tok="$(EDGEWATCH_DEVICE_TOKEN)"; \
+	  echo "Starting $(SIMULATE_FLEET_SIZE) simulator(s) against $(DEV_API_URL) ..."; \
+	  for n in $$(seq 1 "$(SIMULATE_FLEET_SIZE)"); do \
+	    if [[ "$$base_id" =~ ^(.*)([0-9]{3})$$ ]]; then id="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else id="$$base_id"; if [[ "$$n" -gt 1 ]]; then id="$$base_id-$$(printf "%03d" "$$n")"; fi; fi; \
+	    if [[ "$$base_tok" =~ ^(.*)([0-9]{3})$$ ]]; then tok="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else tok="$$base_tok"; if [[ "$$n" -gt 1 ]]; then tok="$$base_tok-$$(printf "%03d" "$$n")"; fi; fi; \
+	    buf="./edgewatch_buffer_$${id}.sqlite"; \
+	    echo "  - $$id"; \
+	    EDGEWATCH_API_URL="$(DEV_API_URL)" EDGEWATCH_DEVICE_ID="$$id" EDGEWATCH_DEVICE_TOKEN="$$tok" BUFFER_DB_PATH="$$buf" \
+	      uv run python agent/simulator.py & \
+	    pids="$$pids $$!"; \
+	  done; \
+	fi; \
+	echo ""; \
+	echo "Dev lane running:"; \
+	echo "  API:      $(DEV_API_URL)"; \
+	echo "  UI:       $(DEV_WEB_URL)"; \
+	echo "  Simulate: $(DEV_START_SIMULATE) (count=$(SIMULATE_FLEET_SIZE))"; \
+	echo "Press Ctrl-C to stop."; \
+	wait
+
 
 # Apply DB migrations locally (uses the compose 'migrate' service).
 db-migrate: doctor
@@ -453,11 +567,38 @@ db-revision: doctor-dev
 # NOTE: default ADMIN_API_KEY comes from api/app/config.py and .env.example.
 demo-device:
 	@set -euo pipefail; \
-	resp=$$(curl -fsS -X POST "$(EDGEWATCH_API_URL)/api/v1/admin/devices" \
+	resp_file=$$(mktemp); \
+	create_payload=$$(printf '{"device_id":"%s","display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900}' \
+	  "$(EDGEWATCH_DEVICE_ID)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	create_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X POST "$(EDGEWATCH_API_URL)/api/v1/admin/devices" \
 	  -H "X-Admin-Key: $(ADMIN_API_KEY)" \
 	  -H "Content-Type: application/json" \
-	  -d '{"device_id":"$(EDGEWATCH_DEVICE_ID)","display_name":"Demo Well 001","token":"$(EDGEWATCH_DEVICE_TOKEN)","heartbeat_interval_s":300,"offline_after_s":900}'); \
-	if command -v jq >/dev/null 2>&1; then echo "$$resp" | jq .; else echo "$$resp"; fi
+	  -d "$$create_payload" || true); \
+	if [ "$$create_code" = "200" ] || [ "$$create_code" = "201" ]; then \
+	  echo "Demo device created: $(EDGEWATCH_DEVICE_ID)"; \
+	elif [ "$$create_code" = "409" ]; then \
+	  update_payload=$$(printf '{"display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900,"enabled":true}' \
+	    "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	  update_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X PATCH "$(EDGEWATCH_API_URL)/api/v1/admin/devices/$(EDGEWATCH_DEVICE_ID)" \
+	    -H "X-Admin-Key: $(ADMIN_API_KEY)" \
+	    -H "Content-Type: application/json" \
+	    -d "$$update_payload" || true); \
+	  if [ "$$update_code" = "200" ]; then \
+	    echo "Demo device already existed; updated: $(EDGEWATCH_DEVICE_ID)"; \
+	  else \
+	    echo "Failed to update demo device (HTTP $$update_code)"; \
+	    cat "$$resp_file"; \
+	    rm -f "$$resp_file"; \
+	    exit 1; \
+	  fi; \
+	else \
+	  echo "Failed to create demo device (HTTP $$create_code)"; \
+	  cat "$$resp_file"; \
+	  rm -f "$$resp_file"; \
+	  exit 1; \
+	fi; \
+	if command -v jq >/dev/null 2>&1; then jq . < "$$resp_file"; else cat "$$resp_file"; fi; \
+	rm -f "$$resp_file"
 
 
 # Run the edge simulator (pretends to be an RPi).

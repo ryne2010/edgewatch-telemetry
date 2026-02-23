@@ -139,10 +139,7 @@ def _require_mapping(obj: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return v
 
 
-@lru_cache(maxsize=8)
-def load_edge_policy(version: str) -> EdgePolicy:
-    path = _policy_path(version)
-    raw = path.read_bytes()
+def _parse_edge_policy(version: str, raw: bytes) -> EdgePolicy:
     sha256 = hashlib.sha256(raw).hexdigest()
 
     data = yaml.safe_load(raw) or {}
@@ -215,3 +212,36 @@ def load_edge_policy(version: str) -> EdgePolicy:
         alert_thresholds=alert_thresholds,
         cost_caps=cost_caps,
     )
+
+
+@lru_cache(maxsize=8)
+def load_edge_policy(version: str) -> EdgePolicy:
+    path = _policy_path(version)
+    raw = path.read_bytes()
+    return _parse_edge_policy(version, raw)
+
+
+def load_edge_policy_source(version: str) -> str:
+    path = _policy_path(version)
+    return path.read_text(encoding="utf-8")
+
+
+def save_edge_policy_source(version: str, yaml_text: str) -> EdgePolicy:
+    path = _policy_path(version)
+    if not path.exists():
+        raise ValueError(f"edge policy contract file not found for version '{version}'")
+
+    normalized = (yaml_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not normalized.strip():
+        raise ValueError("edge policy content is empty")
+    if not normalized.endswith("\n"):
+        normalized += "\n"
+
+    raw = normalized.encode("utf-8")
+    parsed = _parse_edge_policy(version, raw)
+    if parsed.version != version:
+        raise ValueError(f"edge policy version mismatch: expected '{version}' but found '{parsed.version}'")
+
+    path.write_bytes(raw)
+    load_edge_policy.cache_clear()
+    return parsed

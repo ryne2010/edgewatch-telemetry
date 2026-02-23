@@ -135,7 +135,7 @@ class Settings:
     alert_quiet_hours_end: str
     alert_quiet_hours_tz: str
     alert_webhook_url: str | None
-    alert_webhook_kind: Literal["generic", "slack"]
+    alert_webhook_kind: Literal["generic", "slack", "discord", "telegram"]
     alert_webhook_timeout_s: float
 
     # Optional event-driven ingest
@@ -218,7 +218,9 @@ def load_settings() -> Settings:
         else:
             raise RuntimeError("DATABASE_URL must be set when APP_ENV is not 'dev'")
 
-    admin_api_key = os.getenv("ADMIN_API_KEY")
+    # Trim accidental surrounding whitespace to reduce auth mismatches from
+    # copied environment values/secrets.
+    admin_api_key = _get_optional_str("ADMIN_API_KEY")
     if enable_admin_routes and admin_auth_mode == "key":
         if not admin_api_key:
             if app_env == "dev":
@@ -258,8 +260,8 @@ def load_settings() -> Settings:
         raise RuntimeError("TELEMETRY_CONTRACT_TYPE_MISMATCH_MODE must be one of: reject, quarantine")
 
     webhook_kind = os.getenv("ALERT_WEBHOOK_KIND", "generic").strip().lower() or "generic"
-    if webhook_kind not in {"generic", "slack"}:
-        raise RuntimeError("ALERT_WEBHOOK_KIND must be one of: generic, slack")
+    if webhook_kind not in {"generic", "slack", "discord", "telegram"}:
+        raise RuntimeError("ALERT_WEBHOOK_KIND must be one of: generic, slack, discord, telegram")
 
     ingest_pipeline_mode = os.getenv("INGEST_PIPELINE_MODE", "direct").strip().lower() or "direct"
     if ingest_pipeline_mode not in {"direct", "pubsub"}:

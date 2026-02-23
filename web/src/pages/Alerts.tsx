@@ -1,10 +1,11 @@
 import React from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Link } from '@tanstack/react-router'
+import { Link, useLocation } from '@tanstack/react-router'
 import { useDebouncedValue } from '@tanstack/react-pacer/debouncer'
 import { useAppSettings } from '../app/settings'
 import { api, type AlertOut, type NotificationEventOut } from '../api'
+import { useAdminAccess } from '../hooks/useAdminAccess'
 import {
   Badge,
   Button,
@@ -22,22 +23,10 @@ import {
 import { Sparkline } from '../ui/Sparkline'
 import type { Point } from '../ui/LineChart'
 import { fmtAlertType, fmtDateTime, timeAgo } from '../utils/format'
-import { adminAccessHint } from '../utils/adminAuth'
 
 type SeverityFilter = 'all' | 'critical' | 'warning' | 'info'
 type SeverityKind = Exclude<SeverityFilter, 'all'>
-
-type TimelineGroup = {
-  dayKey: string
-  dayLabel: string
-  rows: AlertOut[]
-  totals: {
-    total: number
-    critical: number
-    warning: number
-    info: number
-  }
-}
+type ResolutionFilter = 'all' | 'open' | 'resolved'
 
 function sevKind(sev: string): SeverityKind {
   const s = (sev ?? '').toLowerCase()
@@ -108,42 +97,34 @@ function buildVolumeSeries(rows: AlertOut[], opts?: { hours?: number }) {
   }
 }
 
-function buildTimelineGroups(rows: AlertOut[], maxGroups = 7): TimelineGroup[] {
-  const sorted = [...rows].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
-  const map = new Map<string, TimelineGroup>()
+function parseAlertsSearch(searchStr: string): { resolutionFilter: ResolutionFilter; severityFilter: SeverityFilter } {
+  const params = new URLSearchParams(searchStr.startsWith('?') ? searchStr.slice(1) : searchStr)
+  const rawSeverity = String(params.get('severity') ?? '').toLowerCase()
+  const severityFilter: SeverityFilter =
+    rawSeverity === 'critical' || rawSeverity === 'warning' || rawSeverity === 'info' ? rawSeverity : 'all'
 
-  for (const row of sorted) {
-    const created = new Date(row.created_at)
-    if (!Number.isFinite(created.getTime())) continue
-    const dayKey = created.toISOString().slice(0, 10)
-    const dayLabel = created.toLocaleDateString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-    const kind = sevKind(row.severity)
-
-    let g = map.get(dayKey)
-    if (!g) {
-      g = {
-        dayKey,
-        dayLabel,
-        rows: [],
-        totals: { total: 0, critical: 0, warning: 0, info: 0 },
-      }
-      map.set(dayKey, g)
-    }
-    g.rows.push(row)
-    g.totals.total += 1
-    g.totals[kind] += 1
+  const rawResolution = String(params.get('resolution') ?? '').toLowerCase()
+  if (rawResolution === 'open' || rawResolution === 'resolved' || rawResolution === 'all') {
+    return { resolutionFilter: rawResolution, severityFilter }
   }
 
-  return Array.from(map.values()).slice(0, maxGroups)
+  const rawResolvedOnly = String(params.get('resolvedOnly') ?? params.get('resolved_only') ?? '').toLowerCase()
+  if (rawResolvedOnly === '1' || rawResolvedOnly === 'true' || rawResolvedOnly === 'yes' || rawResolvedOnly === 'on') {
+    return { resolutionFilter: 'resolved', severityFilter }
+  }
+
+  const rawOpen = String(params.get('openOnly') ?? params.get('open_only') ?? '').toLowerCase()
+  if (rawOpen === '1' || rawOpen === 'true' || rawOpen === 'yes' || rawOpen === 'on') {
+    return { resolutionFilter: 'open', severityFilter }
+  }
+
+  return { resolutionFilter: 'all', severityFilter }
 }
 
 export function AlertsPage() {
+  const searchStr = useLocation({ select: (s) => s.searchStr })
   const { adminKey } = useAppSettings()
+  const qc = useQueryClient()
 
   const healthQ = useQuery({
     queryKey: ['health'],
@@ -155,27 +136,44 @@ export function AlertsPage() {
 
   const adminEnabled = Boolean(healthQ.data?.features?.admin?.enabled)
   const adminAuthMode = String(healthQ.data?.features?.admin?.auth_mode ?? 'key').toLowerCase()
-  const adminAccess = adminEnabled && (adminAuthMode === 'none' || Boolean(adminKey))
-  const adminCred = adminAuthMode === 'key' ? (adminKey ?? '') : ''
+  const { adminAccess, adminCred } = useAdminAccess({
+    adminEnabled,
+    adminAuthMode,
+    adminKey,
+  })
+
+  React.useEffect(() => {
+    // Refresh cached admin queries when key/mode changes to avoid sticky auth errors.
+    qc.invalidateQueries({ queryKey: ['admin'] })
+  }, [qc, adminAuthMode, adminKey])
 
   const [limit, setLimit] = React.useState(200)
-  const [openOnly, setOpenOnly] = React.useState(false)
-  const [severity, setSeverity] = React.useState<SeverityFilter>('all')
+  const initialSearchFilters = React.useMemo(() => parseAlertsSearch(searchStr), [searchStr])
+  const [resolutionFilter, setResolutionFilter] = React.useState<ResolutionFilter>(initialSearchFilters.resolutionFilter)
+  const [severity, setSeverity] = React.useState<SeverityFilter>(initialSearchFilters.severityFilter)
   const [typeFilter, setTypeFilter] = React.useState('all')
   const [deviceFilterRaw, setDeviceFilterRaw] = React.useState('')
   const [deviceFilter] = useDebouncedValue(deviceFilterRaw, { wait: 250 })
   const [searchRaw, setSearchRaw] = React.useState('')
   const [search] = useDebouncedValue(searchRaw, { wait: 200 })
+  const feedRef = React.useRef<HTMLDivElement | null>(null)
+
+  React.useEffect(() => {
+    const parsed = parseAlertsSearch(searchStr)
+    setResolutionFilter(parsed.resolutionFilter)
+    setSeverity(parsed.severityFilter)
+  }, [searchStr])
 
   type Cursor = { before: string; before_id: string }
+  const queryOpenOnly = resolutionFilter === 'open'
 
   const q = useInfiniteQuery({
-    queryKey: ['alerts', { pageSize: limit, openOnly, severity, typeFilter, deviceFilter }],
+    queryKey: ['alerts', { pageSize: limit, resolutionFilter, severity, typeFilter, deviceFilter }],
     initialPageParam: undefined as Cursor | undefined,
     queryFn: ({ pageParam }) =>
       api.alerts({
         limit,
-        open_only: openOnly,
+        open_only: queryOpenOnly,
         severity: severity === 'all' ? undefined : severity,
         alert_type: typeFilter === 'all' ? undefined : typeFilter,
         device_id: deviceFilter.trim() || undefined,
@@ -200,16 +198,55 @@ export function AlertsPage() {
   const filtered = React.useMemo(() => {
     const s = search.trim().toLowerCase()
     return rows.filter((a) => {
+      if (resolutionFilter === 'open' && a.resolved_at) return false
+      if (resolutionFilter === 'resolved' && !a.resolved_at) return false
       if (!s) return true
       return `${a.device_id} ${a.alert_type} ${a.message}`.toLowerCase().includes(s)
     })
-  }, [rows, search])
+  }, [rows, search, resolutionFilter])
+
+  const scrollToFeed = React.useCallback(() => {
+    feedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
+  const applyResolutionFromTile = React.useCallback(
+    (filter: ResolutionFilter) => {
+      setResolutionFilter(filter)
+      scrollToFeed()
+    },
+    [scrollToFeed],
+  )
+
+  const summaryCardProps = React.useCallback(
+    (onActivate: () => void) => ({
+      role: 'button' as const,
+      tabIndex: 0,
+      className:
+        'cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+      onClick: (event: React.MouseEvent<HTMLDivElement>) => {
+        const interactive = (event.target as HTMLElement | null)?.closest(
+          'a,button,input,textarea,select,[role=\"button\"],[role=\"slider\"]',
+        )
+        if (interactive && interactive !== event.currentTarget) return
+        onActivate()
+      },
+      onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        const interactive = (event.target as HTMLElement | null)?.closest(
+          'a,button,input,textarea,select,[role=\"button\"],[role=\"slider\"]',
+        )
+        if (interactive && interactive !== event.currentTarget) return
+        event.preventDefault()
+        onActivate()
+      },
+    }),
+    [],
+  )
 
   const openCount = React.useMemo(() => filtered.filter((r) => !r.resolved_at).length, [filtered])
   const resolvedCount = filtered.length - openCount
 
   const volume = React.useMemo(() => buildVolumeSeries(filtered, { hours: 7 * 24 }), [filtered])
-  const timelineGroups = React.useMemo(() => buildTimelineGroups(filtered, 7), [filtered])
 
   const notificationsQ = useQuery({
     queryKey: ['admin', 'notifications', 'alertsPage', deviceFilter],
@@ -217,11 +254,6 @@ export function AlertsPage() {
     enabled: adminAccess,
     refetchInterval: 15_000,
   })
-  const routingAuditAccessHint = React.useMemo(
-    () => adminAccessHint(notificationsQ.error, adminAuthMode),
-    [notificationsQ.error, adminAuthMode],
-  )
-
   const notificationByAlertId = React.useMemo(() => {
     const out = new Map<string, NotificationEventOut>()
     for (const n of notificationsQ.data ?? []) {
@@ -231,24 +263,6 @@ export function AlertsPage() {
     }
     return out
   }, [notificationsQ.data])
-
-  const routedEventsForShown = React.useMemo(() => {
-    const out: NotificationEventOut[] = []
-    for (const row of filtered) {
-      const n = notificationByAlertId.get(row.id)
-      if (n) out.push(n)
-    }
-    return out
-  }, [filtered, notificationByAlertId])
-
-  const routingDecisionCounts = React.useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const n of routedEventsForShown) {
-      const key = (n.decision || '').trim() || 'unknown'
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
-  }, [routedEventsForShown])
 
   const cols = React.useMemo<ColumnDef<AlertOut>[]>(() => {
     return [
@@ -315,7 +329,7 @@ export function AlertsPage() {
   return (
     <Page
       title="Alerts"
-      description="Timeline-grouped alert feed with device/type/severity filters and routing-audit visibility."
+      description="Alert feed with device/type/severity filters."
       actions={
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Badge variant="outline">{filtered.length} shown</Badge>
@@ -327,37 +341,37 @@ export function AlertsPage() {
       }
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
+        <Card {...summaryCardProps(() => applyResolutionFromTile('all'))}>
           <CardHeader>
             <CardTitle>Total</CardTitle>
-            <CardDescription>Shown rows</CardDescription>
+            <CardDescription>Show all rows in Feed</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-semibold tracking-tight">{filtered.length}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card {...summaryCardProps(() => applyResolutionFromTile('open'))}>
           <CardHeader>
             <CardTitle>Open</CardTitle>
-            <CardDescription>Unresolved</CardDescription>
+            <CardDescription>Open, unresolved</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-semibold tracking-tight">{openCount}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card {...summaryCardProps(() => applyResolutionFromTile('resolved'))}>
           <CardHeader>
             <CardTitle>Resolved</CardTitle>
-            <CardDescription>Resolved in the list</CardDescription>
+            <CardDescription>Resolved rows only</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-semibold tracking-tight">{resolvedCount}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card {...summaryCardProps(scrollToFeed)}>
           <CardHeader>
             <CardTitle>Page size</CardTitle>
-            <CardDescription>Each page fetches this many rows</CardDescription>
+            <CardDescription>Jump to Feed controls</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -412,181 +426,94 @@ export function AlertsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Timeline</CardTitle>
-          <CardDescription>Alerts grouped by day so spikes and incident windows are easier to scan.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {timelineGroups.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No timeline groups for current filters.</div>
-          ) : (
-            <div className="space-y-3">
-              {timelineGroups.map((g) => (
-                <div key={g.dayKey} className="rounded-lg border bg-background p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-sm font-semibold">{g.dayLabel}</div>
-                    <Badge variant="outline">total: {g.totals.total}</Badge>
-                    <Badge variant="destructive">critical: {g.totals.critical}</Badge>
-                    <Badge variant="warning">warning: {g.totals.warning}</Badge>
-                    <Badge variant="secondary">info: {g.totals.info}</Badge>
-                  </div>
-                  <div className="mt-2 space-y-1">
-                    {g.rows.slice(0, 4).map((r) => (
-                      <div key={r.id} className="grid gap-1 text-xs sm:grid-cols-[7rem_12rem_1fr]">
-                        <div className="font-mono text-muted-foreground">
-                          {new Date(r.created_at).toLocaleTimeString(undefined, {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                            hour12: false,
-                          })}
-                        </div>
-                        <div className="font-mono text-muted-foreground">{r.device_id}</div>
-                        <div className="truncate text-muted-foreground">
-                          {fmtAlertType(r.alert_type)} - {r.message}
-                        </div>
-                      </div>
-                    ))}
-                    {g.rows.length > 4 ? (
-                      <div className="text-xs text-muted-foreground">+ {g.rows.length - 4} more</div>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Routing audit</CardTitle>
-          <CardDescription>Dedupe/throttle/quiet-hours decision visibility for alerts in the current view.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {!adminEnabled ? (
-            <div className="text-sm text-muted-foreground">
-              Admin routes are disabled on this deployment, so notification routing audits are unavailable here.
-            </div>
-          ) : adminAuthMode === 'key' && !adminKey ? (
-            <div className="text-sm text-muted-foreground">
-              Configure an admin key in <Link to="/settings" className="underline">Settings</Link> to load routing decisions.
-            </div>
-          ) : (
-            <>
-              {notificationsQ.isLoading ? <div className="text-sm text-muted-foreground">Loading routing events...</div> : null}
-              {notificationsQ.isError ? (
-                <div className="text-sm text-destructive">Routing audit error: {(notificationsQ.error as Error).message}</div>
-              ) : null}
-              {notificationsQ.isError && routingAuditAccessHint ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-muted-foreground">
-                  {routingAuditAccessHint}
-                </div>
-              ) : null}
-              {!notificationsQ.isLoading && !notificationsQ.isError ? (
-                <>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">matched events: {routedEventsForShown.length}</Badge>
-                    {routingDecisionCounts.map(([decision, count]) => (
-                      <Badge key={decision} variant="secondary">
-                        {decision}: {count}
-                      </Badge>
-                    ))}
-                  </div>
-                  {routedEventsForShown.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">
-                      No routing decisions matched the currently shown alerts (or those events are outside the loaded audit window).
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {routedEventsForShown.slice(0, 6).map((n) => (
-                        <div key={n.id} className="rounded-md border bg-background p-2 text-xs">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Badge variant={routingVariant(n.decision, n.delivered)}>{n.decision}</Badge>
-                            <span className="font-mono text-muted-foreground">{n.device_id}</span>
-                            <span className="text-muted-foreground">{fmtDateTime(n.created_at)}</span>
-                          </div>
-                          <div className="mt-1 text-muted-foreground">{n.reason}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : null}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Feed</CardTitle>
-          <CardDescription>Use filters to focus on active devices and relevant alert types.</CardDescription>
-          <div className="mt-3 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant={openOnly ? 'default' : 'outline'} size="sm" onClick={() => setOpenOnly((v) => !v)}>
-                {openOnly ? 'Open only' : 'All (open + resolved)'}
-              </Button>
-              <Button variant={severity === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('all')}>
-                All severities
-              </Button>
-              <Button variant={severity === 'critical' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('critical')}>
-                Critical
-              </Button>
-              <Button variant={severity === 'warning' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('warning')}>
-                Warning
-              </Button>
-              <Button variant={severity === 'info' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('info')}>
-                Info
-              </Button>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <Label htmlFor="alert-device-filter">Device filter</Label>
-                <Input
-                  id="alert-device-filter"
-                  value={deviceFilterRaw}
-                  onChange={(e) => setDeviceFilterRaw(e.target.value)}
-                  placeholder="device id (exact match)"
-                />
+      <div ref={feedRef}>
+        <Card>
+          <CardHeader>
+            <CardTitle>Feed</CardTitle>
+            <CardDescription>Use filters to focus on active devices and relevant alert types.</CardDescription>
+            <div className="mt-3 space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant={resolutionFilter === 'all' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setResolutionFilter('all')}
+                >
+                  All (open + resolved)
+                </Button>
+                <Button
+                  variant={resolutionFilter === 'open' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setResolutionFilter('open')}
+                >
+                  Open only
+                </Button>
+                <Button
+                  variant={resolutionFilter === 'resolved' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setResolutionFilter('resolved')}
+                >
+                  Resolved only
+                </Button>
+                <Button variant={severity === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('all')}>
+                  All severities
+                </Button>
+                <Button variant={severity === 'critical' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('critical')}>
+                  Critical
+                </Button>
+                <Button variant={severity === 'warning' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('warning')}>
+                  Warning
+                </Button>
+                <Button variant={severity === 'info' ? 'default' : 'outline'} size="sm" onClick={() => setSeverity('info')}>
+                  Info
+                </Button>
               </div>
-              <div className="space-y-1">
-                <Label>Type filter</Label>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant={typeFilter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setTypeFilter('all')}>
-                    All types
-                  </Button>
-                  {typeOptions.map((t) => (
-                    <Button key={t} variant={typeFilter === t ? 'default' : 'outline'} size="sm" onClick={() => setTypeFilter(t)}>
-                      {fmtAlertType(t)}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="alert-device-filter">Device filter</Label>
+                  <Input
+                    id="alert-device-filter"
+                    value={deviceFilterRaw}
+                    onChange={(e) => setDeviceFilterRaw(e.target.value)}
+                    placeholder="device id (exact match)"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Type filter</Label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant={typeFilter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setTypeFilter('all')}>
+                      All types
                     </Button>
-                  ))}
+                    {typeOptions.map((t) => (
+                      <Button key={t} variant={typeFilter === t ? 'default' : 'outline'} size="sm" onClick={() => setTypeFilter(t)}>
+                        {fmtAlertType(t)}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {q.isLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
-          {q.isError ? <div className="text-sm text-destructive">Error: {(q.error as Error).message}</div> : null}
-          <DataTable<AlertOut>
-            data={filtered}
-            columns={cols}
-            enableSorting
-            initialSorting={[{ id: 'created_at', desc: true }]}
-            emptyState="No alerts match your filters."
-          />
+          </CardHeader>
+          <CardContent>
+            {q.isLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
+            {q.isError ? <div className="text-sm text-destructive">Error: {(q.error as Error).message}</div> : null}
+            <DataTable<AlertOut>
+              data={filtered}
+              columns={cols}
+              enableSorting
+              initialSorting={[{ id: 'created_at', desc: true }]}
+              emptyState="No alerts match your filters."
+            />
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs text-muted-foreground">{q.hasNextPage ? 'More available...' : 'End of feed.'}</div>
-            <Button variant="outline" size="sm" disabled={!q.hasNextPage || q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>
-              {q.isFetchingNextPage ? 'Loading...' : 'Load more'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-muted-foreground">{q.hasNextPage ? 'More available...' : 'End of feed.'}</div>
+              <Button variant="outline" size="sm" disabled={!q.hasNextPage || q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>
+                {q.isFetchingNextPage ? 'Loading...' : 'Load more'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </Page>
   )
 }

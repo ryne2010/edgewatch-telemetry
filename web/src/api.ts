@@ -118,6 +118,15 @@ export type EdgePolicyContractOut = {
   }
 }
 
+export type EdgePolicyContractSourceOut = {
+  policy_version: string
+  yaml_text: string
+}
+
+export type EdgePolicyContractUpdateIn = {
+  yaml_text: string
+}
+
 export type IngestionBatchOut = {
   id: string
   device_id: string
@@ -158,6 +167,34 @@ export type NotificationEventOut = {
   delivered: boolean
   reason: string
   created_at: string
+}
+
+export type NotificationDestinationOut = {
+  id: string
+  name: string
+  channel: 'webhook' | string
+  kind: 'generic' | 'slack' | 'discord' | 'telegram' | string
+  enabled: boolean
+  webhook_url_masked: string
+  destination_fingerprint: string
+  created_at: string
+  updated_at: string
+}
+
+export type NotificationDestinationCreateIn = {
+  name: string
+  channel?: 'webhook'
+  kind?: 'generic' | 'slack' | 'discord' | 'telegram'
+  webhook_url: string
+  enabled?: boolean
+}
+
+export type NotificationDestinationUpdateIn = {
+  name?: string
+  channel?: 'webhook'
+  kind?: 'generic' | 'slack' | 'discord' | 'telegram'
+  webhook_url?: string
+  enabled?: boolean
 }
 
 export type AdminEventOut = {
@@ -276,7 +313,12 @@ async function getBlob(
 }
 
 function adminHeaders(adminKey: string | null | undefined): Record<string, string> {
-  const k = (adminKey ?? '').trim()
+  let k = (adminKey ?? '').trim()
+  const assignMatch = /^(?:export\s+)?admin_api_key\s*=\s*(.+)$/i.exec(k)
+  if (assignMatch) k = assignMatch[1].trim()
+  if ((k.startsWith('"') && k.endsWith('"')) || (k.startsWith("'") && k.endsWith("'"))) {
+    k = k.slice(1, -1).trim()
+  }
   return k ? { 'X-Admin-Key': k } : {}
 }
 
@@ -434,6 +476,49 @@ export const api = {
         headers: adminHeaders(adminKey),
       })
     },
+    edgePolicyContractSource: (adminKey: string) =>
+      getJSON<EdgePolicyContractSourceOut>('/api/v1/admin/contracts/edge-policy/source', {
+        headers: adminHeaders(adminKey),
+      }),
+    updateEdgePolicyContract: (adminKey: string, payload: EdgePolicyContractUpdateIn) =>
+      sendJSON<EdgePolicyContractOut>('/api/v1/admin/contracts/edge-policy', payload, {
+        method: 'PATCH',
+        headers: adminHeaders(adminKey),
+      }),
+    notificationDestinations: (adminKey: string) =>
+      getJSON<NotificationDestinationOut[]>('/api/v1/admin/notification-destinations', {
+        headers: adminHeaders(adminKey),
+      }),
+    createNotificationDestination: (
+      adminKey: string,
+      payload: NotificationDestinationCreateIn,
+    ) =>
+      sendJSON<NotificationDestinationOut>('/api/v1/admin/notification-destinations', payload, {
+        method: 'POST',
+        headers: adminHeaders(adminKey),
+      }),
+    updateNotificationDestination: (
+      adminKey: string,
+      destinationId: string,
+      payload: NotificationDestinationUpdateIn,
+    ) =>
+      sendJSON<NotificationDestinationOut>(
+        `/api/v1/admin/notification-destinations/${encodeURIComponent(destinationId)}`,
+        payload,
+        {
+          method: 'PATCH',
+          headers: adminHeaders(adminKey),
+        },
+      ),
+    deleteNotificationDestination: (adminKey: string, destinationId: string) =>
+      sendJSON<NotificationDestinationOut>(
+        `/api/v1/admin/notification-destinations/${encodeURIComponent(destinationId)}`,
+        {},
+        {
+          method: 'DELETE',
+          headers: adminHeaders(adminKey),
+        },
+      ),
     events: (adminKey: string, opts?: { limit?: number }) => {
       const params = new URLSearchParams()
       params.set('limit', String(opts?.limit ?? 300))

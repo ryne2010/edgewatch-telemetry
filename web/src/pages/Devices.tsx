@@ -1,9 +1,9 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Link } from '@tanstack/react-router'
+import { Link, useLocation } from '@tanstack/react-router'
 import { api, type DeviceSummaryOut } from '../api'
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, DataTable, Input, Label, Page, Separator } from '../ui-kit'
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, DataTable, Input, Label, Page } from '../ui-kit'
 import { fmtDateTime, fmtNumber, timeAgo } from '../utils/format'
 
 type DeviceStatusFilter = DeviceSummaryOut['status'] | 'all'
@@ -41,6 +41,24 @@ function fmtDuration(seconds: number): string {
 
 function asNumber(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+function parseDevicesSearch(searchStr: string): {
+  filterText: string
+  statusFilter: DeviceStatusFilter
+  openAlertsOnly: boolean
+} {
+  const params = new URLSearchParams(searchStr.startsWith('?') ? searchStr.slice(1) : searchStr)
+
+  const rawStatus = String(params.get('status') ?? params.get('deviceStatus') ?? 'all').toLowerCase()
+  const statusFilter: DeviceStatusFilter =
+    rawStatus === 'online' || rawStatus === 'offline' || rawStatus === 'unknown' ? rawStatus : 'all'
+
+  const filterText = String(params.get('q') ?? params.get('search') ?? '').trim()
+  const rawOpen = String(params.get('openAlertsOnly') ?? params.get('open_alerts_only') ?? '').toLowerCase()
+  const openAlertsOnly = rawOpen === '1' || rawOpen === 'true' || rawOpen === 'yes' || rawOpen === 'on'
+
+  return { filterText, statusFilter, openAlertsOnly }
 }
 
 function computeFleetHealth(
@@ -131,6 +149,8 @@ function MetricChip(props: { label: string; value: unknown; unit?: string; varia
 }
 
 export function DevicesPage() {
+  const searchStr = useLocation({ select: (s) => s.searchStr })
+
   const edgePolicyQ = useQuery({ queryKey: ['edgePolicyContract'], queryFn: api.edgePolicyContract, staleTime: 5 * 60_000 })
   const devicesQ = useQuery({
     queryKey: ['devicesSummary', 'devicesPage'],
@@ -156,9 +176,18 @@ export function DevicesPage() {
     refetchInterval: 15_000,
   })
 
-  const [filterText, setFilterText] = React.useState('')
-  const [statusFilter, setStatusFilter] = React.useState<DeviceStatusFilter>('all')
-  const [openAlertsOnly, setOpenAlertsOnly] = React.useState(false)
+  const initialSearchFilters = React.useMemo(() => parseDevicesSearch(searchStr), [searchStr])
+
+  const [filterText, setFilterText] = React.useState(initialSearchFilters.filterText)
+  const [statusFilter, setStatusFilter] = React.useState<DeviceStatusFilter>(initialSearchFilters.statusFilter)
+  const [openAlertsOnly, setOpenAlertsOnly] = React.useState(initialSearchFilters.openAlertsOnly)
+
+  React.useEffect(() => {
+    const parsed = parseDevicesSearch(searchStr)
+    setFilterText(parsed.filterText)
+    setStatusFilter(parsed.statusFilter)
+    setOpenAlertsOnly(parsed.openAlertsOnly)
+  }, [searchStr])
 
   const devices = devicesQ.data ?? []
   const openAlertDeviceIds = React.useMemo(() => {
@@ -349,7 +378,7 @@ export function DevicesPage() {
           <CardTitle>Fleet</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="search">Search</Label>
               <Input
@@ -399,24 +428,6 @@ export function DevicesPage() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Policy</Label>
-              <div className="text-xs text-muted-foreground">
-                {edgePolicyQ.data ? (
-                  <>
-                    policy: <span className="font-mono">{edgePolicyQ.data.policy_version}</span> ·{' '}
-                    <span className="font-mono">{edgePolicyQ.data.policy_sha256.slice(0, 10)}...</span>
-                  </>
-                ) : (
-                  '—'
-                )}
-              </div>
-              <Separator />
-              <div className="text-xs text-muted-foreground">
-                This page uses <code className="font-mono">/api/v1/devices/summary</code> +{' '}
-                <code className="font-mono">/api/v1/alerts?open_only=true</code> for quick fleet filtering.
-              </div>
-            </div>
           </div>
 
           {devicesQ.isLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}

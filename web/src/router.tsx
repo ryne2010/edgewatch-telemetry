@@ -1,15 +1,15 @@
-import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
+import { createRootRoute, createRoute, createRouter, lazyRouteComponent } from '@tanstack/react-router'
 import { RootLayout } from './RootLayout'
-import { DashboardPage } from './pages/Dashboard'
-import { DevicesPage } from './pages/Devices'
-import { DeviceDetailPage } from './pages/DeviceDetail'
-import { AlertsPage } from './pages/Alerts'
-import { ContractsPage } from './pages/Contracts'
-import { AdminPage } from './pages/Admin'
-import { SettingsPage } from './pages/Settings'
-import { MetaPage } from './pages/Meta'
 import { ErrorPage } from './pages/Error'
 import { NotFoundPage } from './pages/NotFound'
+
+const DashboardPage = lazyRouteComponent(() => import('./pages/Dashboard'), 'DashboardPage')
+const DevicesPage = lazyRouteComponent(() => import('./pages/Devices'), 'DevicesPage')
+const DeviceDetailPage = lazyRouteComponent(() => import('./pages/DeviceDetail'), 'DeviceDetailPage')
+const AlertsPage = lazyRouteComponent(() => import('./pages/Alerts'), 'AlertsPage')
+const AdminPage = lazyRouteComponent(() => import('./pages/Admin'), 'AdminPage')
+const SettingsPage = lazyRouteComponent(() => import('./pages/Settings'), 'SettingsPage')
+const MetaPage = lazyRouteComponent(() => import('./pages/Meta'), 'MetaPage')
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -41,12 +41,6 @@ const alertsRoute = createRoute({
   component: AlertsPage,
 })
 
-const contractsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/contracts',
-  component: ContractsPage,
-})
-
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/admin',
@@ -70,7 +64,6 @@ export const routeTree = rootRoute.addChildren([
   devicesRoute,
   deviceDetailRoute,
   alertsRoute,
-  contractsRoute,
   adminRoute,
   settingsRoute,
   metaRoute,

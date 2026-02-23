@@ -16,6 +16,27 @@ function canPersistAdminKeyLocally(): boolean {
   }
 }
 
+function normalizeAdminKeyInput(raw: string): string {
+  let value = (raw ?? '').trim()
+  if (!value) return ''
+
+  // Accept pastes like:
+  // - ADMIN_API_KEY=abc123
+  // - export ADMIN_API_KEY=abc123
+  const assignMatch = /^(?:export\s+)?admin_api_key\s*=\s*(.+)$/i.exec(value)
+  if (assignMatch) value = assignMatch[1].trim()
+
+  // Strip a single pair of surrounding quotes.
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim()
+  }
+
+  return value
+}
+
 export type AppSettings = {
   theme: Theme
   setTheme: (t: Theme) => void
@@ -62,7 +83,7 @@ function getInitialTheme(): Theme {
 }
 
 function getInitialAdminKey(): { key: string; persisted: boolean } {
-  const sessionKey = safeGet(sessionStorage, ADMIN_KEY_SESSION)
+  const sessionKey = normalizeAdminKeyInput(safeGet(sessionStorage, ADMIN_KEY_SESSION))
   if (sessionKey) return { key: sessionKey, persisted: false }
 
   if (!canPersistAdminKeyLocally()) {
@@ -71,7 +92,7 @@ function getInitialAdminKey(): { key: string; persisted: boolean } {
 
   const persist = safeGet(localStorage, ADMIN_KEY_PERSIST)
   if (persist === '1') {
-    const localKey = safeGet(localStorage, ADMIN_KEY_LOCAL)
+    const localKey = normalizeAdminKeyInput(safeGet(localStorage, ADMIN_KEY_LOCAL))
     return { key: localKey, persisted: Boolean(localKey) }
   }
 
@@ -90,7 +111,7 @@ export function AppSettingsProvider(props: { children: React.ReactNode }) {
   }, [theme])
 
   const setAdminKey = React.useCallback((key: string, opts?: { persist?: boolean }) => {
-    const k = (key ?? '').trim()
+    const k = normalizeAdminKeyInput(key ?? '')
     const persist = Boolean(opts?.persist) && canPersistAdminKeyLocally()
 
     if (!k) {

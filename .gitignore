@@ -33,6 +33,8 @@ edgewatch_buffer.sqlite
 edgewatch_buffer.sqlite*
 edgewatch_buffer_*.sqlite
 edgewatch_buffer_*.sqlite3
+edgewatch_buffer_*.sqlite-shm
+edgewatch_buffer_*.sqlite-wal
 edgewatch_policy_cache.json
 edgewatch_policy_cache_*.json
 edgewatch_deadletter_*.jsonl

@@ -12,6 +12,8 @@ export type NavItem = {
   badge?: string
   /** Hide unless the backend reports that admin routes are enabled. */
   requiresAdminRoutes?: boolean
+  /** Hide unless admin is currently authenticated (key mode) or perimeter mode is active. */
+  requiresAdminAccess?: boolean
 }
 
 export type AppShellProps = {
@@ -25,6 +27,8 @@ export type AppShellProps = {
   adminEnabled?: boolean
   /** From /api/v1/health: features.admin.auth_mode (key|none) */
   adminAuthMode?: string
+  /** Optional: validated admin access state (preferred over key-presence heuristics). */
+  adminActive?: boolean
 
   children: React.ReactNode
 }
@@ -84,17 +88,28 @@ export function AppShell(props: AppShellProps) {
   const { theme, setTheme, adminKey } = useAppSettings()
   const [mobileOpen, setMobileOpen] = React.useState(false)
 
-  const nav = React.useMemo(() => {
-    const adminEnabled = Boolean(props.adminEnabled)
-    return props.nav.filter((n) => !n.requiresAdminRoutes || adminEnabled)
-  }, [props.nav, props.adminEnabled])
+  const adminAccess = React.useMemo(() => {
+    if (typeof props.adminActive === 'boolean') return props.adminActive
+    if (!props.adminEnabled) return false
+    const mode = String(props.adminAuthMode ?? 'key').toLowerCase()
+    return mode === 'none' || Boolean(adminKey)
+  }, [props.adminActive, props.adminEnabled, props.adminAuthMode, adminKey])
 
   const adminBadge = React.useMemo(() => {
     if (!props.adminEnabled) return null
     const mode = String(props.adminAuthMode ?? 'key').toLowerCase()
     if (mode === 'none') return 'Admin (IAM)'
-    return adminKey ? 'Admin' : null
-  }, [props.adminEnabled, props.adminAuthMode, adminKey])
+    return adminAccess ? 'Admin' : null
+  }, [props.adminEnabled, props.adminAuthMode, adminAccess])
+
+  const nav = React.useMemo(() => {
+    const adminEnabled = Boolean(props.adminEnabled)
+    return props.nav.filter((n) => {
+      if (n.requiresAdminRoutes && !adminEnabled) return false
+      if (n.requiresAdminAccess && !adminAccess) return false
+      return true
+    })
+  }, [props.nav, props.adminEnabled, adminAccess])
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -107,7 +122,7 @@ export function AppShell(props: AppShellProps) {
 
       <div className="flex min-h-screen">
         {/* Desktop sidebar */}
-        <aside className="hidden w-64 flex-col border-r bg-card lg:flex">
+        <aside className="sticky top-0 hidden h-screen w-64 flex-col border-r bg-card lg:flex">
           <div className="flex items-center gap-2 px-4 py-4">
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold tracking-tight">{props.appName}</div>
@@ -118,7 +133,7 @@ export function AppShell(props: AppShellProps) {
             </div>
           </div>
 
-          <nav className="flex-1 space-y-1 px-2 pb-4">
+          <nav className="flex-1 space-y-1 overflow-y-auto px-2 pb-4">
             {nav.map((item) => (
               <ShellNavLink key={item.to} item={item} />
             ))}

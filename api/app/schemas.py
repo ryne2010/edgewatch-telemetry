@@ -168,6 +168,34 @@ class NotificationEventOut(BaseModel):
     created_at: datetime
 
 
+class NotificationDestinationCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    channel: Literal["webhook"] = "webhook"
+    kind: Literal["generic", "slack", "discord", "telegram"] = "generic"
+    webhook_url: str = Field(..., min_length=8, max_length=2048)
+    enabled: bool = True
+
+
+class NotificationDestinationUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=128)
+    channel: Optional[Literal["webhook"]] = None
+    kind: Optional[Literal["generic", "slack", "discord", "telegram"]] = None
+    webhook_url: Optional[str] = Field(None, min_length=8, max_length=2048)
+    enabled: Optional[bool] = None
+
+
+class NotificationDestinationOut(BaseModel):
+    id: str
+    name: str
+    channel: str
+    kind: str
+    enabled: bool
+    webhook_url_masked: str
+    destination_fingerprint: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class AdminEventOut(BaseModel):
     id: str
     actor_email: str
@@ -279,6 +307,15 @@ class EdgePolicyContractOut(BaseModel):
     delta_thresholds: Dict[str, float]
     alert_thresholds: EdgePolicyAlertThresholdsOut
     cost_caps: EdgePolicyCostCapsOut
+
+
+class EdgePolicyContractSourceOut(BaseModel):
+    policy_version: str
+    yaml_text: str
+
+
+class EdgePolicyContractUpdateIn(BaseModel):
+    yaml_text: str = Field(..., min_length=1, max_length=200_000)
 
 
 class DevicePolicyOut(BaseModel):

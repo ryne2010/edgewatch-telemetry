@@ -25,7 +25,7 @@ export function adminAccessHint(error: unknown, adminAuthMode: string | null | u
   }
 
   if (status === 401) {
-    return 'The admin key is missing or invalid. Update it in Settings, then retry.'
+    return 'The admin key is missing or invalid. It must exactly match ADMIN_API_KEY on the server (local default: dev-admin-key). Update it in Settings, then retry.'
   }
   return 'The request is authenticated but this identity is not authorized for this view.'
 }
