@@ -16,8 +16,8 @@ min_instances = 0
 max_instances = 1
 
 # Cost-min demo sizing. If you see OOMs under load, bump these back to 512Mi.
-service_memory = "256Mi"
-job_memory     = "256Mi"
+service_memory = "512Mi"
+job_memory     = "512Mi"
 
 # Jobs
 enable_migration_job  = true
