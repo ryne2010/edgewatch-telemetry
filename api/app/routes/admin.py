@@ -180,6 +180,7 @@ def update_edge_policy_contract_admin(
 @router.post("/devices", response_model=DeviceOut)
 def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require_admin_role)) -> DeviceOut:
     actor = audit_actor_from_principal(principal)
+    display_name = safe_display_name(req.device_id, req.display_name)
     with db_session() as session:
         existing = session.query(Device).filter(Device.device_id == req.device_id).one_or_none()
         if existing:
@@ -187,7 +188,7 @@ def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require
 
         d = Device(
             device_id=req.device_id,
-            display_name=req.display_name,
+            display_name=display_name,
             token_hash=hash_token(req.token),
             token_fingerprint=token_fingerprint(req.token),
             heartbeat_interval_s=req.heartbeat_interval_s,

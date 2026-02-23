@@ -10,7 +10,7 @@ type MappedDevice = {
   device: DeviceSummaryOut
   lat: number
   lon: number
-  source: 'telemetry' | 'demo'
+  source: 'telemetry' | 'fallback'
 }
 
 type FleetMapProps = {
@@ -98,10 +98,6 @@ function demoFallbackLocation(deviceId: string): { lat: number; lon: number } {
   }
 }
 
-function shouldUseDemoFallback(deviceId: string): boolean {
-  return /^demo-well-/i.test(deviceId)
-}
-
 function statusVariant(status: DeviceSummaryOut['status']): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'
   if (status === 'offline') return 'destructive'
@@ -141,10 +137,8 @@ export function FleetMap(props: FleetMapProps) {
         out.push({ device, lat: telemetry.lat, lon: telemetry.lon, source: 'telemetry' })
         continue
       }
-      if (shouldUseDemoFallback(device.device_id)) {
-        const fallback = demoFallbackLocation(device.device_id)
-        out.push({ device, lat: fallback.lat, lon: fallback.lon, source: 'demo' })
-      }
+      const fallback = demoFallbackLocation(device.device_id)
+      out.push({ device, lat: fallback.lat, lon: fallback.lon, source: 'fallback' })
     }
     return out
   }, [props.devices])
@@ -153,7 +147,7 @@ export function FleetMap(props: FleetMapProps) {
     () => mappedDevices.filter((device) => device.source === 'telemetry').length,
     [mappedDevices],
   )
-  const demoLocationCount = mappedDevices.length - telemetryLocationCount
+  const fallbackLocationCount = mappedDevices.length - telemetryLocationCount
 
   const selectedDevice = React.useMemo(() => {
     if (!mappedDevices.length) return null
@@ -245,7 +239,7 @@ export function FleetMap(props: FleetMapProps) {
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline">mapped: {mappedDevices.length}/{props.devices.length}</Badge>
         <Badge variant="secondary">telemetry coords: {telemetryLocationCount}</Badge>
-        {demoLocationCount > 0 ? <Badge variant="warning">demo fallback: {demoLocationCount}</Badge> : null}
+        {fallbackLocationCount > 0 ? <Badge variant="warning">fallback: {fallbackLocationCount}</Badge> : null}
         <Button variant="outline" size="sm" onClick={recenter} disabled={!mappedDevices.length} className="ml-auto">
           Recenter
         </Button>
@@ -275,7 +269,7 @@ export function FleetMap(props: FleetMapProps) {
               </Link>
               <Badge variant={statusVariant(selectedDevice.device.status)}>{selectedDevice.device.status}</Badge>
               <Badge variant={selectedDevice.source === 'telemetry' ? 'secondary' : 'warning'}>
-                {selectedDevice.source === 'telemetry' ? 'telemetry location' : 'demo location'}
+                {selectedDevice.source === 'telemetry' ? 'telemetry location' : 'fallback location'}
               </Badge>
             </div>
             <div className="text-sm text-muted-foreground">

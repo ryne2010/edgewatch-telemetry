@@ -208,7 +208,6 @@ export function DashboardPage() {
     [navigate],
   )
 
-  const healthQ = useQuery({ queryKey: ['health'], queryFn: api.health, refetchInterval: 60_000 })
   const edgePolicyQ = useQuery({ queryKey: ['edgePolicyContract'], queryFn: api.edgePolicyContract, staleTime: 5 * 60_000 })
 
   const devicesQ = useQuery({
@@ -505,15 +504,9 @@ export function DashboardPage() {
   return (
     <Page
       title="Dashboard"
-      description={
-        <span>
-          Fleet-level view: heartbeat status, vitals, and open alerts.
-          {healthQ.data ? ` Environment: ${healthQ.data.env}` : ''}
-        </span>
-      }
+      description="Fleet-level view: heartbeat status, vitals, and open alerts."
       actions={
         <div className="flex items-center gap-2">
-          {healthQ.data ? <Badge variant="outline">env: {healthQ.data.env}</Badge> : null}
           {devicesQ.isFetching ? <Badge variant="secondary">refreshing…</Badge> : null}
         </div>
       }

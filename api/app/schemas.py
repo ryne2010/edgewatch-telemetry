@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 
 class AdminDeviceCreate(BaseModel):
     device_id: str = Field(..., min_length=3, max_length=128)
-    display_name: str = Field(..., min_length=1, max_length=256)
+    # Optional on create; server falls back to device_id.
+    display_name: Optional[str] = Field(None, min_length=1, max_length=256)
     # Allow long opaque tokens/JWTs (bcrypt would truncate; we use PBKDF2).
     token: str = Field(..., min_length=8, max_length=2048)
     # Defaults align with contracts/edge_policy/* (battery & data optimized).

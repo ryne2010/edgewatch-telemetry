@@ -85,6 +85,7 @@ export function AdminPage() {
   const upsertMutation = useMutation({
     mutationFn: async () => {
       const id = provId.trim()
+      const name = provName.trim() || id
       const token = provToken.trim()
       if (adminAuthMode === 'key' && !adminAccess) throw new Error('Valid admin key required')
       if (!id) throw new Error('Device ID is required')
@@ -98,7 +99,7 @@ export function AdminPage() {
       try {
         return await api.admin.createDevice(adminCred, {
           device_id: id,
-          display_name: provName.trim() || undefined,
+          display_name: name,
           token,
           heartbeat_interval_s: heartbeat,
           offline_after_s: offlineAfter,

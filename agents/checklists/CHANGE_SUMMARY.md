@@ -1,5 +1,36 @@
 # Change Summary
 
+## Dashboard map/device-create/admin polish (2026-02-23)
+
+### What changed
+
+- Map now plots all devices, not only those with telemetry coordinates:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx`
+  - devices without telemetry lat/lon now use deterministic fallback coordinates.
+  - source label updated to `fallback location` (instead of demo-only wording).
+- Fixed admin device creation when `display_name` is omitted:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+  - `AdminDeviceCreate.display_name` is optional; server falls back to `device_id`.
+- Added regression test for omitted `display_name` create payload:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_admin_device_create.py`
+- Removed dashboard environment pill/text (`env:dev`) from the header:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+- Admin UI now always sends a concrete `display_name` on create:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+
+### Why it changed
+
+- Users expected offline/unknown/no-telemetry devices to still be visible on the fleet map.
+- Creating a device without `display_name` produced HTTP 422 due required schema validation.
+- Dashboard environment badge was requested to be removed.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (128 passed)
+
 ## Hosted dev device-list hardening (2026-02-23)
 
 ### What changed
