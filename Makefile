@@ -59,6 +59,10 @@ endif
 
 TF_STATE_BUCKET ?= $(PROJECT_ID)-tfstate
 TF_STATE_PREFIX ?= edgewatch/$(ENV)
+TF_CONFIG_BUCKET ?= $(PROJECT_ID)-config
+TF_CONFIG_PREFIX ?= edgewatch/$(ENV)
+TF_CONFIG_GCS_PATH ?= gs://$(TF_CONFIG_BUCKET)/$(TF_CONFIG_PREFIX)
+TF_BACKEND_HCL ?=
 
 # Workspace IAM starter pack (optional; Google Groups)
 WORKSPACE_DOMAIN ?=
@@ -89,7 +93,7 @@ endef
 	db-up db-down api-dev web-install web-dev dev \
 	up down reset logs db-migrate db-revision \
 	demo-device devices alerts simulate retention \
-	bootstrap-state-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp grant-cloudbuild-gcp build-gcp \
+	bootstrap-state-gcp tf-config-bucket-gcp tf-config-pull-gcp tf-config-push-gcp tf-config-print-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp grant-cloudbuild-gcp build-gcp \
 	deploy-gcp deploy-gcp-safe deploy-gcp-safe-multiarch \
 	url-gcp url-gcp-admin url-gcp-dashboard verify-gcp verify-gcp-ready logs-gcp \
 	migrate-gcp offline-check-local offline-check-gcp simulate-gcp analytics-export-gcp retention-gcp partition-manager-gcp destroy-gcp \
@@ -138,6 +142,9 @@ help:
 	@echo "  plan-gcp         Terraform plan"
 	@echo "  apply-gcp        Terraform apply"
 	@echo "  (tip) TFVARS=... Use a Terraform profile var-file (see infra/gcp/cloud_run_demo/profiles/)"
+	@echo "  tf-config-print-gcp Print GCS path used for backend.hcl + terraform.tfvars"
+	@echo "  tf-config-pull-gcp  Download backend.hcl + terraform.tfvars from GCS"
+	@echo "  tf-config-push-gcp  Upload local backend.hcl + terraform.tfvars to GCS"
 	@echo "  url-gcp          Print service URL"
 	@echo "  url-gcp-admin    Print admin service URL (if enabled)"
 	@echo "  url-gcp-dashboard Print dashboard service URL (if enabled)"
@@ -359,6 +366,8 @@ doctor-gcp:
 	echo "  IMAGE=$(IMAGE)"; \
 	echo "  TF_STATE_BUCKET=$(TF_STATE_BUCKET)"; \
 	echo "  TF_STATE_PREFIX=$(TF_STATE_PREFIX)"; \
+	echo "  TF_CONFIG_GCS_PATH=$(TF_CONFIG_GCS_PATH)"; \
+	echo "  TF_BACKEND_HCL=$(TF_BACKEND_HCL)"; \
 		echo "  WORKSPACE_DOMAIN=$(WORKSPACE_DOMAIN)"; \
 		echo "  GROUP_PREFIX=$(GROUP_PREFIX)"; \
 		echo "  ENABLE_OBSERVABILITY=$(ENABLE_OBSERVABILITY)"; \
@@ -644,10 +653,44 @@ bootstrap-state-gcp: doctor-gcp
 		gcloud storage buckets update "gs://$(TF_STATE_BUCKET)" --versioning; \
 	fi
 
-tf-init-gcp: bootstrap-state-gcp
-	terraform -chdir=$(TF_DIR) init -reconfigure \
-		-backend-config="bucket=$(TF_STATE_BUCKET)" \
-		-backend-config="prefix=$(TF_STATE_PREFIX)"
+tf-config-bucket-gcp: doctor-gcp
+	@echo "Ensuring Terraform config bucket exists: gs://$(TF_CONFIG_BUCKET)"
+	@if gcloud storage buckets describe "gs://$(TF_CONFIG_BUCKET)" >/dev/null 2>&1; then \
+		echo "Bucket already exists."; \
+	else \
+		echo "Creating bucket..."; \
+		gcloud storage buckets create "gs://$(TF_CONFIG_BUCKET)" --location="$(REGION)" --uniform-bucket-level-access --public-access-prevention=enforced; \
+	fi
+
+tf-config-print-gcp:
+	@echo "$(TF_CONFIG_GCS_PATH)"
+
+tf-config-pull-gcp: doctor-gcp
+	@set -euo pipefail; \
+	echo "Fetching Terraform config from: $(TF_CONFIG_GCS_PATH)"; \
+	gcloud storage cp "$(TF_CONFIG_GCS_PATH)/backend.hcl" "$(TF_DIR)/backend.hcl"; \
+	gcloud storage cp "$(TF_CONFIG_GCS_PATH)/terraform.tfvars" "$(TF_DIR)/terraform.tfvars"; \
+	echo "Downloaded $(TF_DIR)/backend.hcl and $(TF_DIR)/terraform.tfvars"
+
+tf-config-push-gcp: doctor-gcp tf-config-bucket-gcp
+	@set -euo pipefail; \
+	test -f "$(TF_DIR)/backend.hcl" || (echo "Missing $(TF_DIR)/backend.hcl"; exit 1); \
+	test -f "$(TF_DIR)/terraform.tfvars" || (echo "Missing $(TF_DIR)/terraform.tfvars"; exit 1); \
+	echo "Uploading Terraform config to: $(TF_CONFIG_GCS_PATH)"; \
+	gcloud storage cp "$(TF_DIR)/backend.hcl" "$(TF_CONFIG_GCS_PATH)/backend.hcl"; \
+	gcloud storage cp "$(TF_DIR)/terraform.tfvars" "$(TF_CONFIG_GCS_PATH)/terraform.tfvars"
+
+tf-init-gcp: doctor-gcp
+	@set -euo pipefail; \
+	if [ -n "$(TF_BACKEND_HCL)" ]; then \
+		echo "Terraform init (backend-config file): $(TF_BACKEND_HCL)"; \
+		terraform -chdir=$(TF_DIR) init -reconfigure -backend-config="$(TF_BACKEND_HCL)"; \
+	else \
+		$(MAKE) bootstrap-state-gcp; \
+		terraform -chdir=$(TF_DIR) init -reconfigure \
+			-backend-config="bucket=$(TF_STATE_BUCKET)" \
+			-backend-config="prefix=$(TF_STATE_PREFIX)"; \
+	fi
 
 infra-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) apply -auto-approve \
@@ -739,7 +782,7 @@ deploy-gcp-safe-multiarch: build-multiarch apply-gcp migrate-gcp verify-gcp-read
 
 build-gcp: doctor-gcp infra-gcp grant-cloudbuild-gcp
 	@echo "Building + pushing via Cloud Build: $(IMAGE)"
-	gcloud builds submit --tag "$(IMAGE)" .
+	gcloud builds submit --suppress-logs --tag "$(IMAGE)" .
 
 deploy-gcp: build-gcp apply-gcp verify-gcp
 

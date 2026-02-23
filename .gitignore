@@ -56,6 +56,8 @@ dist/
 *.tfstate.*
 crash.log
 crash.*.log
+infra/gcp/cloud_run_demo/backend.hcl
+infra/gcp/cloud_run_demo/terraform.tfvars
 
 # macOS
 .DS_Store

@@ -115,6 +115,7 @@ make deploy-gcp-prod-iot-lp
 Docs:
 
 - GCP deploy overview: `docs/DEPLOY_GCP.md`
+- Manual GCP deploy runbook: `docs/MANUAL_DEPLOY_GCP_CLOUD_RUN.md`
 - Multi-arch images (amd64 + arm64): `docs/MULTIARCH_IMAGES.md`
 - Terraform stack details: `infra/gcp/cloud_run_demo/README.md`
 - Production posture checklist: `docs/PRODUCTION_POSTURE.md`

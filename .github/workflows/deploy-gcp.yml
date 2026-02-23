@@ -23,24 +23,44 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.env }}
 
     env:
       PROJECT_ID: ${{ vars.PROJECT_ID }}
       REGION: ${{ vars.REGION }}
-      # Optional overrides (if unset/empty, the workflow computes safe defaults)
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       TF_STATE_PREFIX: ${{ vars.TF_STATE_PREFIX }}
       AR_REPO: ${{ vars.AR_REPO }}
+      GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+      GCP_WIF_SERVICE_ACCOUNT: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+      GCP_TF_CONFIG_GCS_PATH: ${{ vars.GCP_TF_CONFIG_GCS_PATH }}
+      TF_DIR: infra/gcp/cloud_run_demo
 
     steps:
+      - name: Assert required GitHub variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GCP_WIF_PROVIDER}" || { echo "::error::Missing variable: GCP_WIF_PROVIDER"; exit 1; }
+          test -n "${GCP_WIF_SERVICE_ACCOUNT}" || { echo "::error::Missing variable: GCP_WIF_SERVICE_ACCOUNT"; exit 1; }
+          test -n "${GCP_TF_CONFIG_GCS_PATH}" || { echo "::error::Missing variable: GCP_TF_CONFIG_GCS_PATH"; exit 1; }
+          if [ -z "${PROJECT_ID}" ]; then
+            echo "::error::Missing variable: PROJECT_ID"
+            exit 1
+          fi
+          if [ -z "${REGION}" ]; then
+            echo "::error::Missing variable: REGION"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud (WIF)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -50,16 +70,27 @@ jobs:
         with:
           terraform_version: "1.14.5"
 
-      - name: Configure gcloud defaults
+      - name: Fetch Terraform config bundle from GCS
+        shell: bash
         run: |
-          gcloud config set project "$PROJECT_ID"
-          gcloud config set run/region "$REGION"
+          set -euo pipefail
+          echo "Fetching Terraform config from: ${GCP_TF_CONFIG_GCS_PATH}"
+          gcloud storage cp "${GCP_TF_CONFIG_GCS_PATH}/backend.hcl" "${TF_DIR}/backend.hcl"
+          gcloud storage cp "${GCP_TF_CONFIG_GCS_PATH}/terraform.tfvars" "${TF_DIR}/terraform.tfvars"
+
+      - name: Configure gcloud defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud config set project "${PROJECT_ID}"
+          gcloud config set run/region "${REGION}"
 
       - name: Build + deploy (safe sequence)
         env:
           ENV: ${{ github.event.inputs.env }}
-          TFVARS: ${{ github.event.inputs.tfvars }}
+          TFVARS_INPUT: ${{ github.event.inputs.tfvars }}
           TAG: ${{ github.sha }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -67,7 +98,12 @@ jobs:
           TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-edgewatch/${ENV}}"
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
 
+          TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
+          TFVARS_EFFECTIVE="${TFVARS_INPUT}"
+
           make deploy-gcp-safe \
-            TF_STATE_BUCKET="$TF_STATE_BUCKET_EFFECTIVE" \
-            TF_STATE_PREFIX="$TF_STATE_PREFIX_EFFECTIVE" \
-            AR_REPO="$AR_REPO_EFFECTIVE"
+            TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
+            TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
+            AR_REPO="${AR_REPO_EFFECTIVE}" \
+            TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}" \
+            TFVARS="${TFVARS_EFFECTIVE}"

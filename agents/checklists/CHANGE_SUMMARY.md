@@ -1,5 +1,49 @@
 # Change Summary
 
+## CI IAM hardening + apply image guard (2026-02-23)
+
+### What changed
+
+- Tightened IAM for deploy CI service account `sa-edgewatch-ci@job-search-486101.iam.gserviceaccount.com`:
+  - removed project-level `roles/storage.admin`
+  - removed project-level `roles/viewer`
+  - removed bucket-level `roles/storage.admin` from:
+    - `gs://job-search-486101-tfstate`
+    - `gs://job-search-486101_cloudbuild`
+  - retained bucket-level `roles/storage.objectAdmin` on state/cloudbuild/config buckets for object read/write only.
+- Hardened GCP workflows to avoid privileged fallbacks:
+  - `/.github/workflows/terraform-apply-gcp.yml`
+  - `/.github/workflows/deploy-gcp.yml`
+  - `/.github/workflows/terraform-drift.yml`
+  - `/.github/workflows/gcp-terraform-plan.yml`
+  - all now require `GCP_TF_CONFIG_GCS_PATH` and always fetch `backend.hcl` + `terraform.tfvars` from GCS.
+  - all now pass `TF_BACKEND_HCL=backend.hcl` so CI does not run tfstate bucket bootstrap requiring bucket-admin privileges.
+- Prevented non-existent image usage in apply:
+  - `terraform-apply-gcp` now accepts optional `image_tag` input.
+  - if omitted, it resolves the latest existing Artifact Registry tag.
+  - it verifies `IMAGE:TAG` exists before invoking `make apply-gcp`; fails fast with a clear error if not found.
+- Cloud Build log-read permission workaround remains in `Makefile`:
+  - `gcloud builds submit --suppress-logs --tag "$(IMAGE)" .`
+
+### Why it changed
+
+- The previous apply path could try to deploy an image tag that was never built in Artifact Registry.
+- CI had temporary broad storage/viewer roles to get unstuck; those are now reduced while preserving deploy capability.
+- Enforcing GCS-backed Terraform config keeps workflow behavior deterministic across envs and avoids bucket-admin operations during routine applies.
+
+### Validation
+
+- IAM verification:
+  - project roles for CI SA no longer include `roles/storage.admin` or `roles/viewer`.
+  - tfstate/cloudbuild buckets now show only `roles/storage.objectAdmin` for CI SA.
+- Harness:
+  - `python scripts/harness.py lint` (fails on existing unrelated notification tests)
+  - `python scripts/harness.py typecheck` (pass)
+  - `python scripts/harness.py test` (fails on same 3 notification tests)
+- Reproduced/confirmed old remote workflow failure cause:
+  - old `Terraform apply (GCP)` run failed in `bootstrap-state-gcp` due missing `storage.buckets.update` after IAM tightening.
+  - local workflow fixes remove that fallback path by requiring `GCP_TF_CONFIG_GCS_PATH` + `TF_BACKEND_HCL`.
+
 ## What changed?
 
 - Completed remaining Codex task specs across alerts, contracts/lineage, replay/backfill, and optional pipeline/analytics lanes.
@@ -2445,3 +2489,88 @@ Files:
 - `python scripts/harness.py lint` (pass)
 - `python scripts/harness.py typecheck` (pass)
 - `python scripts/harness.py test` (pass, 125 tests)
+
+## CI/CD Protocol Alignment (2026-02-23)
+
+### What changed
+
+- Added optional GCS-backed Terraform config workflow support (team protocol):
+  - `Makefile` new vars/targets:
+    - `TF_CONFIG_BUCKET`, `TF_CONFIG_PREFIX`, `TF_CONFIG_GCS_PATH`, `TF_BACKEND_HCL`
+    - `tf-config-print-gcp`, `tf-config-pull-gcp`, `tf-config-push-gcp`, `tf-config-bucket-gcp`
+  - `tf-init-gcp` now supports `TF_BACKEND_HCL` (file-based backend config) while preserving existing bucket/prefix mode.
+- Added a manual Terraform plan workflow:
+  - `.github/workflows/gcp-terraform-plan.yml`
+- Updated deploy/apply/drift workflows to support optional config bundle pull from GCS when `GCP_TF_CONFIG_GCS_PATH` is set:
+  - `.github/workflows/deploy-gcp.yml`
+  - `.github/workflows/terraform-apply-gcp.yml`
+  - `.github/workflows/terraform-drift.yml`
+- Updated deployment and team docs for the new protocol:
+  - `docs/WIF_GITHUB_ACTIONS.md`
+  - `docs/DEPLOY_GCP.md`
+  - `docs/DRIFT_DETECTION.md`
+  - `docs/TEAM_WORKFLOW.md`
+- Added ignore rules for local Terraform config files downloaded from GCS:
+  - `.gitignore` now ignores `infra/gcp/cloud_run_demo/backend.hcl` and `infra/gcp/cloud_run_demo/terraform.tfvars`.
+
+### Why it changed
+
+- Align this repo with the production-grade, team-friendly protocol used in `grounded-knowledge-platform`:
+  - centralized per-environment Terraform config in GCS,
+  - WIF-only CI/CD auth,
+  - explicit plan/apply/deploy lanes,
+  - reproducible, less ad-hoc operator workflow.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (125 passed)
+- Additional YAML parse check for workflows (including new untracked file):
+  - `python - <<'PY' ... yaml.safe_load(...)` ✅
+
+### Risks / rollout notes
+
+- GitHub environments should define `GCP_TF_CONFIG_GCS_PATH` (recommended) to fully use the GCS config bundle flow.
+- Existing deploy flow remains backward-compatible if `GCP_TF_CONFIG_GCS_PATH` is unset.
+
+### Follow-ups
+
+- [ ] Add `backend.hcl` + `terraform.tfvars` to each environment’s config path in GCS.
+- [ ] Configure GitHub Environment variables per env (`dev|stage|prod`) and use the new `Terraform plan (GCP)` workflow as pre-apply gate.
+
+## Manual Deploy Runbook for EdgeWatch (2026-02-23)
+
+### What changed
+
+- Added a new manual deployment runbook:
+  - `docs/MANUAL_DEPLOY_GCP_CLOUD_RUN.md`
+- The runbook is tailored for EdgeWatch and documents:
+  - reusing the existing GCP project and tfstate bucket,
+  - creating a repo-specific WIF provider + deploy service account,
+  - using separate config prefixes in GCS: `edgewatch/dev`, `edgewatch/stage`, `edgewatch/prod`,
+  - setting GitHub Environment variables for `dev|stage|prod`,
+  - deploying through the repo’s plan/apply/deploy workflows.
+- Added discoverability links:
+  - `docs/DEPLOY_GCP.md`
+  - `docs/START_HERE.md`
+
+### Why it changed
+
+- Provide the same proven, production-minded manual setup flow used in `grounded-knowledge-platform`, adapted to EdgeWatch naming and workflow conventions.
+
+### How it was validated
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+
+### Risks / rollout notes
+
+- IAM role scopes in the runbook are intentionally broad enough for first-time success; tighten after first successful deploy.
+- If WIF provider branch condition remains `main`-only, non-main workflow runs will fail by design.
+
+### Follow-ups
+
+- [ ] Add initial `backend.hcl` + `terraform.tfvars` objects to each env prefix under `edgewatch/*`.
+- [ ] Run `Terraform plan (GCP)` for `dev` after setting environment variables.

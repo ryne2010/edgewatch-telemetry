@@ -18,6 +18,10 @@ This repository includes an **optional** Terraform + Cloud Build demo deployment
 
 The goal is a reproducible, team-friendly workflow.
 
+For a full step-by-step manual runbook (including repo-specific WIF + config bundle setup), see:
+
+- `docs/MANUAL_DEPLOY_GCP_CLOUD_RUN.md`
+
 **Default posture (safe-by-default):** private IAM-only Cloud Run invocations.
 Use a profile (below) when you intentionally want a public demo.
 
@@ -45,6 +49,26 @@ Authenticate:
 
 ```bash
 make auth
+```
+
+### Team protocol: GCS config bundle (recommended)
+
+For shared environments, keep Terraform backend/vars in GCS:
+
+- `backend.hcl`
+- `terraform.tfvars`
+
+Use these helpers:
+
+```bash
+# Print the effective path (defaults to gs://<PROJECT_ID>-config/edgewatch/<ENV>)
+make tf-config-print-gcp ENV=dev
+
+# Download backend.hcl + terraform.tfvars into infra/gcp/cloud_run_demo/
+make tf-config-pull-gcp ENV=dev
+
+# Upload local backend.hcl + terraform.tfvars back to GCS
+make tf-config-push-gcp ENV=dev
 ```
 
 ## 2) Create secrets
@@ -167,6 +191,7 @@ Optional in-app RBAC (Task 15):
 - keep `AUTHZ_IAP_DEFAULT_ROLE=viewer` unless you intentionally want broader default access
 
 > Under the hood these targets set `TFVARS=...` and call `deploy-gcp-safe`.
+> If `TF_BACKEND_HCL` is set (for example `backend.hcl` after `make tf-config-pull-gcp`), Terraform init uses that backend config file.
 
 ### Recommended deploy lane
 
@@ -174,6 +199,13 @@ Recommended (safe sequence: deploy, run migrations job, then readiness verify):
 
 ```bash
 make deploy-gcp-safe ENV=dev
+```
+
+With GCS config bundle:
+
+```bash
+make tf-config-pull-gcp ENV=dev
+make deploy-gcp-safe ENV=dev TF_BACKEND_HCL=backend.hcl
 ```
 
 Or step-by-step:
@@ -360,3 +392,26 @@ make migrate-gcp ENV=dev
 
 - If `migrate-gcp` succeeds but `/readyz` still returns 503, verify `DATABASE_URL` points to a
   shared database (not a local SQLite file path).
+
+## GitHub Actions protocol (team-ready)
+
+Use these manual workflows:
+
+- `.github/workflows/gcp-terraform-plan.yml`
+- `.github/workflows/terraform-apply-gcp.yml`
+- `.github/workflows/deploy-gcp.yml`
+- `.github/workflows/terraform-drift.yml`
+
+Required GitHub variables:
+
+- `PROJECT_ID`
+- `REGION`
+- `GCP_WIF_PROVIDER`
+- `GCP_WIF_SERVICE_ACCOUNT`
+
+Recommended GitHub Environment variable (`dev`, `stage`, `prod`):
+
+- `GCP_TF_CONFIG_GCS_PATH` (example: `gs://my-config-bucket/edgewatch/dev`)
+
+When `GCP_TF_CONFIG_GCS_PATH` is set, workflows automatically pull
+`backend.hcl` + `terraform.tfvars` from that GCS path before Terraform runs.

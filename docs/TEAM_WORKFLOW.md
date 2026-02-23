@@ -29,11 +29,16 @@ make doctor-gcp
 make db-secret
 make admin-secret
 
+# recommended: centralize Terraform backend/vars per environment
+make tf-config-print-gcp ENV=dev
+make tf-config-pull-gcp ENV=dev
+
 # Public demo posture (dev)
-make deploy-gcp-demo
+make deploy-gcp-demo TF_BACKEND_HCL=backend.hcl
 
 # Or: production posture (private IAM)
-# make deploy-gcp-prod
+# make tf-config-pull-gcp ENV=prod
+# make deploy-gcp-prod TF_BACKEND_HCL=backend.hcl
 ```
 
 Notes:
@@ -59,6 +64,14 @@ Terraform uses a GCS backend. The Makefile creates the bucket automatically:
 make bootstrap-state-gcp
 ```
 
+For team environments, keep `backend.hcl` + `terraform.tfvars` in GCS and sync
+them with:
+
+```bash
+make tf-config-pull-gcp ENV=dev
+make tf-config-push-gcp ENV=dev
+```
+
 ## Scheduled jobs (Cloud Scheduler -> Cloud Run Jobs)
 
 The Terraform demo stack can create:
@@ -82,6 +95,12 @@ See `docs/IAM_STARTER_PACK.md`.
 ## CI (recommended)
 
 Use Workload Identity Federation (no service account keys) and require plan output review for IaC changes.
+
+Recommended workflow sequence:
+
+1. `Terraform plan (GCP)` workflow
+2. `Terraform apply (GCP)` workflow
+3. `Deploy to GCP (Cloud Run)` workflow
 
 ## Dependency lockfiles
 

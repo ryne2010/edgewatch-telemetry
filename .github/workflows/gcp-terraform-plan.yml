@@ -1,4 +1,4 @@
-name: Terraform apply (GCP)
+name: Terraform plan (GCP)
 
 on:
   workflow_dispatch:
@@ -11,21 +11,17 @@ on:
         description: "Optional Terraform var-file path (e.g., infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars)"
         required: false
         default: ""
-      image_tag:
-        description: "Optional Artifact Registry image tag to pin for terraform apply (defaults to latest existing tag)."
-        required: false
-        default: ""
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: terraform-apply-${{ github.event.inputs.env }}
-  cancel-in-progress: false
+  group: terraform-plan-${{ github.event.inputs.env }}
+  cancel-in-progress: true
 
 jobs:
-  apply:
+  plan:
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.env }}
 
@@ -89,11 +85,11 @@ jobs:
           gcloud config set project "${PROJECT_ID}"
           gcloud config set run/region "${REGION}"
 
-      - name: Terraform apply
+      - name: Terraform plan
         env:
           ENV: ${{ github.event.inputs.env }}
           TFVARS_INPUT: ${{ github.event.inputs.tfvars }}
-          IMAGE_TAG_INPUT: ${{ github.event.inputs.image_tag }}
+          TAG: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -101,34 +97,13 @@ jobs:
           TF_STATE_BUCKET_EFFECTIVE="${TF_STATE_BUCKET:-${PROJECT_ID}-tfstate}"
           TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-edgewatch/${ENV}}"
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
-          IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/edgewatch-api"
 
           TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
           TFVARS_EFFECTIVE="${TFVARS_INPUT}"
-          TAG_EFFECTIVE="${IMAGE_TAG_INPUT}"
 
-          # Apply should reference a real image tag; default to latest pushed tag in Artifact Registry.
-          if [ -z "${TAG_EFFECTIVE}" ]; then
-            LATEST_TAG_REF="$(gcloud artifacts docker tags list "${IMAGE_BASE}" --sort-by=~CREATE_TIME --limit=1 --format='value(tag)' || true)"
-            TAG_EFFECTIVE="${LATEST_TAG_REF##*:}"
-          fi
-
-          if [ -z "${TAG_EFFECTIVE}" ]; then
-            echo "::error::No image tags found for ${IMAGE_BASE}. Run Deploy to GCP first (or pass image_tag)."
-            exit 1
-          fi
-
-          if ! gcloud artifacts docker images describe "${IMAGE_BASE}:${TAG_EFFECTIVE}" >/dev/null 2>&1; then
-            echo "::error::Resolved image not found: ${IMAGE_BASE}:${TAG_EFFECTIVE}"
-            exit 1
-          fi
-
-          echo "Using image tag for terraform apply: ${TAG_EFFECTIVE}"
-
-          make apply-gcp \
+          make plan-gcp \
             TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
             TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
             AR_REPO="${AR_REPO_EFFECTIVE}" \
             TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}" \
-            TFVARS="${TFVARS_EFFECTIVE}" \
-            TAG="${TAG_EFFECTIVE}"
+            TFVARS="${TFVARS_EFFECTIVE}"
