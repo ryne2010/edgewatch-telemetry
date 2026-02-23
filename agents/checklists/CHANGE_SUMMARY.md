@@ -18,6 +18,7 @@
   - `/.github/workflows/gcp-terraform-plan.yml`
   - all now require `GCP_TF_CONFIG_GCS_PATH` and always fetch `backend.hcl` + `terraform.tfvars` from GCS.
   - all workflow dispatch `tfvars` inputs were removed (strict GCS-only config source in CI).
+  - all four workflows now share one cross-workflow concurrency group per env (`gcp-infra-<env>`) to serialize Terraform operations and avoid state-lock failures when users dispatch plan/apply/deploy together.
   - all now pass `TF_BACKEND_HCL=backend.hcl` so CI does not run tfstate bucket bootstrap requiring bucket-admin privileges.
 - Prevented non-existent image usage in apply:
   - `terraform-apply-gcp` now accepts optional `image_tag` input.

@@ -16,7 +16,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-drift-${{ github.event.inputs.env || 'prod' }}
+  group: gcp-infra-${{ github.event.inputs.env || 'prod' }}
   cancel-in-progress: false
 
 jobs:

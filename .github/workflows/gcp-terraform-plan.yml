@@ -13,8 +13,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-plan-${{ github.event.inputs.env }}
-  cancel-in-progress: true
+  group: gcp-infra-${{ github.event.inputs.env }}
+  cancel-in-progress: false
 
 jobs:
   plan:

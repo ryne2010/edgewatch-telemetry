@@ -13,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: deploy-gcp-${{ github.event.inputs.env }}
+  group: gcp-infra-${{ github.event.inputs.env }}
   cancel-in-progress: false
 
 jobs:
