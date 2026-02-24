@@ -1,5 +1,29 @@
 # Change Summary
 
+## Auto-deploy on main (2026-02-24)
+
+### What changed
+
+- Enabled automatic dev deploys on `main` pushes in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/.github/workflows/deploy-gcp.yml`
+- `Deploy to GCP (Cloud Run)` now triggers on:
+  - `push` to `main`
+  - `workflow_dispatch` (manual)
+- Added env fallback logic so one workflow supports both trigger modes:
+  - `github.event.inputs.env || 'dev'` used for:
+    - workflow concurrency group
+    - job environment
+    - deploy step `ENV`
+
+### Why it changed
+
+- Users expected hosted dev to update when merges land on `main`.
+- Previously deploy was manual-only (`workflow_dispatch`), so CI could pass while hosted dev remained on an older revision.
+
+### Validation
+
+- `python scripts/harness.py all --strict` ✅
+
 ## CSP-safe theme bootstrap (2026-02-24)
 
 ### What changed

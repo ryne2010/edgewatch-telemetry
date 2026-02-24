@@ -1,6 +1,8 @@
 name: Deploy to GCP (Cloud Run)
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       env:
@@ -13,13 +15,13 @@ permissions:
   id-token: write
 
 concurrency:
-  group: gcp-infra-${{ github.event.inputs.env }}
+  group: gcp-infra-${{ github.event.inputs.env || 'dev' }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.env }}
+    environment: ${{ github.event.inputs.env || 'dev' }}
 
     env:
       PROJECT_ID: ${{ vars.PROJECT_ID }}
@@ -83,7 +85,7 @@ jobs:
 
       - name: Build + deploy (safe sequence)
         env:
-          ENV: ${{ github.event.inputs.env }}
+          ENV: ${{ github.event.inputs.env || 'dev' }}
           TAG: ${{ github.sha }}
         shell: bash
         run: |
