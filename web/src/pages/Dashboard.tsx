@@ -515,7 +515,7 @@ export function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card {...tileCardProps('/devices')}>
           <CardHeader>
-            <CardTitle>Total devices</CardTitle>
+            <CardTitle>Total devices TEST TEST</CardTitle>
             <CardDescription>Fleet size (enabled + disabled)</CardDescription>
           </CardHeader>
           <CardContent>
