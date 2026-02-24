@@ -504,8 +504,7 @@ export function DashboardPage() {
   return (
     <Page
       title="Dashboard"
-      // description="Fleet-level view: heartbeat status, vitals, and open alerts."
-      description="HELLO THERE!!!"
+      description="Fleet-level view: heartbeat status, vitals, and open alerts."
       actions={
         <div className="flex items-center gap-2">
           {devicesQ.isFetching ? <Badge variant="secondary">refreshing…</Badge> : null}
@@ -515,7 +514,7 @@ export function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card {...tileCardProps('/devices')}>
           <CardHeader>
-            <CardTitle>Total devices TEST TEST</CardTitle>
+            <CardTitle>Total devices</CardTitle>
             <CardDescription>Fleet size (enabled + disabled)</CardDescription>
           </CardHeader>
           <CardContent>
