@@ -505,7 +505,7 @@ export function DashboardPage() {
     <Page
       title="Dashboard"
       // description="Fleet-level view: heartbeat status, vitals, and open alerts."
-      description="HELLO!!!"
+      description="HELLO THERE!!!"
       actions={
         <div className="flex items-center gap-2">
           {devicesQ.isFetching ? <Badge variant="secondary">refreshing…</Badge> : null}
