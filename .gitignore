@@ -61,3 +61,5 @@ infra/gcp/cloud_run_demo/terraform.tfvars
 
 # macOS
 .DS_Store
+
+.history

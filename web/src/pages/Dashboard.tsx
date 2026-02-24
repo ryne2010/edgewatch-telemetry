@@ -1,7 +1,7 @@
-import React from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { ColumnDef } from '@tanstack/react-table'
 import { Link, useNavigate } from '@tanstack/react-router'
+import type { ColumnDef } from '@tanstack/react-table'
+import React from 'react'
 import { api, type AlertOut, type DeviceSummaryOut } from '../api'
 import { FleetMap } from '../components/FleetMap'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page } from '../ui-kit'
@@ -504,7 +504,8 @@ export function DashboardPage() {
   return (
     <Page
       title="Dashboard"
-      description="Fleet-level view: heartbeat status, vitals, and open alerts."
+      // description="Fleet-level view: heartbeat status, vitals, and open alerts."
+      description="HELLO!!!"
       actions={
         <div className="flex items-center gap-2">
           {devicesQ.isFetching ? <Badge variant="secondary">refreshing…</Badge> : null}
