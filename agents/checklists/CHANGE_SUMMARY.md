@@ -1,5 +1,24 @@
 # Change Summary
 
+## CSP-safe theme bootstrap (2026-02-24)
+
+### What changed
+
+- Replaced inline theme bootstrap script in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/index.html`
+- Added same-origin external bootstrap script:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/public/theme-init.js`
+
+### Why it changed
+
+- Hosted dev enforces CSP with `script-src 'self'`.
+- Inline script execution was blocked in browser console.
+- Moving theme init to an external script preserves strict CSP and removes the violation.
+
+### Validation
+
+- `python scripts/harness.py all --strict` ✅
+
 ## Dashboard map/device-create/admin polish (2026-02-23)
 
 ### What changed

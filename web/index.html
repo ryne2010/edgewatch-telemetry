@@ -1,16 +1,7 @@
 <!doctype html>
 <html lang="en">
   <head>
-  <script>
-  // Prevent theme flash (respect saved preference).
-  (function () {
-    try {
-      var t = localStorage.getItem('theme');
-      if (t === 'dark') document.documentElement.classList.add('dark');
-    } catch (e) {}
-  })();
-</script>
-
+    <script src="/theme-init.js"></script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EdgeWatch Telemetry</title>
