@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import AlertPolicy, NotificationEvent
+from ..models import AlertPolicy, Device, NotificationEvent
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,8 @@ class RoutingPolicy:
     quiet_hours_end_minute: int | None
     quiet_hours_tz: str
     enabled: bool
+    alerts_muted_until: datetime | None
+    alerts_muted_reason: str | None
     policy_id: str | None = None
 
 
@@ -95,12 +97,27 @@ def _default_policy() -> RoutingPolicy:
         quiet_hours_end_minute=_parse_hhmm(settings.alert_quiet_hours_end),
         quiet_hours_tz=settings.alert_quiet_hours_tz,
         enabled=True,
+        alerts_muted_until=None,
+        alerts_muted_reason=None,
         policy_id=None,
     )
 
 
 class AlertRouter:
     def _load_policy(self, session: Session, device_id: str) -> RoutingPolicy:
+        device_row = (
+            session.query(Device.alerts_muted_until, Device.alerts_muted_reason)
+            .filter(Device.device_id == device_id)
+            .one_or_none()
+        )
+        muted_until = None
+        muted_reason = None
+        if device_row is not None:
+            muted_until = device_row[0]
+            muted_reason = str(device_row[1]).strip() if device_row[1] else None
+            if muted_until is not None and muted_until.tzinfo is None:
+                muted_until = muted_until.replace(tzinfo=timezone.utc)
+
         row = session.query(AlertPolicy).filter(AlertPolicy.device_id == device_id).one_or_none()
         if row is None:
             row = (
@@ -110,7 +127,19 @@ class AlertRouter:
                 .first()
             )
         if row is None:
-            return _default_policy()
+            default = _default_policy()
+            return RoutingPolicy(
+                dedupe_window_s=default.dedupe_window_s,
+                throttle_window_s=default.throttle_window_s,
+                throttle_max_notifications=default.throttle_max_notifications,
+                quiet_hours_start_minute=default.quiet_hours_start_minute,
+                quiet_hours_end_minute=default.quiet_hours_end_minute,
+                quiet_hours_tz=default.quiet_hours_tz,
+                enabled=default.enabled,
+                alerts_muted_until=muted_until,
+                alerts_muted_reason=muted_reason,
+                policy_id=default.policy_id,
+            )
 
         return RoutingPolicy(
             dedupe_window_s=max(0, row.dedupe_window_s),
@@ -120,6 +149,8 @@ class AlertRouter:
             quiet_hours_end_minute=row.quiet_hours_end_minute,
             quiet_hours_tz=row.quiet_hours_tz,
             enabled=bool(row.enabled),
+            alerts_muted_until=muted_until,
+            alerts_muted_reason=muted_reason,
             policy_id=row.id,
         )
 
@@ -139,6 +170,18 @@ class AlertRouter:
                 should_notify=False,
                 decision="suppressed_disabled",
                 reason="alert policy disabled",
+                channel=channel,
+                policy_id=policy.policy_id,
+            )
+
+        if policy.alerts_muted_until is not None and now_utc < policy.alerts_muted_until:
+            reason = "alerts muted"
+            if policy.alerts_muted_reason:
+                reason = f"{reason}: {policy.alerts_muted_reason}"
+            return RoutingDecision(
+                should_notify=False,
+                decision="suppressed_muted",
+                reason=reason,
                 channel=channel,
                 policy_id=policy.policy_id,
             )

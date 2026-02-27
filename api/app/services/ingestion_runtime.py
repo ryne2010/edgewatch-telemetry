@@ -19,9 +19,12 @@ from .ingest_pipeline import CandidatePoint, QuarantinedPoint, candidate_rows
 from .monitor import (
     ensure_battery_alerts,
     ensure_drip_oil_level_alerts,
+    ensure_microphone_offline_alerts,
     ensure_oil_level_alerts,
     ensure_oil_life_alerts,
     ensure_oil_pressure_alerts,
+    ensure_power_input_out_of_range_alerts,
+    ensure_power_unsustainable_alerts,
     ensure_signal_alerts,
     ensure_water_pressure_alerts,
 )
@@ -120,6 +123,18 @@ def persist_points_for_batch(
         signal_rssi = point.metrics.get("signal_rssi_dbm")
         if isinstance(signal_rssi, (int, float)) and not isinstance(signal_rssi, bool):
             ensure_signal_alerts(session, device_id, float(signal_rssi), point.ts)
+
+        microphone_level_db = point.metrics.get("microphone_level_db")
+        if isinstance(microphone_level_db, (int, float)) and not isinstance(microphone_level_db, bool):
+            ensure_microphone_offline_alerts(session, device_id, float(microphone_level_db), point.ts)
+
+        power_input_out_of_range = point.metrics.get("power_input_out_of_range")
+        if isinstance(power_input_out_of_range, bool):
+            ensure_power_input_out_of_range_alerts(session, device_id, power_input_out_of_range, point.ts)
+
+        power_unsustainable = point.metrics.get("power_unsustainable")
+        if isinstance(power_unsustainable, bool):
+            ensure_power_unsustainable_alerts(session, device_id, power_unsustainable, point.ts)
 
     if newest_ts is not None:
         device = session.query(Device).filter(Device.device_id == device_id).one_or_none()

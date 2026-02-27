@@ -11,11 +11,12 @@ EdgeWatch treats "offline" as an operational signal:
 - The **offline check job** looks for devices whose latest telemetry timestamp is older than the configured threshold.
 - When a device crosses the threshold, the job creates an `offline` alert.
 - When telemetry resumes, the alert is resolved.
+- Separately, ingest-time microphone threshold checks can emit `MICROPHONE_OFFLINE` / `MICROPHONE_ONLINE` alerts based on `microphone_level_db`.
 
 ## Where the code lives
 
 - Job entrypoint: `api/app/jobs/offline_check.py`
-- Alert model + logic: `api/app/alerts.py`
+- Alert model + logic: `api/app/services/monitor.py`
 
 ## Running locally
 

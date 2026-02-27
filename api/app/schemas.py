@@ -15,6 +15,7 @@ class AdminDeviceCreate(BaseModel):
     # Defaults align with contracts/edge_policy/* (battery & data optimized).
     heartbeat_interval_s: int = Field(300, ge=5, le=3600)
     offline_after_s: int = Field(900, ge=10, le=24 * 3600)
+    owner_emails: Optional[List[str]] = None
 
 
 class AdminDeviceUpdate(BaseModel):
@@ -26,6 +27,11 @@ class AdminDeviceUpdate(BaseModel):
     enabled: Optional[bool] = None
 
 
+OperationMode = Literal["active", "sleep", "disabled"]
+DeviceAccessRole = Literal["viewer", "operator", "owner"]
+DeviceStatus = Literal["online", "offline", "unknown", "sleep", "disabled"]
+
+
 class DeviceOut(BaseModel):
     device_id: str
     display_name: str
@@ -33,8 +39,12 @@ class DeviceOut(BaseModel):
     offline_after_s: int
     last_seen_at: Optional[datetime]
     enabled: bool
+    operation_mode: OperationMode = "active"
+    sleep_poll_interval_s: int = 7 * 24 * 3600
+    alerts_muted_until: Optional[datetime] = None
+    alerts_muted_reason: Optional[str] = None
 
-    status: str
+    status: DeviceStatus
     seconds_since_last_seen: Optional[int]
 
 
@@ -50,8 +60,12 @@ class DeviceSummaryOut(BaseModel):
     offline_after_s: int
     last_seen_at: Optional[datetime]
     enabled: bool
+    operation_mode: OperationMode = "active"
+    sleep_poll_interval_s: int = 7 * 24 * 3600
+    alerts_muted_until: Optional[datetime] = None
+    alerts_muted_reason: Optional[str] = None
 
-    status: str
+    status: DeviceStatus
     seconds_since_last_seen: Optional[int]
 
     latest_telemetry_at: Optional[datetime]
@@ -125,6 +139,7 @@ class TelemetryContractOut(BaseModel):
     version: str
     sha256: str
     metrics: Dict[str, TelemetryContractMetricOut]
+    profiles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 class IngestionBatchOut(BaseModel):
@@ -167,6 +182,47 @@ class NotificationEventOut(BaseModel):
     delivered: bool
     reason: str
     created_at: datetime
+
+
+class DeviceAccessGrantPutIn(BaseModel):
+    access_role: DeviceAccessRole = "viewer"
+
+
+class DeviceAccessGrantOut(BaseModel):
+    device_id: str
+    principal_email: str
+    access_role: DeviceAccessRole
+    created_at: datetime
+    updated_at: datetime
+
+
+class DeviceControlsOut(BaseModel):
+    device_id: str
+    operation_mode: OperationMode
+    sleep_poll_interval_s: int
+    disable_requires_manual_restart: bool = True
+    alerts_muted_until: Optional[datetime] = None
+    alerts_muted_reason: Optional[str] = None
+    pending_command_count: int = 0
+    latest_pending_command_expires_at: Optional[datetime] = None
+    latest_pending_operation_mode: Optional[OperationMode] = None
+    latest_pending_shutdown_requested: bool = False
+    latest_pending_shutdown_grace_s: Optional[int] = None
+
+
+class DeviceOperationControlUpdateIn(BaseModel):
+    operation_mode: OperationMode
+    sleep_poll_interval_s: Optional[int] = Field(None, ge=60, le=60 * 60 * 24 * 30)
+
+
+class DeviceAlertsControlUpdateIn(BaseModel):
+    alerts_muted_until: Optional[datetime] = None
+    alerts_muted_reason: Optional[str] = Field(None, max_length=512)
+
+
+class AdminDeviceShutdownIn(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=512)
+    shutdown_grace_s: Optional[int] = Field(None, ge=1, le=3600)
 
 
 class NotificationDestinationCreate(BaseModel):
@@ -263,6 +319,10 @@ class EdgePolicyReportingOut(BaseModel):
 
 
 class EdgePolicyAlertThresholdsOut(BaseModel):
+    microphone_offline_db: float
+    microphone_offline_open_consecutive_samples: int = 2
+    microphone_offline_resolve_consecutive_samples: int = 1
+
     water_pressure_low_psi: float
     water_pressure_recover_psi: float
 
@@ -291,6 +351,30 @@ class EdgePolicyCostCapsOut(BaseModel):
     max_media_uploads_per_day: int
 
 
+class EdgePolicyPowerManagementOut(BaseModel):
+    enabled: bool
+    mode: str
+    input_warn_min_v: float
+    input_warn_max_v: float
+    input_critical_min_v: float
+    input_critical_max_v: float
+    sustainable_input_w: float
+    unsustainable_window_s: int
+    battery_trend_window_s: int
+    battery_drop_warn_v: float
+    saver_sample_interval_s: int
+    saver_heartbeat_interval_s: int
+    media_disabled_in_saver: bool
+
+
+class EdgePolicyOperationDefaultsOut(BaseModel):
+    default_sleep_poll_interval_s: int
+    disable_requires_manual_restart: bool
+    admin_remote_shutdown_enabled: bool = True
+    shutdown_grace_s_default: int = 30
+    control_command_ttl_s: int = 180 * 24 * 3600
+
+
 class EdgePolicyContractOut(BaseModel):
     """Public edge policy contract (device-side optimization).
 
@@ -308,6 +392,8 @@ class EdgePolicyContractOut(BaseModel):
     delta_thresholds: Dict[str, float]
     alert_thresholds: EdgePolicyAlertThresholdsOut
     cost_caps: EdgePolicyCostCapsOut
+    power_management: EdgePolicyPowerManagementOut
+    operation_defaults: EdgePolicyOperationDefaultsOut
 
 
 class EdgePolicyContractSourceOut(BaseModel):
@@ -319,6 +405,25 @@ class EdgePolicyContractUpdateIn(BaseModel):
     yaml_text: str = Field(..., min_length=1, max_length=200_000)
 
 
+class PendingControlCommandOut(BaseModel):
+    id: str
+    issued_at: datetime
+    expires_at: datetime
+    operation_mode: OperationMode
+    sleep_poll_interval_s: int
+    shutdown_requested: bool = False
+    shutdown_grace_s: int = 30
+    alerts_muted_until: Optional[datetime] = None
+    alerts_muted_reason: Optional[str] = None
+
+
+class DeviceCommandAckOut(BaseModel):
+    id: str
+    device_id: str
+    status: str
+    acknowledged_at: Optional[datetime] = None
+
+
 class DevicePolicyOut(BaseModel):
     device_id: str
 
@@ -328,8 +433,13 @@ class DevicePolicyOut(BaseModel):
 
     heartbeat_interval_s: int
     offline_after_s: int
+    operation_mode: OperationMode = "active"
+    sleep_poll_interval_s: int = 7 * 24 * 3600
+    disable_requires_manual_restart: bool = True
 
     reporting: EdgePolicyReportingOut
     delta_thresholds: Dict[str, float]
     alert_thresholds: EdgePolicyAlertThresholdsOut
     cost_caps: EdgePolicyCostCapsOut
+    power_management: EdgePolicyPowerManagementOut
+    pending_control_command: Optional[PendingControlCommandOut] = None

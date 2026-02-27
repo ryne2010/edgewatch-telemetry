@@ -34,6 +34,10 @@ These are the rules that must always hold (and should be enforced mechanically).
 - Alerts may have an open/resolved lifecycle.
 - Offline alerts should open once and resolve when the device returns.
 
+6) **Per-device ownership is explicit**
+- Non-admin users can only read/control devices they are explicitly granted.
+- Admins bypass per-device grant checks for operations and recovery.
+
 ## Core workflows
 
 1) **Register a device (admin)**
@@ -52,13 +56,29 @@ These are the rules that must always hold (and should be enforced mechanically).
 
 4) **Generate alerts**
 - Periodic job checks device last-seen and opens/resolves offline alerts.
-- Metric threshold alerts (water pressure, battery, signal) open/resolve based on values.
+- Metric threshold alerts (microphone level, water pressure, battery, signal) open/resolve based on values.
+  - Microphone offline uses consecutive-sample sustain defaults (`2` low to open, `1` recover to resolve).
+- Power lifecycle alerts open/resolve from telemetry flags:
+  - `POWER_INPUT_OUT_OF_RANGE` / `POWER_INPUT_OK`
+  - `POWER_UNSUSTAINABLE` / `POWER_SUSTAINABLE`
 
 5) **Dashboard queries**
 - UI queries:
   - devices list + status
   - telemetry (raw + bucketed)
   - alerts timeline
+
+6) **Owner/operator controls**
+- Owners/operators can mute alert notifications for planned windows (offseason/maintenance).
+- Owners/operators can switch device operation mode:
+  - `active`: normal cadence
+  - `sleep`: long-cadence polling (default 7 days)
+  - `disabled`: logical disable; local restart required to resume
+- Admins can additionally issue a one-shot remote shutdown intent:
+  - command payload still latches `disabled`
+  - actual OS shutdown only runs on devices that explicitly allow it via local env guard
+- Control changes are enqueued as durable per-device commands (default TTL 180 days) and applied by agents
+  on next policy fetch; devices ack application.
 
 ## Vocabulary
 
@@ -67,7 +87,12 @@ These are the rules that must always hold (and should be enforced mechanically).
 - **Telemetry point:** a time-stamped measurement payload (`ts`, `metrics`, `message_id`).
 - **Heartbeat:** a periodic signal indicating the device is alive.
 - **Offline:** `now - last_seen_at > offline_after_s`.
+- **Sleep:** device intentionally uses long-cadence polling; offline lifecycle is suppressed.
+- **Disabled:** device is logically disabled and requires on-device restart to resume telemetry.
+- **Hybrid disable:** owner/operator disable is logical-only; admin shutdown intent can request one-shot OS shutdown,
+  but device-side execution remains opt-in.
 - **Alert:** an operational event derived from telemetry or offline checks.
+- **Control command:** a durable, per-device control snapshot delivered via policy and acknowledged by device.
 
 ## Canonical metric keys (contracted)
 
@@ -77,6 +102,14 @@ demo environment uses an explicit "known keys" contract for discoverability.
 See `contracts/telemetry/v1.yaml` for the full list.
 
 Common operational metrics:
+- `microphone_level_db`
+- `power_input_v`
+- `power_input_a`
+- `power_input_w`
+- `power_source`
+- `power_input_out_of_range`
+- `power_unsustainable`
+- `power_saver_active`
 - `water_pressure_psi`
 - `oil_pressure_psi`
 - `temperature_c`

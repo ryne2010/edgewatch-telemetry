@@ -126,6 +126,7 @@ class Settings:
 
     # Edge policy contract (device-side optimization story)
     edge_policy_version: str
+    simulation_allow_in_prod: bool
 
     # Alert routing + notifications
     alert_dedupe_window_s: int
@@ -358,6 +359,7 @@ def load_settings() -> Settings:
         telemetry_contract_unknown_keys_mode=unknown_keys_mode,  # type: ignore[arg-type]
         telemetry_contract_type_mismatch_mode=type_mismatch_mode,  # type: ignore[arg-type]
         edge_policy_version=(os.getenv("EDGE_POLICY_VERSION", "v1").strip() or "v1"),
+        simulation_allow_in_prod=_get_bool("SIMULATION_ALLOW_IN_PROD", False),
         alert_dedupe_window_s=_get_int("ALERT_DEDUPE_WINDOW_S", 900),
         alert_throttle_window_s=_get_int("ALERT_THROTTLE_WINDOW_S", 3600),
         alert_throttle_max_notifications=_get_int("ALERT_THROTTLE_MAX_NOTIFICATIONS", 20),

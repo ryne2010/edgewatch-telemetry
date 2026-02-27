@@ -15,6 +15,10 @@ Base: `/api/v1`
 - `GET  /devices/{device_id}` — device detail + computed status
 - `GET  /devices/{device_id}/telemetry` — raw telemetry points
 - `GET  /devices/{device_id}/timeseries` — bucketed time series
+- `GET  /devices/{device_id}/controls` — device operation + alert mute controls
+- `PATCH /devices/{device_id}/controls/operation` — set `active|sleep|disabled` + sleep interval
+- `PATCH /devices/{device_id}/controls/alerts` — set/clear alert notification mute window
+- `POST /device-commands/{command_id}/ack` — device ack for durable control command delivery
 - `GET  /alerts` — recent alerts
 - `GET  /device-policy` — edge policy/config for devices (Bearer token; ETag cached)
 - `GET  /contracts/telemetry` — active telemetry contract (public)
@@ -25,6 +29,10 @@ Base: `/api/v1`
 - `GET  /media/{media_id}` — media metadata detail (device auth)
 - `GET  /media/{media_id}/download` — media bytes download (device auth; proxied or signed URL)
 - `POST /admin/devices` — register device (admin surface; optional)
+- `POST /admin/devices/{device_id}/controls/shutdown` — admin-only one-shot shutdown intent enqueue
+- `GET  /admin/devices/{device_id}/access` — list per-device access grants
+- `PUT  /admin/devices/{device_id}/access/{principal_email}` — create/update per-device access grant
+- `DELETE /admin/devices/{device_id}/access/{principal_email}` — remove per-device access grant
 - `GET  /admin/ingestions` — ingestion lineage batches (admin surface; optional)
 - `GET  /admin/drift-events` — drift audit events (admin surface; optional)
 - `GET  /admin/notifications` — notification routing/delivery audit events (admin surface; optional)
@@ -44,6 +52,10 @@ Admin surface controls:
 - Optional RBAC controls:
   - `AUTHZ_ENABLED=0|1`
   - `AUTHZ_*_EMAILS` role allowlists
+
+Ownership controls:
+- When `AUTHZ_ENABLED=1`, non-admin read/control endpoints require explicit per-device grants.
+- Admin users bypass per-device grants for break-glass operations.
 
 **Compatibility:**
 - Endpoints under `/api/v1` are intended to be stable for the public demo.
@@ -67,6 +79,19 @@ A telemetry point includes:
 - `message_id` (string) — unique per device per point (idempotency key)
 - `ts` (datetime) — measurement timestamp
 - `metrics` (object) — key/value measurements (numbers/strings)
+
+Minimal Raspberry Pi microphone profile (current default path):
+- `metrics.microphone_level_db` (number) — relative microphone amplitude level in dB.
+- Additional metrics remain supported and are additive for future hardware profiles.
+
+Power-management telemetry (additive):
+- `metrics.power_input_v` (number, volts)
+- `metrics.power_input_a` (number, amps)
+- `metrics.power_input_w` (number, watts)
+- `metrics.power_source` (`solar|battery|unknown`)
+- `metrics.power_input_out_of_range` (boolean)
+- `metrics.power_unsustainable` (boolean)
+- `metrics.power_saver_active` (boolean)
 
 A request includes:
 - `points: TelemetryPoint[]`
@@ -102,6 +127,20 @@ A request includes:
 4) **Offline alert lifecycle**
 - A `DEVICE_OFFLINE` alert is opened at most once while the device remains offline.
 - When the device returns online, offline alerts resolve and an optional `DEVICE_ONLINE` alert is created.
+- When device operation mode is `sleep` or `disabled`, offline lifecycle is suppressed/resolved.
+
+4b) **Microphone offline lifecycle**
+- A `MICROPHONE_OFFLINE` alert is opened after `microphone_level_db` stays below threshold for
+  `microphone_offline_open_consecutive_samples` (default `2`).
+- When `microphone_level_db` recovers to or above threshold for
+  `microphone_offline_resolve_consecutive_samples` (default `1`), the alert resolves and
+  `MICROPHONE_ONLINE` is emitted.
+
+4c) **Power alert lifecycle**
+- A `POWER_INPUT_OUT_OF_RANGE` alert is opened when `power_input_out_of_range=true`.
+- When `power_input_out_of_range=false`, the alert resolves and `POWER_INPUT_OK` is emitted.
+- A `POWER_UNSUSTAINABLE` alert is opened when `power_unsustainable=true`.
+- When `power_unsustainable=false`, the alert resolves and `POWER_SUSTAINABLE` is emitted.
 
 6) **Device policy caching**
 - `GET /api/v1/device-policy` must support `ETag` + `If-None-Match`.
@@ -116,6 +155,55 @@ A request includes:
   - `cost_cap_active`
   - `bytes_sent_today`
   - `media_uploads_today`
+
+6c) **Device policy power management defaults**
+- Edge policy contract includes a `power_management` block for dual solar/12V operation.
+- If `power_management` is missing in a payload, API + agent parsers inject safe defaults.
+- Saver mode behavior is `warn + degrade` (no automatic shutdown).
+- Default fields:
+  - `enabled=true`
+  - `mode=dual`
+  - `input_warn_min_v=11.8`
+  - `input_warn_max_v=14.8`
+  - `input_critical_min_v=11.4`
+  - `input_critical_max_v=15.2`
+  - `sustainable_input_w=15.0`
+  - `unsustainable_window_s=900`
+  - `battery_trend_window_s=1800`
+  - `battery_drop_warn_v=0.25`
+  - `saver_sample_interval_s=1200`
+  - `saver_heartbeat_interval_s=1800`
+  - `media_disabled_in_saver=true`
+
+6d) **Device policy operation defaults**
+- Device policy includes:
+  - `operation_mode` (`active|sleep|disabled`)
+  - `sleep_poll_interval_s` (default `604800`)
+  - `disable_requires_manual_restart` (default `true`)
+  - `admin_remote_shutdown_enabled` (default `true`)
+  - `shutdown_grace_s_default` (default `30`)
+  - optional `pending_control_command` snapshot for durable control delivery
+- Sleep mode keeps telemetry polling active with long cadence.
+- Disabled mode requires local restart to resume agent telemetry.
+
+6f) **Durable control command delivery**
+- Owner/operator control writes enqueue a per-device durable command with default TTL `15552000s` (180 days).
+- Pending commands are delivered via `GET /api/v1/device-policy` and included in policy ETag state.
+- Pending command payload may include shutdown intent metadata:
+  - `shutdown_requested` (default `false`)
+  - `shutdown_grace_s` (default `30`)
+- Devices ack command application with `POST /api/v1/device-commands/{command_id}/ack`.
+- Older pending commands are superseded when a newer control command is enqueued.
+
+6e) **Ownership and mute semantics**
+- Per-device access grants enforce minimum role (`viewer|operator|owner`) for non-admin users.
+- Alert mute suppresses outbound notifications only; alert open/resolve rows continue to persist.
+
+6g) **Hybrid disable semantics**
+- Owner/operator disable remains logical-latch only (no remote OS shutdown intent).
+- Admin shutdown endpoint enqueues `disabled + shutdown_requested` command payload.
+- Device-side OS shutdown is guarded by `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`.
+- If the guard is unset/false, command still applies logical disable and is acknowledged.
 
 5) **No secret leakage**
 - Logs and error messages must not include device tokens, admin keys, or database URLs.

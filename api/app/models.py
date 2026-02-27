@@ -42,6 +42,10 @@ class Device(Base):
 
     heartbeat_interval_s: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     offline_after_s: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    operation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    sleep_poll_interval_s: Mapped[int] = mapped_column(Integer, nullable=False, default=7 * 24 * 3600)
+    alerts_muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    alerts_muted_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -58,8 +62,55 @@ class Device(Base):
     drift_events: Mapped[list["DriftEvent"]] = relationship(back_populates="device")
     quarantined_telemetry: Mapped[list["QuarantinedTelemetry"]] = relationship(back_populates="device")
     media_objects: Mapped[list["MediaObject"]] = relationship(back_populates="device")
+    access_grants: Mapped[list["DeviceAccessGrant"]] = relationship(back_populates="device")
+    control_commands: Mapped[list["DeviceControlCommand"]] = relationship(back_populates="device")
 
     __table_args__ = (Index("ix_devices_token_fingerprint", "token_fingerprint", unique=True),)
+
+
+class DeviceAccessGrant(Base):
+    __tablename__ = "device_access_grants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String(128), ForeignKey("devices.device_id"), nullable=False)
+    principal_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    access_role: Mapped[str] = mapped_column(String(16), nullable=False, default="viewer")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device: Mapped["Device"] = relationship(back_populates="access_grants")
+
+    __table_args__ = (
+        UniqueConstraint("device_id", "principal_email", name="uq_device_access_grants_device_principal"),
+        Index("ix_device_access_grants_principal_role", "principal_email", "access_role"),
+        Index("ix_device_access_grants_device_role", "device_id", "access_role"),
+    )
+
+
+class DeviceControlCommand(Base):
+    __tablename__ = "device_control_commands"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String(128), ForeignKey("devices.device_id"), nullable=False)
+    command_payload: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    device: Mapped["Device"] = relationship(back_populates="control_commands")
+
+    __table_args__ = (
+        Index(
+            "ix_device_control_commands_device_status_expires_issued",
+            "device_id",
+            "status",
+            "expires_at",
+            "issued_at",
+        ),
+        Index("ix_device_control_commands_status_expires", "status", "expires_at"),
+    )
 
 
 class TelemetryPoint(Base):

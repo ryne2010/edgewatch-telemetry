@@ -5,7 +5,7 @@ This repo supports a simulation lane so you can validate **UI/UX + alerting + co
 There are two modes:
 
 1) **Local**: run the edge simulator against your local API
-2) **Cloud** (dev/stage): a Cloud Run Job + Cloud Scheduler trigger that periodically generates synthetic telemetry
+2) **Cloud** (dev/stage/prod opt-in): a Cloud Run Job + Cloud Scheduler trigger that periodically generates synthetic telemetry
 
 ---
 
@@ -32,11 +32,16 @@ EDGEWATCH_API_URL=http://localhost:8082 make simulate
 Notes:
 
 - The simulator adheres to `contracts/telemetry/*`.
-- The generated data intentionally includes **occasional threshold crossings** to validate alert UX.
+- Default profile is `rpi_microphone_power_v1` (microphone + power keys only).
+- Legacy full-metric payloads are opt-in via:
+
+```bash
+SIMULATION_PROFILE=legacy_full make simulate
+```
 
 ---
 
-## Cloud simulation (dev + staging)
+## Cloud simulation (dev + staging + prod opt-in)
 
 Terraform can optionally provision:
 
@@ -50,11 +55,22 @@ Set Terraform variables:
 - `enable_simulation=true`
 - `simulation_schedule="*/1 * * * *"`
 - `simulation_points_per_device=1`
+- Production-only acknowledgement: `simulation_allow_in_prod=true`
+
+Runtime guard:
+
+- `SIMULATION_ALLOW_IN_PROD` defaults to `false`.
+- When `APP_ENV=prod` and this flag is not set, the simulation job exits without generating telemetry.
+- Optional runtime profile:
+  - `SIMULATION_PROFILE=rpi_microphone_power_v1` (default)
+  - `SIMULATION_PROFILE=legacy_full` (opt-in)
 
 The provided profiles already enable this:
 
 - `infra/gcp/cloud_run_demo/profiles/dev_public_demo.tfvars`
 - `infra/gcp/cloud_run_demo/profiles/stage_private_iam.tfvars`
+
+Production profiles keep simulation disabled by default and require explicit opt-in.
 
 ### Manual trigger
 

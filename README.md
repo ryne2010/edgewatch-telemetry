@@ -322,6 +322,11 @@ See `docs/WEB_UI.md` for a UI walkthrough.
 
 The `agent/` folder contains a small Python agent intended to run on a Raspberry Pi (or similar Linux SBC) and send telemetry to the API.
 
+- Current minimal Raspberry Pi profile is microphone-only (`microphone_level_db`).
+- Default poll cadence is 10 minutes via edge policy (`sample_interval_s=600`).
+- API raises `MICROPHONE_OFFLINE` when level is below threshold (`microphone_offline_db`, default 60).
+- Dual-mode power management supports solar or 12V battery input with INA219/INA260 (`rpi_power_i2c`).
+- API lifecycle alerts include `POWER_INPUT_OUT_OF_RANGE`/`POWER_INPUT_OK` and `POWER_UNSUSTAINABLE`/`POWER_SUSTAINABLE`.
 - Buffers locally when offline (SQLite)
 - Retries with backoff
 - Flushes buffered points when connectivity returns

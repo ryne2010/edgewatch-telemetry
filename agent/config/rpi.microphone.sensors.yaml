@@ -1,0 +1,21 @@
+backend: composite
+backends:
+  - backend: rpi_microphone
+    rpi_microphone:
+      # ALSA capture device. Use `arecord -l` to list hardware devices.
+      device: default
+      sample_rate_hz: 16000
+      capture_seconds: 2.0
+      command_timeout_s: 6.0
+      warning_interval_s: 300
+
+  - backend: rpi_power_i2c
+    rpi_power_i2c:
+      # Power monitor backend for solar/12V input protection.
+      # Supported sensors: ina219, ina260.
+      sensor: ina260
+      bus: 1
+      address: 0x40
+      shunt_ohms: 0.1
+      source_solar_min_v: 13.2
+      warning_interval_s: 300

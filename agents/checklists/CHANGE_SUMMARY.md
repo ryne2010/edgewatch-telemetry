@@ -1,5 +1,364 @@
 # Change Summary
 
+## EdgeWatch mainline finalization: hybrid disable safeguards (2026-02-27)
+
+### What changed
+
+- Closed remaining hybrid-disable gap in API/device policy/agent/web:
+  - admin-only shutdown enqueue route: `/api/v1/admin/devices/{device_id}/controls/shutdown`
+  - pending command schema includes:
+    - `shutdown_requested`
+    - `shutdown_grace_s`
+  - edge policy operation defaults include:
+    - `admin_remote_shutdown_enabled`
+    - `shutdown_grace_s_default`
+- Added agent-side shutdown execution guard:
+  - local env `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN` (default off)
+  - guard-off behavior: command still applies logical disable and acks
+  - guard-on behavior: ack + grace window + one-shot shutdown command execution
+- Updated admin/device UI controls:
+  - owner/operator keep logical disable flow
+  - admin can queue disable + shutdown intent
+  - controls surfaces now show pending shutdown markers
+- Documented hybrid semantics + BYO cellular hardening in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DESIGN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_RPI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/START_HERE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/POWER.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CELLULAR.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/RPI_ZERO_TOUCH_BOOTSTRAP.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/OWNER_CONTROLS_AND_COMMAND_DELIVERY.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/BYO_CELLULAR_PROVIDER_CHECKLIST.md`
+  - ADR update: `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DECISIONS/ADR-20260227-durable-control-command-delivery.md`
+
+### Why it changed
+
+- Product requirement was hybrid disable:
+  - owner/operator logical disable remains safe default
+  - admin gets optional one-shot shutdown path for hard stops
+- Safety requirement was explicit: no remote OS shutdown unless the device is locally opted in.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`175 passed`)
+- `make tf-check` ✅ (tooling passed; baseline checkov findings remain soft-fail in this lane)
+
+### Risks / rollout notes
+
+- Misconfigured guard (`EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1` where not intended) can enable remote power-off.
+- Keep policy gate `admin_remote_shutdown_enabled=true/false` controlled per environment during rollout.
+- Pilot hardware should verify shutdown grace behavior before broad fleet rollout.
+
+### Lessons learned
+
+- Hybrid-control features need both server-side RBAC and device-side execution guard to be safe in intermittent links.
+- Pending-command UX must surface shutdown intent explicitly, otherwise operators cannot distinguish logical disable from true power-off intent.
+
+## EdgeWatch mainline: durable command queue + mic sustain + RPi minimal profile (2026-02-27)
+
+### What changed
+
+- Verified checkpoint branch state and continued on `main`:
+  - `codex/full` exists locally and on `origin`.
+- Added durable remote control command delivery (6-month TTL):
+  - migration `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0013_device_control_commands.py`
+  - ORM + relationships in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+  - queue lifecycle service in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/device_commands.py`
+  - controls enqueue/supersede wiring in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_controls.py`
+  - pending command delivery + ETag fragmenting in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_policy.py`
+  - device ack endpoint in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_commands.py`
+- Extended policy/contracts for locked defaults:
+  - `control_command_ttl_s=15552000` in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/edge_policy/v1.yaml`
+  - microphone sustain defaults:
+    - `microphone_offline_open_consecutive_samples=2`
+    - `microphone_offline_resolve_consecutive_samples=1`
+  - simulator/UI profile metadata in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`:
+    - `profiles.rpi_microphone_power_v1`
+- Updated API schemas/routes for pending command visibility:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/contracts.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+  - controls output now includes `pending_command_count` and `latest_pending_command_expires_at`.
+- Updated agent apply-once + ack-retry behavior:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/device_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - durable local state tracks `last_applied_command_id` and pending ack intent.
+- Updated microphone offline lifecycle logic to sustain windows:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/monitor.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/ingestion_runtime.py`
+- Set simulator/UI default profile to microphone + power:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/jobs/simulate_telemetry.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx`
+  - legacy metrics remain available via simulator profile opt-in.
+- Added/updated docs, tutorials, and ADRs:
+  - ADR: `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DECISIONS/ADR-20260227-durable-control-command-delivery.md`
+  - core docs:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DESIGN.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - runbooks:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_RPI.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/POWER.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SIMULATION.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/CELLULAR.md`
+  - tutorials:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/RPI_ZERO_TOUCH_BOOTSTRAP.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/OWNER_CONTROLS_AND_COMMAND_DELIVERY.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/BYO_CELLULAR_PROVIDER_CHECKLIST.md`
+
+### Why it changed
+
+- Devices can be offline for long periods (sleep/offseason/cellular gaps), so remote controls need durable, eventual delivery with explicit acknowledgement.
+- The field-first profile should prioritize microphone + power while keeping existing metrics additive for future expansion.
+- Offline alert semantics now match sustained low sound behavior (2 consecutive low polls before open).
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`171 passed`)
+- `make tf-check` ✅ (static checks run; checkov baseline findings still soft-fail in this lane)
+
+### Risks / rollout notes
+
+- Additive API/contract change: older agents continue to function but only newer agents apply/ack durable pending commands.
+- Disabled mode remains logical latch; service restart on-device is still required to resume.
+- Operators should monitor pending command age during rollout to catch devices that remain disconnected past expected windows.
+
+### Lessons learned
+
+- SQLite file-size enforcement is page-granular; quota tests need a one-page tolerance to avoid platform-specific flakiness.
+- Pending command state must be part of policy ETag inputs; otherwise devices can miss control changes while payload cache appears unchanged.
+- A local durable ack-intent state file on agent is necessary to make command application resilient across power cycles and network outages.
+
+## EdgeWatch v1: ownership + controls + prod simulation opt-in (2026-02-27)
+
+### What changed
+
+- Git checkpoint workflow:
+  - created and pushed `codex/full` from current `main` (checkpoint branch)
+- Added strict per-device ownership model with additive schema:
+  - migration `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0012_device_controls_and_access_grants.py`
+  - model/table updates in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+  - access service in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/device_access.py`
+- Added owner/operator control APIs:
+  - `/api/v1/devices/{device_id}/controls`
+  - `/api/v1/devices/{device_id}/controls/operation`
+  - `/api/v1/devices/{device_id}/controls/alerts`
+  - implementation: `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_controls.py`
+- Added admin ownership grant APIs:
+  - `/api/v1/admin/devices/{device_id}/access`
+  - `/api/v1/admin/devices/{device_id}/access/{principal_email}` (PUT/DELETE)
+  - implementation: `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+- Enforced ownership on read surfaces when `AUTHZ_ENABLED=1`:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/devices.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/alerts.py`
+- Extended device state/output and policy:
+  - status now supports `sleep` and `disabled`
+  - new device fields: `operation_mode`, `sleep_poll_interval_s`, `alerts_muted_until`, `alerts_muted_reason`
+  - policy fields: `operation_mode`, `sleep_poll_interval_s`, `disable_requires_manual_restart`
+  - key files:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_policy.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/edge_policy.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/device_policy.py`
+- Implemented sleep/disable runtime behavior in agent:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - `sleep`: long-cadence telemetry polling, media disabled
+  - `disabled`: local latch; telemetry/media paused until local restart
+- Added alert mute routing behavior (notifications-only suppression):
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/routing.py`
+- Added simulator prod opt-in and richer RPi-first payloads:
+  - runtime guard in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/jobs/simulate_telemetry.py`
+  - new env/config: `SIMULATION_ALLOW_IN_PROD`
+  - generated metrics now include microphone + power keys
+- Terraform simulation opt-in controls:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/variables.tf`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/jobs.tf`
+  - prod profiles updated under `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/profiles`
+- UI updates:
+  - device owner controls in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+  - admin ownership management in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+  - updated client contracts in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+  - status handling (`sleep|disabled`) across fleet views
+- Documentation + decisions:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DESIGN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_RPI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/POWER.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SIMULATION.md`
+  - ADRs:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DECISIONS/ADR-20260227-device-ownership-and-control-model.md`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DECISIONS/ADR-20260227-prod-simulation-opt-in.md`
+
+### Why it changed
+
+- Implemented strict ownership for non-admin users.
+- Added operational controls for offseason/intermission behavior (mute/sleep/disable).
+- Kept simulator usable across environments while making production simulation an explicit opt-in.
+- Maintained additive compatibility for existing device payloads and policy consumers.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`160 passed`)
+- `make tf-check` ✅ (known baseline policy findings remain soft-fail in local checkov lane)
+
+### Risks / rollout notes
+
+- Ownership enforcement is active only when `AUTHZ_ENABLED=1`; deployments with `AUTHZ_ENABLED=0` retain legacy permissive behavior.
+- Disabled mode intentionally requires local restart; ensure runbooks for field technicians are in place.
+- Production simulation remains off by default; enabling it requires both Terraform and runtime acknowledgement.
+
+### Follow-ups / tech debt
+
+- Add end-to-end API integration tests for control endpoints with real auth headers and grant matrices.
+- Add UI tests for ownership management and device control flows.
+- Seed/migrate ownership grants for existing fleets before enabling strict authz in stage/prod.
+
+## Microphone-first RPi profile + checkpoint branch (2026-02-27)
+
+### What changed
+
+- Created a checkpoint branch from `main` and pushed it:
+  - `full` -> `origin/full`
+- Implemented an additive microphone telemetry path while preserving legacy sensors for future use:
+  - Added `microphone_level_db` to `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+  - Added `microphone_offline_db` to `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/edge_policy/v1.yaml`
+  - Set default polling cadence to 10 minutes in edge policy (`reporting.*_interval_s` defaults now `600`)
+- Added Raspberry Pi microphone backend + config:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/rpi_microphone.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/config/rpi.microphone.sensors.yaml`
+  - Wired backend parsing/building in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/config.py`
+- Propagated policy/schema updates through API + agent policy contracts:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/edge_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/contracts.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/device_policy.py`
+- Added microphone offline alert behavior at ingest time:
+  - `MICROPHONE_OFFLINE` open when `microphone_level_db < microphone_offline_db`
+  - `MICROPHONE_ONLINE` emitted on recovery
+  - Implemented in:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/monitor.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/ingestion_runtime.py`
+- Updated agent behavior to include microphone-aware heartbeat/delta handling and fallback defaults:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+- Extended mock telemetry and default summary metrics to surface microphone values:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/mock_sensors.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/devices.py`
+- Added/updated tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_rpi_microphone.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_ingestion_runtime.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_device_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_policy.py`
+- Updated docs for microphone-first RPi operation:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/README.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_RPI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SENSORS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/OFFLINE_CHECKS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RPI_AGENT.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/START_HERE.md`
+
+### Why it changed
+
+- Requested direction: minimal Raspberry Pi input schema centered on microphone telemetry.
+- Required behavior: poll on a 10-minute default cadence and raise an offline signal when microphone level is not sustained above threshold (default 60).
+- Constraint: keep existing sensor stack available for future use without removing contracts or code paths.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`133 passed`)
+
+### Risks / rollout notes
+
+- `rpi_microphone` backend depends on `arecord` (`alsa-utils`) being installed on Raspberry Pi nodes.
+- `microphone_level_db` is an uncalibrated relative dB value from PCM amplitude; threshold tuning may vary by microphone hardware and gain settings.
+- Edge policy default intervals now use 10-minute cadence globally (`600s`), which may be too slow for legacy pressure-first profiles unless adjusted.
+
+### Follow-ups / tech debt
+
+- Consider per-device profile overrides for sampling cadence (microphone-first vs pressure-first) to avoid one global default.
+- Add a calibration helper/runbook for site-specific microphone threshold tuning.
+- Optionally add sustained-window logic (consecutive low readings) if stricter “sustain” semantics are needed.
+
+## Solar/12V dual-mode power management (2026-02-27)
+
+### What changed
+
+- Extended telemetry contract with additive power fields in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`:
+  - `power_input_v`, `power_input_a`, `power_input_w`
+  - `power_source`
+  - `power_input_out_of_range`, `power_unsustainable`, `power_saver_active`
+- Extended edge policy contract with `power_management` defaults in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/edge_policy/v1.yaml`.
+- Added policy/schema plumbing (API + agent):
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/edge_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_policy.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/contracts.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/admin.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/device_policy.py`
+- Added hardware power backend for INA219/INA260:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/backends/rpi_power_i2c.py`
+  - wired in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/sensors/config.py`
+- Added dual-mode decision engine with durable rolling-window state:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/power_management.py`
+  - integrated into `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - saver mode now degrades cadence and can suppress media while keeping microphone/offline path active
+- Added ingest-driven power alert lifecycle:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/monitor.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/ingestion_runtime.py`
+  - alert pairs: `POWER_INPUT_OUT_OF_RANGE`/`POWER_INPUT_OK`, `POWER_UNSUSTAINABLE`/`POWER_SUSTAINABLE`
+- Added tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_sensor_rpi_power_i2c.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_power_management.py`
+  - extended `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_ingestion_runtime.py`
+  - extended `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_device_policy.py`
+  - extended `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_policy.py`
+- Updated docs + runbooks:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DOMAIN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DESIGN.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_RPI.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/POWER.md`
+
+### Why it changed
+
+- Added explicit support for field deployments powered by solar or 12V well battery inputs.
+- Required an additive v1 path that warns on out-of-range input and sustained unsustainable consumption.
+- Kept response posture in v1 as `warn + degrade` (no automatic shutdown), preserving backward compatibility.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`151 passed`)
+
+### Risks / rollout notes
+
+- Hardware path depends on INA219/INA260 wiring and `smbus2`; failed reads degrade to `None` metrics with throttled warnings.
+- Thresholds are conservative defaults for 12V lead-acid and may require site tuning.
+- Power saver mode intentionally reduces send cadence and media activity; operators should expect lower telemetry granularity while active.
+
 ## Auto-deploy on main (2026-02-24)
 
 ### What changed

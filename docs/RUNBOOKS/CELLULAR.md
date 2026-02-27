@@ -4,6 +4,23 @@ This runbook is for field bring-up and troubleshooting of Raspberry Pi EdgeWatch
 
 Principle: Linux networking owns the link; EdgeWatch observes and reports link health.
 
+Default deployment baseline:
+- USB LTE modem + nano-SIM (BYO carrier data plan).
+- eSIM is optional and only supported when modem firmware/carrier profile includes eUICC support.
+
+Carrier prerequisites to confirm before site rollout:
+- APN details (and credentials if required).
+- Whether IMEI pre-registration/allow-listing is required.
+- IPv4/IPv6 posture and CGNAT behavior.
+- Roaming policy and throttling limits.
+- Any port filtering that could block HTTPS egress to EdgeWatch endpoints.
+- Idle timeout behavior that may force reconnect churn.
+
+Non-requirements for EdgeWatch v1:
+- inbound public IP is not required.
+- static IP is not required.
+- eSIM is optional; nano-SIM USB modem remains the baseline.
+
 ## 1) Hardware options
 
 Use one of these patterns:
@@ -237,6 +254,7 @@ Most likely causes:
 - SIM not seated
 - SIM not activated
 - SIM locked by PIN
+- APN profile not provisioned for IoT/data-only service
 
 ### C) Registered but no data session
 
@@ -262,6 +280,7 @@ Most likely causes:
 - wrong APN
 - carrier plan missing data attach
 - weak/unsupported band coverage
+- IMEI not allow-listed for modem SKU
 
 ### D) Connected but no DNS/egress
 
@@ -316,6 +335,7 @@ Most likely causes:
 
 - brownouts/thermal constraints
 - poor RF placement (antenna/cabinet shielding)
+- aggressive carrier idle timeout under CGNAT
 
 ## 8) Field checklist (before leaving site)
 

@@ -6,6 +6,7 @@ import { useDebouncedValue } from '@tanstack/react-pacer/debouncer'
 import {
   api,
   type AdminEventOut,
+  type DeviceAccessGrantOut,
   type DriftEventOut,
   type ExportBatchOut,
   type IngestionBatchOut,
@@ -79,8 +80,15 @@ export function AdminPage() {
   const [provToken, setProvToken] = React.useState('')
   const [provHeartbeat, setProvHeartbeat] = React.useState('300')
   const [provOfflineAfter, setProvOfflineAfter] = React.useState('900')
+  const [provOwners, setProvOwners] = React.useState('')
   const [provEnabled, setProvEnabled] = React.useState(true)
   const [provStatus, setProvStatus] = React.useState<string | null>(null)
+  const [accessDeviceId, setAccessDeviceId] = React.useState('')
+  const [accessPrincipalEmail, setAccessPrincipalEmail] = React.useState('')
+  const [accessRole, setAccessRole] = React.useState<'viewer' | 'operator' | 'owner'>('viewer')
+  const [shutdownDeviceId, setShutdownDeviceId] = React.useState('')
+  const [shutdownReason, setShutdownReason] = React.useState('seasonal intermission')
+  const [shutdownGraceS, setShutdownGraceS] = React.useState('30')
 
   const upsertMutation = useMutation({
     mutationFn: async () => {
@@ -95,6 +103,14 @@ export function AdminPage() {
       const offlineAfter = Number(provOfflineAfter)
       if (!Number.isFinite(heartbeat) || heartbeat <= 0) throw new Error('Heartbeat must be a positive number')
       if (!Number.isFinite(offlineAfter) || offlineAfter <= 0) throw new Error('Offline after must be a positive number')
+      const ownerEmails = Array.from(
+        new Set(
+          provOwners
+            .split(',')
+            .map((email) => email.trim().toLowerCase())
+            .filter((email) => email.includes('@')),
+        ),
+      )
 
       try {
         return await api.admin.createDevice(adminCred, {
@@ -103,6 +119,7 @@ export function AdminPage() {
           token,
           heartbeat_interval_s: heartbeat,
           offline_after_s: offlineAfter,
+          owner_emails: ownerEmails.length ? ownerEmails : undefined,
         })
       } catch (e) {
         const msg = (e as Error).message
@@ -177,6 +194,95 @@ export function AdminPage() {
     queryKey: ['admin', 'exports', statusFilter],
     queryFn: () => api.admin.exports(adminCred, { status: statusFilter || undefined, limit: 300 }),
     enabled: tab === 'exports' && adminAccess,
+  })
+
+  const accessDevice = accessDeviceId.trim()
+  const deviceAccessQ = useQuery({
+    queryKey: ['admin', 'deviceAccess', accessDevice],
+    queryFn: () => api.admin.deviceAccess.list(adminCred, accessDevice),
+    enabled: adminAccess && Boolean(accessDevice),
+  })
+
+  const upsertAccessMutation = useMutation({
+    mutationFn: async () => {
+      const deviceIdValue = accessDeviceId.trim()
+      const email = accessPrincipalEmail.trim().toLowerCase()
+      if (!deviceIdValue) throw new Error('Device ID is required for access management.')
+      if (!email || !email.includes('@')) throw new Error('Principal email is required.')
+      return api.admin.deviceAccess.put(adminCred, deviceIdValue, email, { access_role: accessRole })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'deviceAccess', accessDeviceId.trim()] })
+      toast({
+        title: 'Device access saved',
+        variant: 'success',
+      })
+      setAccessPrincipalEmail('')
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to save device access',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const deleteAccessMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const deviceIdValue = accessDeviceId.trim()
+      if (!deviceIdValue) throw new Error('Device ID is required for access management.')
+      return api.admin.deviceAccess.delete(adminCred, deviceIdValue, email)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'deviceAccess', accessDeviceId.trim()] })
+      toast({
+        title: 'Device access removed',
+        variant: 'success',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to remove device access',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const shutdownMutation = useMutation({
+    mutationFn: async () => {
+      const deviceIdValue = shutdownDeviceId.trim()
+      const reason = shutdownReason.trim()
+      const graceS = Number.parseInt(shutdownGraceS, 10)
+      if (!deviceIdValue) throw new Error('Device ID is required for shutdown command.')
+      if (!reason) throw new Error('Shutdown reason is required.')
+      if (!Number.isFinite(graceS) || graceS <= 0 || graceS > 3600) {
+        throw new Error('Shutdown grace must be between 1 and 3600 seconds.')
+      }
+      return api.admin.shutdownDevice(adminCred, deviceIdValue, {
+        reason,
+        shutdown_grace_s: graceS,
+      })
+    },
+    onSuccess: (out) => {
+      qc.invalidateQueries({ queryKey: ['device', shutdownDeviceId.trim()] })
+      qc.invalidateQueries({ queryKey: ['deviceControls', shutdownDeviceId.trim()] })
+      qc.invalidateQueries({ queryKey: ['devicesSummary'] })
+      qc.invalidateQueries({ queryKey: ['admin', 'events'] })
+      toast({
+        title: 'Shutdown command queued',
+        description: `Pending command(s): ${out.pending_command_count}`,
+        variant: 'warning',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to queue shutdown command',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
   })
 
   const ingestionCols = React.useMemo<ColumnDef<IngestionBatchOut>[]>(() => {
@@ -256,6 +362,27 @@ export function AdminPage() {
     ]
   }, [])
 
+  const accessCols = React.useMemo<ColumnDef<DeviceAccessGrantOut>[]>(() => {
+    return [
+      { header: 'Principal', accessorKey: 'principal_email', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      { header: 'Role', accessorKey: 'access_role', cell: (i) => <Badge variant="secondary">{String(i.getValue())}</Badge> },
+      { header: 'Updated', accessorKey: 'updated_at', cell: (i) => <span className="text-muted-foreground">{fmtDateTime(i.getValue() as any)}</span> },
+      {
+        header: 'Action',
+        cell: (i) => (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => deleteAccessMutation.mutate(i.row.original.principal_email)}
+            disabled={deleteAccessMutation.isPending}
+          >
+            remove
+          </Button>
+        ),
+      },
+    ]
+  }, [deleteAccessMutation])
+
   const tabs: Array<{ key: AdminTab; label: string }> = [
     { key: 'events', label: 'Events' },
     { key: 'ingestions', label: 'Ingestions' },
@@ -333,85 +460,222 @@ export function AdminPage() {
       ) : null}
 
       {adminAccess ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Provision a device</CardTitle>
-            <CardDescription>
-              Create (or update) a device registration and generate a token you can paste into the edge agent.
-              If the device already exists, this form will update it.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-4 lg:grid-cols-3">
-            <div className="space-y-2">
-              <Label>Device ID</Label>
-              <Input value={provId} onChange={(e) => setProvId(e.target.value)} placeholder="well-001" disabled={inputsDisabled} />
-            </div>
-            <div className="space-y-2">
-              <Label>Display name (optional)</Label>
-              <Input value={provName} onChange={(e) => setProvName(e.target.value)} placeholder="Well 001" disabled={inputsDisabled} />
-            </div>
-            <div className="space-y-2">
-              <Label>Token</Label>
-              <div className="flex gap-2">
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Provision a device</CardTitle>
+              <CardDescription>
+                Create (or update) a device registration and generate a token you can paste into the edge agent.
+                If the device already exists, this form will update it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 lg:grid-cols-3">
+              <div className="space-y-2">
+                <Label>Device ID</Label>
+                <Input value={provId} onChange={(e) => setProvId(e.target.value)} placeholder="well-001" disabled={inputsDisabled} />
+              </div>
+              <div className="space-y-2">
+                <Label>Display name (optional)</Label>
+                <Input value={provName} onChange={(e) => setProvName(e.target.value)} placeholder="Well 001" disabled={inputsDisabled} />
+              </div>
+              <div className="space-y-2">
+                <Label>Token</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={provToken}
+                    onChange={(e) => setProvToken(e.target.value)}
+                    placeholder="paste or generate"
+                    disabled={inputsDisabled}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={inputsDisabled}
+                    onClick={() => {
+                      const t = (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).replace(/-/g, '')
+                      setProvToken(t)
+                    }}
+                  >
+                    Generate
+                  </Button>
+                </div>
+                <div className="text-xs text-muted-foreground">Treat tokens like passwords (store them in a secret manager).</div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Heartbeat interval (seconds)</Label>
                 <Input
-                  value={provToken}
-                  onChange={(e) => setProvToken(e.target.value)}
-                  placeholder="paste or generate"
+                  value={provHeartbeat}
+                  onChange={(e) => setProvHeartbeat(e.target.value)}
+                  placeholder="300"
                   disabled={inputsDisabled}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>Offline after (seconds)</Label>
+                <Input
+                  value={provOfflineAfter}
+                  onChange={(e) => setProvOfflineAfter(e.target.value)}
+                  placeholder="900"
+                  disabled={inputsDisabled}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Enabled</Label>
+                <div className="flex items-center gap-2">
+                  <Checkbox checked={provEnabled} onChange={(e) => setProvEnabled(e.target.checked)} disabled={inputsDisabled} />
+                  <span className="text-sm text-muted-foreground">Device can ingest telemetry</span>
+                </div>
+              </div>
+              <div className="space-y-2 lg:col-span-2">
+                <Label>Owner emails (comma-separated)</Label>
+                <Input
+                  value={provOwners}
+                  onChange={(e) => setProvOwners(e.target.value)}
+                  placeholder="owner1@example.com, owner2@example.com"
+                  disabled={inputsDisabled}
+                />
+                <div className="text-xs text-muted-foreground">
+                  Optional. Grants device-level owner access at creation time.
+                </div>
+              </div>
+
+              <div className="lg:col-span-3 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  disabled={inputsDisabled || upsertMutation.isPending}
+                  onClick={() => upsertMutation.mutate()}
+                >
+                  {upsertMutation.isPending ? 'Saving…' : 'Create / Update device'}
+                </Button>
+                {provStatus ? <span className={provStatus.startsWith('Error') ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>{provStatus}</span> : null}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Device ownership access</CardTitle>
+              <CardDescription>
+                Grant or revoke per-device access for non-admin users.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-4">
+                <div className="space-y-2">
+                  <Label>Device ID</Label>
+                  <Input
+                    value={accessDeviceId}
+                    onChange={(e) => setAccessDeviceId(e.target.value)}
+                    placeholder="well-001"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Principal email</Label>
+                  <Input
+                    value={accessPrincipalEmail}
+                    onChange={(e) => setAccessPrincipalEmail(e.target.value)}
+                    placeholder="operator@example.com"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Role</Label>
+                  <select
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={accessRole}
+                    onChange={(e) => setAccessRole(e.target.value as 'viewer' | 'operator' | 'owner')}
+                    disabled={inputsDisabled}
+                  >
+                    <option value="viewer">viewer</option>
+                    <option value="operator">operator</option>
+                    <option value="owner">owner</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={inputsDisabled}
-                  onClick={() => {
-                    const t = (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).replace(/-/g, '')
-                    setProvToken(t)
-                  }}
+                  onClick={() => upsertAccessMutation.mutate()}
+                  disabled={inputsDisabled || upsertAccessMutation.isPending}
                 >
-                  Generate
+                  {upsertAccessMutation.isPending ? 'Saving access…' : 'Grant / update access'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'deviceAccess', accessDeviceId.trim()] })}
+                  disabled={inputsDisabled || !accessDeviceId.trim()}
+                >
+                  Refresh list
                 </Button>
               </div>
-              <div className="text-xs text-muted-foreground">Treat tokens like passwords (store them in a secret manager).</div>
-            </div>
+              {deviceAccessQ.isError ? (
+                <div className="text-sm text-destructive">Error: {(deviceAccessQ.error as Error).message}</div>
+              ) : null}
+              <DataTable<DeviceAccessGrantOut>
+                data={deviceAccessQ.data ?? []}
+                columns={accessCols}
+                emptyState={accessDeviceId.trim() ? 'No access grants for this device.' : 'Enter a device ID to view access grants.'}
+              />
+            </CardContent>
+          </Card>
 
-            <div className="space-y-2">
-              <Label>Heartbeat interval (seconds)</Label>
-              <Input
-                value={provHeartbeat}
-                onChange={(e) => setProvHeartbeat(e.target.value)}
-                placeholder="300"
-                disabled={inputsDisabled}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Offline after (seconds)</Label>
-              <Input
-                value={provOfflineAfter}
-                onChange={(e) => setProvOfflineAfter(e.target.value)}
-                placeholder="900"
-                disabled={inputsDisabled}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Enabled</Label>
-              <div className="flex items-center gap-2">
-                <Checkbox checked={provEnabled} onChange={(e) => setProvEnabled(e.target.checked)} disabled={inputsDisabled} />
-                <span className="text-sm text-muted-foreground">Device can ingest telemetry</span>
+          <Card>
+            <CardHeader>
+              <CardTitle>Admin shutdown command</CardTitle>
+              <CardDescription>
+                Queue a one-shot <span className="font-mono">disabled + shutdown</span> command.
+                This is admin-only and still respects the agent-side shutdown guard.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Device ID</Label>
+                  <Input
+                    value={shutdownDeviceId}
+                    onChange={(e) => setShutdownDeviceId(e.target.value)}
+                    placeholder="well-001"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Reason</Label>
+                  <Input
+                    value={shutdownReason}
+                    onChange={(e) => setShutdownReason(e.target.value)}
+                    placeholder="seasonal intermission"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Grace seconds</Label>
+                  <Input
+                    value={shutdownGraceS}
+                    onChange={(e) => setShutdownGraceS(e.target.value)}
+                    placeholder="30"
+                    disabled={inputsDisabled}
+                  />
+                </div>
               </div>
-            </div>
-
-            <div className="lg:col-span-3 flex flex-wrap items-center gap-2">
+              <div className="text-xs text-muted-foreground">
+                Device executes OS shutdown only when <span className="font-mono">EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1</span>.
+                Otherwise the command applies logical disable only.
+              </div>
               <Button
                 type="button"
-                disabled={inputsDisabled || upsertMutation.isPending}
-                onClick={() => upsertMutation.mutate()}
+                variant="destructive"
+                onClick={() => shutdownMutation.mutate()}
+                disabled={inputsDisabled || shutdownMutation.isPending}
               >
-                {upsertMutation.isPending ? 'Saving…' : 'Create / Update device'}
+                {shutdownMutation.isPending ? 'Queueing shutdown…' : 'Queue disable + shutdown'}
               </Button>
-              {provStatus ? <span className={provStatus.startsWith('Error') ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>{provStatus}</span> : null}
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </>
       ) : null}
 
       {healthQ.isSuccess && adminEnabled ? (

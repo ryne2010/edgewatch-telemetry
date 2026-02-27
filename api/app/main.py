@@ -28,6 +28,8 @@ from .routes.alerts import router as alerts_router
 from .routes.admin import router as admin_router
 from .routes.contracts import router as contracts_router
 from .routes.device_policy import router as device_policy_router
+from .routes.device_commands import router as device_commands_router
+from .routes.device_controls import router as device_controls_router
 from .routes.media import router as media_router
 from .routes.pubsub_worker import router as pubsub_worker_router
 from .observability import (
@@ -289,6 +291,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
     if settings.enable_ingest_routes:
         app.include_router(ingest_router)
         app.include_router(device_policy_router)
+        app.include_router(device_commands_router)
         app.include_router(media_router)
         app.include_router(pubsub_worker_router)
     else:
@@ -299,6 +302,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
         app.include_router(devices_router, dependencies=[Depends(require_viewer_role)])
         app.include_router(alerts_router, dependencies=[Depends(require_viewer_role)])
         app.include_router(contracts_router, dependencies=[Depends(require_viewer_role)])
+        app.include_router(device_controls_router, dependencies=[Depends(require_viewer_role)])
     else:
         logger.info("Read routes disabled (ENABLE_READ_ROUTES=false)")
 

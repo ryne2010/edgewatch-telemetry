@@ -29,6 +29,9 @@ enable_admin_routes = false
 
 # Demo bootstrap should be off in production
 bootstrap_demo_device = false
+enable_simulation     = false
+# Set true only when explicitly opting into synthetic telemetry in prod.
+simulation_allow_in_prod = false
 
 # Optional: export lane, retention jobs, etc can be enabled per your environment.
 

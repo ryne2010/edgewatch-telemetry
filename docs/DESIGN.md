@@ -9,12 +9,14 @@ Agents should not invent new structure without updating this file (and usually a
 
 - **Edge agent (`agent/`)**
   - Reads sensors (or simulated sensors)
+  - Evaluates power-management state (dual-mode hardware + battery-trend fallback)
   - Buffers points locally (SQLite)
   - Flushes points to the API when online
 
 - **API (`api/`)**
   - FastAPI service for ingestion + queries
   - Background scheduler for offline monitoring
+  - Ownership-aware read/control surfaces
   - Persists to Postgres
 
 - **Database (Postgres)**
@@ -70,6 +72,59 @@ Within `api/app/`:
 - `models.py` depends on SQLAlchemy and `db.Base`.
 - `agent/*` must not depend on server internals.
 - `infra/*` is declarative and should not be imported by runtime code.
+
+## Power-management flow (RPi solar/12V)
+
+Runtime path:
+- Sensor backend reads (`rpi_power_i2c` for INA219/INA260 when available).
+- `agent/power_management.py` evaluates:
+  - input-voltage out-of-range
+  - sustained unsustainable load (hardware watts window) or fallback battery-trend drop
+- Agent enriches telemetry with:
+  - `power_input_v|a|w`, `power_source`
+  - `power_input_out_of_range`, `power_unsustainable`, `power_saver_active`
+- In saver mode the agent degrades cadence/media behavior (`warn + degrade`, no auto-shutdown).
+- API ingest runtime opens/resolves power alerts using those boolean telemetry flags.
+
+Durability:
+- Edge rolling-window state is persisted per device in `edgewatch_power_state_<device_id>.json`.
+
+## Ownership + control flow
+
+Runtime/API path:
+- Admin assigns per-device grants in `device_access_grants`.
+- Read routes (`/devices`, `/alerts`, telemetry endpoints) scope non-admin results to granted devices.
+- Owner/operator control routes manage:
+  - alert mute windows (`alerts_muted_until`, notifications-only suppression)
+  - operation mode (`active|sleep|disabled`)
+- Admin control route can enqueue one-shot shutdown intent:
+  - `POST /api/v1/admin/devices/{device_id}/controls/shutdown`
+  - payload sets `operation_mode=disabled` and `shutdown_requested=true`
+- Each control write also enqueues a durable `device_control_commands` entry (default TTL 180 days).
+- Device policy payload includes:
+  - operation defaults + per-device operation state
+  - latest pending control command snapshot (if any)
+  - policy ETag includes pending-command state to trigger device refresh
+- Devices ack applied commands via `/api/v1/device-commands/{command_id}/ack`.
+
+Agent behavior:
+- `sleep`: telemetry polling remains active at `sleep_poll_interval_s`; media capture/upload disabled.
+- `disabled`: local runtime latches disabled and requires on-device service restart to resume.
+- `shutdown_requested` command:
+  - always applies logical disable
+  - executes OS shutdown only when `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`
+  - otherwise logs guarded non-execution and remains disabled
+- Offline monitor suppresses `DEVICE_OFFLINE` lifecycle while in `sleep` or `disabled`.
+
+## Simulation environment guard
+
+- Simulator remains available in dev/stage by default.
+- Default simulation profile is `rpi_microphone_power_v1` (microphone + power keys).
+- Legacy full-metric simulation is opt-in via `SIMULATION_PROFILE=legacy_full`.
+- Production simulation requires explicit opt-in:
+  - runtime env: `SIMULATION_ALLOW_IN_PROD=1`
+  - Terraform acknowledgement: `simulation_allow_in_prod=true`
+- This keeps synthetic telemetry disabled in prod unless intentionally enabled.
 
 ## Boundaries and ownership
 

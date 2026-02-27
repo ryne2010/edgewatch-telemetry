@@ -12,6 +12,8 @@ Reference material:
 - Sensor wiring + recommended parts: `docs/HARDWARE.md`
 - Camera bring-up runbook: `docs/RUNBOOKS/CAMERA.md`
 - Cellular bring-up runbook: `docs/RUNBOOKS/CELLULAR.md`
+- Sensors bring-up runbook (microphone-first profile): `docs/RUNBOOKS/SENSORS.md`
+- Power-management runbook (solar/12V + INA219/INA260): `docs/RUNBOOKS/POWER.md`
 
 Work tracking (planned / @codex):
 

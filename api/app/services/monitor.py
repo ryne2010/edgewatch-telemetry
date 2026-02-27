@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..edge_policy import load_edge_policy
-from ..models import Device, Alert
+from ..models import Device, Alert, TelemetryPoint
 from ..observability import record_alert_transition_metric
 from .notifications import process_alert_notification
 
 
 logger = logging.getLogger("edgewatch.monitor")
+
+DeviceStatus = Literal["online", "offline", "unknown", "sleep", "disabled"]
 
 
 def utcnow() -> datetime:
@@ -28,16 +31,29 @@ def ensure_offline_alerts(session: Session) -> None:
         if status == "offline":
             _open_or_create_offline_alert(session, d, now)
         else:
-            _resolve_offline_alert_if_any(session, d, now)
+            _resolve_offline_alert_if_any(session, d, now, emit_online_event=(status == "online"))
 
 
-def compute_status(device: Device, now: datetime | None = None) -> tuple[str, int | None]:
+def compute_status(device: Device, now: datetime | None = None) -> tuple[DeviceStatus, int | None]:
     if now is None:
         now = utcnow()
+    operation_mode = str(getattr(device, "operation_mode", "active") or "active").strip().lower()
+    if operation_mode not in {"active", "sleep", "disabled"}:
+        operation_mode = "active"
+
     if device.last_seen_at is None:
+        if not device.enabled or operation_mode == "disabled":
+            return "disabled", None
+        if operation_mode == "sleep":
+            return "sleep", None
         return "unknown", None
+
     delta = now - device.last_seen_at
     seconds = int(delta.total_seconds())
+    if not device.enabled or operation_mode == "disabled":
+        return "disabled", seconds
+    if operation_mode == "sleep":
+        return "sleep", seconds
     if seconds > device.offline_after_s:
         return "offline", seconds
     return "online", seconds
@@ -71,7 +87,9 @@ def _open_or_create_offline_alert(session: Session, device: Device, now: datetim
     )
 
 
-def _resolve_offline_alert_if_any(session: Session, device: Device, now: datetime) -> None:
+def _resolve_offline_alert_if_any(
+    session: Session, device: Device, now: datetime, *, emit_online_event: bool = True
+) -> None:
     open_alerts = (
         session.query(Alert)
         .filter(
@@ -85,7 +103,7 @@ def _resolve_offline_alert_if_any(session: Session, device: Device, now: datetim
         _resolve_alert(a, now=now)
 
     # Optional: create an explicit online event when it returns
-    if open_alerts:
+    if open_alerts and emit_online_event:
         _create_alert(
             session,
             Alert(
@@ -468,8 +486,201 @@ def ensure_signal_alerts(session: Session, device_id: str, signal_rssi_dbm: floa
             )
 
 
+def ensure_microphone_offline_alerts(
+    session: Session, device_id: str, microphone_level_db: float, now: datetime
+) -> None:
+    """Microphone-based offline signal.
+
+    Open when microphone level falls below threshold. Resolve when it returns
+    to or above threshold.
+    """
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    offline_db = policy.alert_thresholds.microphone_offline_db
+    open_samples = max(1, int(policy.alert_thresholds.microphone_offline_open_consecutive_samples))
+    resolve_samples = max(1, int(policy.alert_thresholds.microphone_offline_resolve_consecutive_samples))
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "MICROPHONE_OFFLINE",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    levels = _recent_microphone_levels(
+        session,
+        device_id=device_id,
+        limit=max(open_samples, resolve_samples),
+    )
+
+    if open_alert:
+        if len(levels) >= resolve_samples and all(level >= offline_db for level in levels[:resolve_samples]):
+            _resolve_alert(open_alert, now=now)
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="MICROPHONE_ONLINE",
+                    severity="info",
+                    message=f"Microphone level recovered: {microphone_level_db:.1f} dB.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if len(levels) >= open_samples and all(level < offline_db for level in levels[:open_samples]):
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="MICROPHONE_OFFLINE",
+                    severity="warning",
+                    message=(
+                        f"Microphone level low: {microphone_level_db:.1f} dB "
+                        f"(offline threshold: {offline_db:.1f} dB)."
+                    ),
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
+def _recent_microphone_levels(session: Session, *, device_id: str, limit: int) -> list[float]:
+    if limit <= 0:
+        return []
+    rows = (
+        session.query(TelemetryPoint.metrics)
+        .filter(TelemetryPoint.device_id == device_id)
+        .order_by(TelemetryPoint.ts.desc(), TelemetryPoint.created_at.desc())
+        .limit(max(10, limit * 5))
+        .all()
+    )
+
+    out: list[float] = []
+    for (metrics,) in rows:
+        if not isinstance(metrics, dict):
+            continue
+        value = metrics.get("microphone_level_db")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        out.append(float(value))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def ensure_power_input_out_of_range_alerts(
+    session: Session,
+    device_id: str,
+    input_out_of_range: bool,
+    now: datetime,
+) -> None:
+    """Power input range lifecycle.
+
+    - Open POWER_INPUT_OUT_OF_RANGE when the boolean flag is true.
+    - Resolve and emit POWER_INPUT_OK when the flag returns false.
+    """
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "POWER_INPUT_OUT_OF_RANGE",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if input_out_of_range:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="POWER_INPUT_OUT_OF_RANGE",
+                    severity="warning",
+                    message="Power input voltage is out of configured range.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert:
+            _resolve_alert(open_alert, now=now)
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="POWER_INPUT_OK",
+                    severity="info",
+                    message="Power input voltage returned to configured range.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
+def ensure_power_unsustainable_alerts(
+    session: Session,
+    device_id: str,
+    power_unsustainable: bool,
+    now: datetime,
+) -> None:
+    """Power sustainability lifecycle.
+
+    - Open POWER_UNSUSTAINABLE when the boolean flag is true.
+    - Resolve and emit POWER_SUSTAINABLE when the flag returns false.
+    """
+
+    open_alert = (
+        session.query(Alert)
+        .filter(
+            Alert.device_id == device_id,
+            Alert.alert_type == "POWER_UNSUSTAINABLE",
+            Alert.resolved_at.is_(None),
+        )
+        .order_by(Alert.created_at.desc())
+        .first()
+    )
+
+    if power_unsustainable:
+        if not open_alert:
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="POWER_UNSUSTAINABLE",
+                    severity="warning",
+                    message="Power consumption is unsustainable for configured window.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+    else:
+        if open_alert:
+            _resolve_alert(open_alert, now=now)
+            _create_alert(
+                session,
+                Alert(
+                    device_id=device_id,
+                    alert_type="POWER_SUSTAINABLE",
+                    severity="info",
+                    message="Power consumption returned to sustainable range.",
+                    created_at=now,
+                ),
+                now=now,
+            )
+
+
 def _is_resolution_event(alert_type: str) -> bool:
-    return alert_type == "DEVICE_ONLINE" or alert_type.endswith("_OK")
+    return alert_type in {"DEVICE_ONLINE", "MICROPHONE_ONLINE", "POWER_SUSTAINABLE"} or alert_type.endswith(
+        "_OK"
+    )
 
 
 def _resolve_alert(alert: Alert, *, now: datetime) -> None:

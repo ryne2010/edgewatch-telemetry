@@ -1,5 +1,25 @@
 backend: composite
 backends:
+  # Minimal Raspberry Pi profile is microphone-only:
+  # - backend: rpi_microphone
+  #   rpi_microphone:
+  #     device: default
+  #     sample_rate_hz: 16000
+  #     capture_seconds: 2.0
+  #     command_timeout_s: 6.0
+  #     warning_interval_s: 300
+  #
+  # Optional solar/12V power monitor profile:
+  # - backend: rpi_power_i2c
+  #   rpi_power_i2c:
+  #     sensor: ina260
+  #     bus: 1
+  #     address: 0x40
+  #     shunt_ohms: 0.1
+  #     source_solar_min_v: 13.2
+  #     warning_interval_s: 300
+  #
+  # Legacy multi-sensor profile kept for future expansion:
   - backend: mock
   # Replace mock with rpi_i2c on Raspberry Pi once BME280 is wired.
   # - backend: rpi_i2c

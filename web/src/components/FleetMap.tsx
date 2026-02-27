@@ -101,6 +101,7 @@ function demoFallbackLocation(deviceId: string): { lat: number; lon: number } {
 function statusVariant(status: DeviceSummaryOut['status']): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'
   if (status === 'offline') return 'destructive'
+  if (status === 'sleep') return 'warning'
   return 'secondary'
 }
 
@@ -110,6 +111,12 @@ function markerStyle(status: DeviceSummaryOut['status']): L.CircleMarkerOptions 
   }
   if (status === 'offline') {
     return { radius: 8, color: '#7f1d1d', weight: 2, fillColor: '#ef4444', fillOpacity: 0.95 }
+  }
+  if (status === 'sleep') {
+    return { radius: 8, color: '#854d0e', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.95 }
+  }
+  if (status === 'disabled') {
+    return { radius: 8, color: '#334155', weight: 2, fillColor: '#64748b', fillOpacity: 0.95 }
   }
   return { radius: 8, color: '#334155', weight: 2, fillColor: '#94a3b8', fillOpacity: 0.95 }
 }

@@ -9,11 +9,30 @@
 
 version: v1
 
+profiles:
+  rpi_microphone_power_v1:
+    default_active: true
+    description: Minimal Raspberry Pi runtime profile for v1 (microphone + power management telemetry).
+    metrics:
+      - microphone_level_db
+      - power_input_v
+      - power_input_a
+      - power_input_w
+      - power_source
+      - power_input_out_of_range
+      - power_unsustainable
+      - power_saver_active
+
 metrics:
   water_pressure_psi:
     type: number
     unit: psi
     description: Water pressure at the sensor.
+
+  microphone_level_db:
+    type: number
+    unit: dB
+    description: Relative microphone amplitude level measured from a short capture window.
 
   oil_pressure_psi:
     type: number
@@ -53,6 +72,37 @@ metrics:
     type: number
     unit: volts
     description: Battery voltage.
+
+  power_input_v:
+    type: number
+    unit: volts
+    description: Input voltage measured by the power management sensor.
+
+  power_input_a:
+    type: number
+    unit: amps
+    description: Input current measured by the power management sensor.
+
+  power_input_w:
+    type: number
+    unit: watts
+    description: Input power measured by the power management sensor.
+
+  power_source:
+    type: string
+    description: Inferred input source classification (solar|battery|unknown).
+
+  power_input_out_of_range:
+    type: boolean
+    description: True when measured input voltage is outside the configured warn range.
+
+  power_unsustainable:
+    type: boolean
+    description: True when sustained power load or battery trend is unsustainable.
+
+  power_saver_active:
+    type: boolean
+    description: True when power management has enabled saver-mode runtime degradation.
 
   signal_rssi_dbm:
     type: number

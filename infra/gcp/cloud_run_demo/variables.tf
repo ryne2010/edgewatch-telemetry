@@ -764,13 +764,19 @@ variable "telemetry_rollup_backfill_hours" {
 
 variable "enable_simulation" {
   type        = bool
-  description = "If true, provision a Cloud Run Job + Cloud Scheduler trigger that generates synthetic telemetry for the demo fleet. Intended for dev/stage only."
+  description = "If true, provision a Cloud Run Job + Cloud Scheduler trigger that generates synthetic telemetry for the demo fleet."
   default     = false
 
   validation {
-    condition     = var.env != "prod" || var.enable_simulation == false
-    error_message = "enable_simulation must be false when env=prod (synthetic telemetry is for dev/stage only)."
+    condition     = var.env != "prod" || var.enable_simulation == false || var.simulation_allow_in_prod == true
+    error_message = "Refusing prod simulation by default. Set simulation_allow_in_prod=true to explicitly acknowledge prod synthetic telemetry."
   }
+}
+
+variable "simulation_allow_in_prod" {
+  type        = bool
+  description = "Explicit guardrail override that allows simulation jobs in env=prod."
+  default     = false
 }
 
 variable "simulation_schedule" {

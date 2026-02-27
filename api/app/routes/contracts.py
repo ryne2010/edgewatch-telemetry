@@ -10,6 +10,8 @@ from ..schemas import (
     EdgePolicyAlertThresholdsOut,
     EdgePolicyCostCapsOut,
     EdgePolicyContractOut,
+    EdgePolicyOperationDefaultsOut,
+    EdgePolicyPowerManagementOut,
     EdgePolicyReportingOut,
     TelemetryContractOut,
     TelemetryContractMetricOut,
@@ -61,6 +63,7 @@ def get_telemetry_contract(request: Request, response: Response) -> TelemetryCon
             k: TelemetryContractMetricOut(type=v.type, unit=v.unit, description=v.description)
             for k, v in sorted(c.metrics.items())
         },
+        profiles={k: c.profiles[k] for k in sorted(c.profiles)},
     )
 
 
@@ -118,6 +121,13 @@ def get_edge_policy_contract(
         ),
         delta_thresholds={k: p.delta_thresholds[k] for k in sorted(p.delta_thresholds)},
         alert_thresholds=EdgePolicyAlertThresholdsOut(
+            microphone_offline_db=p.alert_thresholds.microphone_offline_db,
+            microphone_offline_open_consecutive_samples=(
+                p.alert_thresholds.microphone_offline_open_consecutive_samples
+            ),
+            microphone_offline_resolve_consecutive_samples=(
+                p.alert_thresholds.microphone_offline_resolve_consecutive_samples
+            ),
             water_pressure_low_psi=p.alert_thresholds.water_pressure_low_psi,
             water_pressure_recover_psi=p.alert_thresholds.water_pressure_recover_psi,
             oil_pressure_low_psi=p.alert_thresholds.oil_pressure_low_psi,
@@ -137,5 +147,27 @@ def get_edge_policy_contract(
             max_bytes_per_day=p.cost_caps.max_bytes_per_day,
             max_snapshots_per_day=p.cost_caps.max_snapshots_per_day,
             max_media_uploads_per_day=p.cost_caps.max_media_uploads_per_day,
+        ),
+        power_management=EdgePolicyPowerManagementOut(
+            enabled=p.power_management.enabled,
+            mode=p.power_management.mode,
+            input_warn_min_v=p.power_management.input_warn_min_v,
+            input_warn_max_v=p.power_management.input_warn_max_v,
+            input_critical_min_v=p.power_management.input_critical_min_v,
+            input_critical_max_v=p.power_management.input_critical_max_v,
+            sustainable_input_w=p.power_management.sustainable_input_w,
+            unsustainable_window_s=p.power_management.unsustainable_window_s,
+            battery_trend_window_s=p.power_management.battery_trend_window_s,
+            battery_drop_warn_v=p.power_management.battery_drop_warn_v,
+            saver_sample_interval_s=p.power_management.saver_sample_interval_s,
+            saver_heartbeat_interval_s=p.power_management.saver_heartbeat_interval_s,
+            media_disabled_in_saver=p.power_management.media_disabled_in_saver,
+        ),
+        operation_defaults=EdgePolicyOperationDefaultsOut(
+            default_sleep_poll_interval_s=p.operation_defaults.default_sleep_poll_interval_s,
+            disable_requires_manual_restart=p.operation_defaults.disable_requires_manual_restart,
+            admin_remote_shutdown_enabled=p.operation_defaults.admin_remote_shutdown_enabled,
+            shutdown_grace_s_default=p.operation_defaults.shutdown_grace_s_default,
+            control_command_ttl_s=p.operation_defaults.control_command_ttl_s,
         ),
     )

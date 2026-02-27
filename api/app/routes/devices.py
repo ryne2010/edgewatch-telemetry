@@ -4,13 +4,16 @@ import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func
 
+from ..auth.principal import Principal
+from ..auth.rbac import require_viewer_role
 from ..config import settings
 from ..db import db_session
 from ..models import Device, TelemetryPoint, TelemetryRollupHourly
-from ..schemas import DeviceOut, TimeseriesMultiPointOut, TimeseriesPointOut, DeviceSummaryOut
+from ..schemas import DeviceOut, DeviceSummaryOut, OperationMode, TimeseriesMultiPointOut, TimeseriesPointOut
+from ..services.device_access import accessible_device_ids_subquery, ensure_device_access
 from ..services.device_identity import safe_display_name
 from ..services.monitor import compute_status
 
@@ -22,18 +25,15 @@ NUMERIC_TEXT_RE = r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$"
 
 
 DEFAULT_SUMMARY_METRICS: list[str] = [
-    # Fleet vitals shown in the UI (keep this list small + high signal).
-    "water_pressure_psi",
-    "oil_pressure_psi",
-    "temperature_c",
-    "humidity_pct",
-    "oil_level_pct",
-    "oil_life_pct",
-    "drip_oil_level_pct",
-    "battery_v",
-    "signal_rssi_dbm",
-    "flow_rate_gpm",
-    "pump_on",
+    # Default v1 Raspberry Pi profile (microphone + power).
+    "microphone_level_db",
+    "power_input_v",
+    "power_input_a",
+    "power_input_w",
+    "power_source",
+    "power_input_out_of_range",
+    "power_unsustainable",
+    "power_saver_active",
 ]
 
 
@@ -59,26 +59,47 @@ def _json_metric_text_expr(metric_key: str, dialect_name: str):
     return TelemetryPoint.metrics.op("->>")(metric_key)
 
 
+def _normalized_operation_mode(value: object) -> OperationMode:
+    mode = str(value or "active").strip().lower()
+    if mode == "sleep":
+        return "sleep"
+    if mode == "disabled":
+        return "disabled"
+    return "active"
+
+
+def _device_out(device: Device, *, now: datetime) -> DeviceOut:
+    device_status, seconds = compute_status(device, now)
+    return DeviceOut(
+        device_id=device.device_id,
+        display_name=safe_display_name(device.device_id, device.display_name),
+        heartbeat_interval_s=device.heartbeat_interval_s,
+        offline_after_s=device.offline_after_s,
+        last_seen_at=device.last_seen_at,
+        enabled=device.enabled,
+        operation_mode=_normalized_operation_mode(getattr(device, "operation_mode", "active")),
+        sleep_poll_interval_s=int(getattr(device, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)),
+        alerts_muted_until=getattr(device, "alerts_muted_until", None),
+        alerts_muted_reason=getattr(device, "alerts_muted_reason", None),
+        status=device_status,
+        seconds_since_last_seen=seconds,
+    )
+
+
 @router.get("/devices", response_model=List[DeviceOut])
-def list_devices() -> List[DeviceOut]:
+def list_devices(principal: Principal = Depends(require_viewer_role)) -> List[DeviceOut]:
     now = datetime.now(timezone.utc)
     with db_session() as session:
-        devices = session.query(Device).order_by(Device.device_id.asc()).all()
+        q = session.query(Device)
+        accessible_ids = accessible_device_ids_subquery(
+            session, principal=principal, min_access_role="viewer"
+        )
+        if accessible_ids is not None:
+            q = q.filter(Device.device_id.in_(accessible_ids))
+        devices = q.order_by(Device.device_id.asc()).all()
         out: List[DeviceOut] = []
         for d in devices:
-            device_status, seconds = compute_status(d, now)
-            out.append(
-                DeviceOut(
-                    device_id=d.device_id,
-                    display_name=safe_display_name(d.device_id, d.display_name),
-                    heartbeat_interval_s=d.heartbeat_interval_s,
-                    offline_after_s=d.offline_after_s,
-                    last_seen_at=d.last_seen_at,
-                    enabled=d.enabled,
-                    status=device_status,
-                    seconds_since_last_seen=seconds,
-                )
-            )
+            out.append(_device_out(d, now=now))
         return out
 
 
@@ -86,6 +107,7 @@ def list_devices() -> List[DeviceOut]:
 def list_device_summaries(
     metrics: Optional[List[str]] = Query(default=None),
     limit_metrics: int = Query(default=20, ge=1, le=100),
+    principal: Principal = Depends(require_viewer_role),
 ) -> List[DeviceSummaryOut]:
     """Return a fleet-friendly device list with the latest telemetry metrics.
 
@@ -146,12 +168,16 @@ def list_device_summaries(
 
         latest = session.query(ranked).filter(ranked.c.rn == 1).subquery()
 
-        rows = (
-            session.query(Device, latest.c.ts, latest.c.message_id, latest.c.metrics)
-            .outerjoin(latest, latest.c.device_id == Device.device_id)
-            .order_by(Device.device_id)
-            .all()
+        q = session.query(Device, latest.c.ts, latest.c.message_id, latest.c.metrics).outerjoin(
+            latest, latest.c.device_id == Device.device_id
         )
+        accessible_ids = accessible_device_ids_subquery(
+            session, principal=principal, min_access_role="viewer"
+        )
+        if accessible_ids is not None:
+            q = q.filter(Device.device_id.in_(accessible_ids))
+
+        rows = q.order_by(Device.device_id).all()
 
         out: List[DeviceSummaryOut] = []
         for d, ts, message_id, metrics_obj in rows:
@@ -168,6 +194,12 @@ def list_device_summaries(
                     offline_after_s=d.offline_after_s,
                     last_seen_at=d.last_seen_at,
                     enabled=d.enabled,
+                    operation_mode=_normalized_operation_mode(getattr(d, "operation_mode", "active")),
+                    sleep_poll_interval_s=int(
+                        getattr(d, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)
+                    ),
+                    alerts_muted_until=getattr(d, "alerts_muted_until", None),
+                    alerts_muted_reason=getattr(d, "alerts_muted_reason", None),
                     status=device_status,
                     seconds_since_last_seen=seconds,
                     latest_telemetry_at=ts,
@@ -180,24 +212,15 @@ def list_device_summaries(
 
 
 @router.get("/devices/{device_id}", response_model=DeviceOut)
-def get_device(device_id: str) -> DeviceOut:
+def get_device(device_id: str, principal: Principal = Depends(require_viewer_role)) -> DeviceOut:
     now = datetime.now(timezone.utc)
     with db_session() as session:
         d = session.query(Device).filter(Device.device_id == device_id).one_or_none()
         if d is None:
             raise HTTPException(status_code=404, detail="Device not found")
+        ensure_device_access(session, principal=principal, device_id=device_id, min_access_role="viewer")
 
-        device_status, seconds = compute_status(d, now)
-        return DeviceOut(
-            device_id=d.device_id,
-            display_name=safe_display_name(d.device_id, d.display_name),
-            heartbeat_interval_s=d.heartbeat_interval_s,
-            offline_after_s=d.offline_after_s,
-            last_seen_at=d.last_seen_at,
-            enabled=d.enabled,
-            status=device_status,
-            seconds_since_last_seen=seconds,
-        )
+        return _device_out(d, now=now)
 
 
 @router.get("/devices/{device_id}/telemetry")
@@ -209,6 +232,7 @@ def get_telemetry(
     since: Optional[datetime] = Query(default=None),
     until: Optional[datetime] = Query(default=None),
     limit: int = Query(default=1000, ge=1, le=5000),
+    principal: Principal = Depends(require_viewer_role),
 ):
     """Return raw telemetry points. Intended for debugging and small time windows."""
     since = _normalize_opt_utc(since)
@@ -216,6 +240,7 @@ def get_telemetry(
     if since is not None and until is not None and since > until:
         raise HTTPException(status_code=400, detail="since must be <= until")
     with db_session() as session:
+        ensure_device_access(session, principal=principal, device_id=device_id, min_access_role="viewer")
         q = session.query(TelemetryPoint).filter(TelemetryPoint.device_id == device_id)
         if since is not None:
             q = q.filter(TelemetryPoint.ts >= since)
@@ -249,6 +274,7 @@ def get_timeseries(
     since: Optional[datetime] = Query(default=None),
     until: Optional[datetime] = Query(default=None),
     limit: int = Query(default=1000, ge=1, le=5000),
+    principal: Principal = Depends(require_viewer_role),
 ):
     """Return bucketed time series (server-side aggregation)."""
     from sqlalchemy import Float, String, case, cast, func
@@ -264,6 +290,7 @@ def get_timeseries(
         raise HTTPException(status_code=400, detail="since must be <= until")
 
     with db_session() as session:
+        ensure_device_access(session, principal=principal, device_id=device_id, min_access_role="viewer")
         if bucket == "hour" and settings.telemetry_rollups_enabled:
             rollup_query = session.query(
                 TelemetryRollupHourly.bucket_ts.label("bucket_ts"),
@@ -331,6 +358,7 @@ def get_timeseries_multi(
     since: Optional[datetime] = Query(default=None),
     until: Optional[datetime] = Query(default=None),
     limit: int = Query(default=1000, ge=1, le=5000),
+    principal: Principal = Depends(require_viewer_role),
 ):
     """Return multiple bucketed time series in a single request.
 
@@ -364,6 +392,7 @@ def get_timeseries_multi(
         raise HTTPException(status_code=400, detail="metrics must include at most 10 metric keys")
 
     with db_session() as session:
+        ensure_device_access(session, principal=principal, device_id=device_id, min_access_role="viewer")
         dialect_name = session.bind.dialect.name if session.bind is not None else ""
 
         bucket_ts = func.date_trunc(date_trunc_unit, TelemetryPoint.ts).label("bucket_ts")

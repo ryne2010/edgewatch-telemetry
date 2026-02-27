@@ -30,6 +30,10 @@ from ..services.ingestion_runtime import (
 logger = logging.getLogger("edgewatch.job.simulate_telemetry")
 
 
+def _simulation_allowed_in_env(*, app_env: str, allow_in_prod: bool) -> bool:
+    return app_env != "prod" or allow_in_prod
+
+
 def _ensure_demo_fleet(session) -> list[str]:
     """Ensure the demo fleet exists.
 
@@ -89,7 +93,9 @@ def _float_metric(val: float, *, jitter: float = 0.0) -> float:
     return float(val + random.uniform(-jitter, jitter))
 
 
-def _generate_metrics(*, device_index: int, ts: datetime) -> dict[str, object]:
+def _generate_metrics(
+    *, device_index: int, ts: datetime, include_legacy_metrics: bool = False
+) -> dict[str, object]:
     """Generate a realistic-looking telemetry payload.
 
     The goal is:
@@ -104,6 +110,35 @@ def _generate_metrics(*, device_index: int, ts: datetime) -> dict[str, object]:
 
     # Pump toggles on/off in ~15 minute cycles, offset per device.
     pump_on = int((phase // 15) % 2) == 1
+
+    microphone_level_db = 67.0 + 3.0 * math.sin(phase / 2.5)
+    if device_index == 1 and int(phase) % 45 in {10, 11, 12}:
+        microphone_level_db -= 12.0
+
+    is_daylight = 6 <= ts.hour < 19
+    power_source = "solar" if is_daylight else "battery"
+    power_input_v = (13.6 if is_daylight else 12.4) + 0.4 * math.sin(phase / 7.0)
+    if device_index == 3 and int(phase) % 90 in {0, 1, 2, 3, 4, 5}:
+        power_input_v -= 1.4
+    power_input_a = 0.8 + (0.7 if pump_on else 0.2) + 0.2 * math.sin(phase / 5.0)
+    power_input_a = max(0.2, power_input_a)
+    power_input_w = power_input_v * power_input_a
+    power_input_out_of_range = power_input_v < 11.8 or power_input_v > 14.8
+    power_unsustainable = power_input_w > 15.0
+    power_saver_active = power_input_out_of_range or power_unsustainable
+
+    minimal = {
+        "microphone_level_db": round(_float_metric(microphone_level_db, jitter=0.3), 2),
+        "power_input_v": round(_float_metric(power_input_v, jitter=0.03), 2),
+        "power_input_a": round(_float_metric(power_input_a, jitter=0.01), 2),
+        "power_input_w": round(_float_metric(power_input_w, jitter=0.08), 2),
+        "power_source": power_source,
+        "power_input_out_of_range": bool(power_input_out_of_range),
+        "power_unsustainable": bool(power_unsustainable),
+        "power_saver_active": bool(power_saver_active),
+    }
+    if not include_legacy_metrics:
+        return minimal
 
     # Water pressure oscillates; on some devices it dips below threshold.
     base_wp = 44.0 + device_index * 1.5
@@ -137,41 +172,58 @@ def _generate_metrics(*, device_index: int, ts: datetime) -> dict[str, object]:
 
     # Oil life is a sawtooth (manual reset modeled elsewhere; this is visual).
     oil_life = 100.0 - (phase % (24 * 60)) * (100.0 / (24 * 60))
-
     flow = (22.0 + 4.0 * math.sin(phase / 4.0)) if pump_on else 0.0
 
     state = "OK"
-    if wp < 25.0 or batt < 11.8 or sig < -95:
+    if (
+        wp < 25.0
+        or batt < 11.8
+        or sig < -95
+        or microphone_level_db < 60.0
+        or power_input_out_of_range
+        or power_unsustainable
+    ):
         state = "WARN"
 
-    return {
-        "temperature_c": round(_float_metric(temp, jitter=0.2), 2),
-        "humidity_pct": round(_float_metric(hum, jitter=0.5), 2),
-        "water_pressure_psi": round(_float_metric(wp, jitter=0.3), 2),
-        "oil_pressure_psi": round(_float_metric(oil_p, jitter=0.2), 2),
-        "oil_level_pct": round(max(0.0, min(100.0, _float_metric(oil_level, jitter=0.2))), 2),
-        "oil_life_pct": round(max(0.0, min(100.0, _float_metric(oil_life, jitter=0.1))), 2),
-        "drip_oil_level_pct": round(max(0.0, min(100.0, _float_metric(drip_level, jitter=0.2))), 2),
-        "battery_v": round(_float_metric(batt, jitter=0.02), 2),
-        "signal_rssi_dbm": int(round(_float_metric(sig, jitter=1.0))),
-        "pump_on": bool(pump_on),
-        "flow_rate_gpm": round(_float_metric(flow, jitter=0.3), 2),
-        "device_state": state,
-    }
+    minimal.update(
+        {
+            "temperature_c": round(_float_metric(temp, jitter=0.2), 2),
+            "humidity_pct": round(_float_metric(hum, jitter=0.5), 2),
+            "water_pressure_psi": round(_float_metric(wp, jitter=0.3), 2),
+            "oil_pressure_psi": round(_float_metric(oil_p, jitter=0.2), 2),
+            "oil_level_pct": round(max(0.0, min(100.0, _float_metric(oil_level, jitter=0.2))), 2),
+            "oil_life_pct": round(max(0.0, min(100.0, _float_metric(oil_life, jitter=0.1))), 2),
+            "drip_oil_level_pct": round(max(0.0, min(100.0, _float_metric(drip_level, jitter=0.2))), 2),
+            "battery_v": round(_float_metric(batt, jitter=0.02), 2),
+            "signal_rssi_dbm": int(round(_float_metric(sig, jitter=1.0))),
+            "pump_on": bool(pump_on),
+            "flow_rate_gpm": round(_float_metric(flow, jitter=0.3), 2),
+            "device_state": state,
+        }
+    )
+    return minimal
 
 
 def main() -> None:
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
     configure_logging(level=level, log_format=settings.log_format)
 
-    # Guardrail: never generate synthetic data in production.
-    if settings.app_env == "prod":
+    if not _simulation_allowed_in_env(
+        app_env=settings.app_env,
+        allow_in_prod=bool(settings.simulation_allow_in_prod),
+    ):
         logger.warning("simulation_disabled_in_prod")
         return
 
     # Allow operators to control how much data each run generates.
     points_per_device = int(os.getenv("SIMULATION_POINTS_PER_DEVICE", "1") or "1")
     points_per_device = max(1, min(points_per_device, 60))
+    simulation_profile = (
+        (os.getenv("SIMULATION_PROFILE", "rpi_microphone_power_v1") or "rpi_microphone_power_v1")
+        .strip()
+        .lower()
+    )
+    include_legacy_metrics = simulation_profile in {"legacy_full", "full", "all"}
 
     # For job runners, it's convenient to ensure schema exists.
     maybe_run_startup_migrations(engine=engine)
@@ -199,7 +251,11 @@ def main() -> None:
                     CandidatePoint(
                         message_id=str(uuid.uuid4()),
                         ts=ts,
-                        metrics=_generate_metrics(device_index=idx, ts=ts),
+                        metrics=_generate_metrics(
+                            device_index=idx,
+                            ts=ts,
+                            include_legacy_metrics=include_legacy_metrics,
+                        ),
                     )
                 )
 

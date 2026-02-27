@@ -15,6 +15,7 @@ class MockSensorBackend:
         default_factory=lambda: frozenset(
             {
                 "water_pressure_psi",
+                "microphone_level_db",
                 "oil_pressure_psi",
                 "temperature_c",
                 "humidity_pct",

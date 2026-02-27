@@ -32,6 +32,7 @@ class TelemetryContract:
     version: str
     sha256: str
     metrics: dict[str, MetricSpec]
+    profiles: dict[str, dict[str, Any]]
 
     def validate_metrics(self, metrics: Mapping[str, Any]) -> tuple[set[str], list[str]]:
         unknown_keys, mismatches = self.validate_metrics_detailed(metrics)
@@ -112,6 +113,17 @@ def load_telemetry_contract(version: str) -> TelemetryContract:
     if not isinstance(metrics_raw, dict):
         raise ValueError("telemetry contract 'metrics' must be a mapping")
 
+    profiles_raw = data.get("profiles") or {}
+    if not isinstance(profiles_raw, dict):
+        raise ValueError("telemetry contract 'profiles' must be a mapping")
+    profiles: dict[str, dict[str, Any]] = {}
+    for key, spec in profiles_raw.items():
+        if not isinstance(key, str):
+            continue
+        if not isinstance(spec, Mapping):
+            raise ValueError(f"telemetry contract profile '{key}' must be a mapping")
+        profiles[key] = dict(spec)
+
     metrics: dict[str, MetricSpec] = {}
     for key, spec in metrics_raw.items():
         if not isinstance(key, str):
@@ -130,4 +142,9 @@ def load_telemetry_contract(version: str) -> TelemetryContract:
             description=str(spec.get("description")) if spec.get("description") is not None else None,
         )
 
-    return TelemetryContract(version=version_from_file, sha256=sha256, metrics=metrics)
+    return TelemetryContract(
+        version=version_from_file,
+        sha256=sha256,
+        metrics=metrics,
+        profiles=profiles,
+    )

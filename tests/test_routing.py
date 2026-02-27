@@ -80,6 +80,8 @@ def test_router_suppresses_quiet_hours(monkeypatch) -> None:
             quiet_hours_end_minute=6 * 60,
             quiet_hours_tz="UTC",
             enabled=True,
+            alerts_muted_until=None,
+            alerts_muted_reason=None,
         ),
     )
 
@@ -106,6 +108,8 @@ def test_router_suppresses_dedupe_window(monkeypatch) -> None:
             quiet_hours_end_minute=None,
             quiet_hours_tz="UTC",
             enabled=True,
+            alerts_muted_until=None,
+            alerts_muted_reason=None,
         ),
     )
 
@@ -132,6 +136,8 @@ def test_router_suppresses_throttle(monkeypatch) -> None:
             quiet_hours_end_minute=None,
             quiet_hours_tz="UTC",
             enabled=True,
+            alerts_muted_until=None,
+            alerts_muted_reason=None,
         ),
     )
 
@@ -158,6 +164,8 @@ def test_router_delivers_when_policy_allows(monkeypatch) -> None:
             quiet_hours_end_minute=None,
             quiet_hours_tz="UTC",
             enabled=True,
+            alerts_muted_until=None,
+            alerts_muted_reason=None,
         ),
     )
 
@@ -169,3 +177,32 @@ def test_router_delivers_when_policy_allows(monkeypatch) -> None:
 
     assert decision.should_notify is True
     assert decision.decision == "deliver"
+
+
+def test_router_suppresses_when_alerts_muted(monkeypatch) -> None:
+    router = AlertRouter()
+    mute_until = datetime(2026, 1, 1, 13, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        router,
+        "_load_policy",
+        lambda _session, _device_id: RoutingPolicy(
+            dedupe_window_s=0,
+            throttle_window_s=0,
+            throttle_max_notifications=0,
+            quiet_hours_start_minute=None,
+            quiet_hours_end_minute=None,
+            quiet_hours_tz="UTC",
+            enabled=True,
+            alerts_muted_until=mute_until,
+            alerts_muted_reason="offseason",
+        ),
+    )
+
+    decision = router.should_notify(
+        cast(Any, _FakeSession()),
+        _candidate(),
+        now=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert decision.should_notify is False
+    assert decision.decision == "suppressed_muted"

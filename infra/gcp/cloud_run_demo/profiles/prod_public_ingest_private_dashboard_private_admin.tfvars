@@ -30,6 +30,9 @@ enable_admin_routes = false
 
 # --- Production defaults -----------------------------------------------------
 bootstrap_demo_device = false
+enable_simulation     = false
+# Set true only when explicitly opting into synthetic telemetry in prod.
+simulation_allow_in_prod = false
 
 # --- Private dashboard service ----------------------------------------------
 enable_dashboard_service        = true

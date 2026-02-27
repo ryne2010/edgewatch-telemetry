@@ -23,6 +23,7 @@ type FleetHealth = {
 function statusVariant(status: DeviceSummaryOut['status']): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'
   if (status === 'offline') return 'destructive'
+  if (status === 'sleep') return 'warning'
   return 'secondary'
 }
 
@@ -52,7 +53,13 @@ function parseDevicesSearch(searchStr: string): {
 
   const rawStatus = String(params.get('status') ?? params.get('deviceStatus') ?? 'all').toLowerCase()
   const statusFilter: DeviceStatusFilter =
-    rawStatus === 'online' || rawStatus === 'offline' || rawStatus === 'unknown' ? rawStatus : 'all'
+    rawStatus === 'online' ||
+    rawStatus === 'offline' ||
+    rawStatus === 'unknown' ||
+    rawStatus === 'sleep' ||
+    rawStatus === 'disabled'
+      ? rawStatus
+      : 'all'
 
   const filterText = String(params.get('q') ?? params.get('search') ?? '').trim()
   const rawOpen = String(params.get('openAlertsOnly') ?? params.get('open_alerts_only') ?? '').toLowerCase()
@@ -71,6 +78,20 @@ function computeFleetHealth(
       label: 'awaiting telemetry',
       detail: 'No telemetry has been received yet. Verify device auth and run agent/simulate.',
       variant: 'secondary',
+    }
+  }
+  if (device.status === 'disabled') {
+    return {
+      label: 'disabled',
+      detail: 'Device is logically disabled. Local restart is required to resume telemetry.',
+      variant: 'secondary',
+    }
+  }
+  if (device.status === 'sleep') {
+    return {
+      label: 'sleep mode',
+      detail: `Sleep cadence active (${fmtDuration(device.sleep_poll_interval_s)}). Alerts can be muted for offseason windows.`,
+      variant: 'warning',
     }
   }
 
@@ -157,15 +178,14 @@ export function DevicesPage() {
     queryFn: () =>
       api.devicesSummary({
         metrics: [
-          'water_pressure_psi',
-          'oil_pressure_psi',
-          'oil_level_pct',
-          'drip_oil_level_pct',
-          'oil_life_pct',
-          'temperature_c',
-          'humidity_pct',
-          'battery_v',
-          'signal_rssi_dbm',
+          'microphone_level_db',
+          'power_input_v',
+          'power_input_a',
+          'power_input_w',
+          'power_source',
+          'power_input_out_of_range',
+          'power_unsustainable',
+          'power_saver_active',
         ],
       }),
     refetchInterval: 10_000,
@@ -318,8 +338,10 @@ export function DevicesPage() {
     const online = devices.filter((d) => d.status === 'online').length
     const offline = devices.filter((d) => d.status === 'offline').length
     const unknown = devices.filter((d) => d.status === 'unknown').length
+    const sleep = devices.filter((d) => d.status === 'sleep').length
+    const disabled = devices.filter((d) => d.status === 'disabled').length
     const withOpenAlerts = devices.filter((d) => openAlertDeviceIds.has(d.device_id)).length
-    return { total, online, offline, unknown, withOpenAlerts }
+    return { total, online, offline, unknown, sleep, disabled, withOpenAlerts }
   }, [devices, openAlertDeviceIds])
 
   const clearFilters = React.useCallback(() => {
@@ -366,6 +388,8 @@ export function DevicesPage() {
           <Badge variant="outline">total: {counts.total}</Badge>
           <Badge variant="success">online: {counts.online}</Badge>
           <Badge variant="destructive">offline: {counts.offline}</Badge>
+          <Badge variant="warning">sleep: {counts.sleep}</Badge>
+          <Badge variant="secondary">disabled: {counts.disabled}</Badge>
           <Badge variant="secondary">unknown: {counts.unknown}</Badge>
           <Badge variant="warning">with open alerts: {counts.withOpenAlerts}</Badge>
           {devicesQ.isFetching ? <Badge variant="secondary">refreshing…</Badge> : null}
@@ -398,7 +422,7 @@ export function DevicesPage() {
             <div className="space-y-2">
               <Label>Status</Label>
               <div className="flex flex-wrap gap-2">
-                {(['all', 'online', 'offline', 'unknown'] as const).map((s) => (
+                {(['all', 'online', 'offline', 'sleep', 'disabled', 'unknown'] as const).map((s) => (
                   <Badge
                     key={s}
                     variant={s === 'all' ? 'outline' : statusVariant(s)}

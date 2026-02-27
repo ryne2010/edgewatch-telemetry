@@ -7,13 +7,22 @@ The agent:
 - Authenticates with the API using a **device token**
 - Fetches **device policy** from `GET /api/v1/device-policy` (ETag + Cache-Control cached)
 - Samples sensors (real or simulated), applies **delta suppression**, buffers locally, and ships batches to the API
-- Evaluates **local alert thresholds** from the policy (water/oil pressure, oil levels, oil life, battery, signal) for faster detection
+- Evaluates **local alert thresholds** from the policy (microphone level, water/oil pressure, oil levels, oil life, battery, signal) for faster detection
 
 ## Target environment
 
 - Raspberry Pi OS Lite (64-bit) recommended
 - Python 3.10+ (3.11+ preferred)
 - Network access to your API (Cloud Run URL or local dev)
+
+## Zero-touch first boot (preformatted SD)
+
+For fastest field startup:
+
+1. Preload SD card with Raspberry Pi OS + agent `.env` + systemd unit.
+2. Set `SENSOR_CONFIG_PATH=./agent/config/rpi.microphone.sensors.yaml`.
+3. Insert SD card, connect 12V-to-5V regulated power path, boot device.
+4. Device fetches policy, applies pending control command (if any), and starts telemetry automatically.
 
 ## 1) Create the device on the server
 
@@ -102,7 +111,7 @@ Install OS packages:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git python3 python3-venv python3-pip
+sudo apt-get install -y git python3 python3-venv python3-pip alsa-utils i2c-tools
 ```
 
 (Optional) If you use I2C sensors, enable I2C (`raspi-config`) and reboot.
@@ -124,6 +133,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
 pip install -r agent/requirements.txt
+pip install smbus2
 ```
 
 ## 4) Configure the agent
@@ -142,6 +152,7 @@ Minimum required values:
 EDGEWATCH_API_URL=https://YOUR-CLOUD-RUN-URL
 EDGEWATCH_DEVICE_ID=rpi-001
 EDGEWATCH_DEVICE_TOKEN=PASTE_DEVICE_TOKEN_HERE
+SENSOR_CONFIG_PATH=./agent/config/rpi.microphone.sensors.yaml
 ```
 
 Recommended production values:
@@ -153,14 +164,38 @@ BUFFER_DB_PATH=/var/lib/edgewatch/telemetry_buffer.sqlite
 # Persist device policy cache (saves bandwidth + speeds cold starts)
 EDGEWATCH_POLICY_CACHE_PATH=/var/lib/edgewatch/policy_cache_rpi-001.json
 
+# Persist power management rolling-window state.
+EDGEWATCH_POWER_STATE_PATH=/var/lib/edgewatch/power_state_rpi-001.json
+
+# Persist durable control-command apply/ack state.
+EDGEWATCH_COMMAND_STATE_PATH=/var/lib/edgewatch/command_state_rpi-001.json
+
+# Hybrid-disable guard (default safe posture):
+# keep remote OS shutdown disabled unless explicitly approved for this device.
+# EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=0
+
 # Optional: write permanently-failed payloads for later inspection
 # EDGEWATCH_DEADLETTER_PATH=/var/lib/edgewatch/deadletter_rpi-001.jsonl
 ```
 
-> Note: the agent currently ships with a **mock sensor backend** (`agent/sensors/mock_sensors.py`).
-> Wiring real sensors + camera capture is tracked in:
-> - `docs/TASKS/11-edge-sensor-suite.md`
-> - `docs/TASKS/12-camera-capture-upload.md`
+Microphone + power backend prerequisites:
+
+```bash
+# should already be installed above, listed here for clarity:
+sudo apt-get install -y alsa-utils i2c-tools
+pip install smbus2
+```
+
+Optional sensor tuning in `agent/.env`:
+
+```bash
+# SENSOR_CONFIG_PATH=./agent/config/rpi.microphone.sensors.yaml
+# POWER_MGMT_ENABLED=true
+# POWER_MGMT_MODE=dual
+# POWER_INPUT_WARN_MIN_V=11.8
+# POWER_INPUT_WARN_MAX_V=14.8
+# POWER_SUSTAINABLE_INPUT_W=15.0
+```
 
 Create the buffer directory:
 
@@ -233,9 +268,33 @@ Tail logs:
 journalctl -u edgewatch-agent -f
 ```
 
+## Offseason / long intermission controls
+
+Use device controls from the dashboard or API:
+
+- `PATCH /api/v1/devices/{device_id}/controls/alerts`
+  - mute notifications only (alerts still open/resolve server-side)
+- `PATCH /api/v1/devices/{device_id}/controls/operation`
+  - `sleep` for low-duty polling (`sleep_poll_interval_s`, default 7 days)
+  - `disabled` for logical disable; on-device restart required to resume
+- `POST /api/v1/admin/devices/{device_id}/controls/shutdown` (admin-only)
+  - queues one-shot `disabled + shutdown_requested` command
+  - device executes OS shutdown only when `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`
+
+Recommended operator posture:
+
+- offseason: set `sleep` + long mute window reasoned as `offseason`
+- service outage/maintenance: use alert mute without changing operation mode
+- hard stop without remote power-off: use owner/operator `disabled`
+- hard stop with one-shot remote power-off (admin only): use shutdown endpoint on devices
+  explicitly configured with `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`
+
 ## Troubleshooting
 
 - **401/403**: token mismatch; confirm the device exists and the token matches what you created.
 - **No telemetry in UI**: confirm `EDGEWATCH_API_URL` points to the API base URL (no trailing `/api/v1`).
 - **Buffer errors**: ensure the buffer path directory exists and is writable.
 - **Clock skew**: set NTP/timezone correctly; timestamps matter for “last seen”.
+- **Power sensor warnings**: verify INA219/INA260 wiring, I2C bus/address, and `smbus2` install.
+- **Frequent saver mode activation**: check source input stability and tune `power_management` thresholds in `contracts/edge_policy/v1.yaml`.
+- **Power alert churn**: validate sensor calibration and follow `docs/RUNBOOKS/POWER.md`.

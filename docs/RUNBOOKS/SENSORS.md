@@ -17,7 +17,37 @@ Status:
 - Power is stable (Pi + modem + cameras can brown out under load)
 - Enclosure + cable glands installed (strain relief matters)
 
-## 2) Enable and validate I2C
+## 2) Minimal microphone-only bring-up (recommended default)
+
+For current Raspberry Pi deployments, the minimal supported profile is microphone-only:
+
+1. Install ALSA capture utilities:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y alsa-utils
+```
+
+2. Validate capture device availability:
+
+```bash
+arecord -l
+```
+
+3. Run the edge agent with the microphone backend:
+
+```bash
+SENSOR_BACKEND=rpi_microphone uv run python agent/edgewatch_agent.py
+```
+
+Expected telemetry:
+- `microphone_level_db`
+
+Expected alert behavior:
+- if `microphone_level_db < 60` (default edge policy threshold), API opens `MICROPHONE_OFFLINE`
+- when value recovers to `>= 60`, API resolves and emits `MICROPHONE_ONLINE`
+
+## 3) Enable and validate I2C
 
 1. Enable I2C in raspi-config (or via config file).
 2. Install I2C tooling and Python runtime:
@@ -67,7 +97,7 @@ rpi_i2c:
   warning_interval_s: 300
 ```
 
-## 3) Validate analog channels (ADS1115)
+## 4) Validate analog channels (ADS1115)
 
 - Confirm ADS1115 reads stable voltages (use a known reference voltage first).
 - Only then connect pressure / level channels.
@@ -132,7 +162,7 @@ Before connecting a sensor, verify:
 - loop supply voltage is correct (often 12–24V)
 - grounds are correct (or use isolation hardware)
 
-## 4) Calibrate scaling constants
+## 5) Calibrate scaling constants
 
 The edge agent should convert raw ADC readings into contract units:
 
@@ -146,7 +176,7 @@ Calibration plan:
 - compute slope/intercept
 - store constants in the sensor config file (`agent/config/...`)
 
-## 5) Validate EdgeWatch end-to-end
+## 6) Validate EdgeWatch end-to-end
 
 Once sensors are reading locally:
 
@@ -160,7 +190,7 @@ Then open the UI and verify:
 - metrics arrive and chart correctly
 - alerts trigger/recover when you apply controlled input changes
 
-## 6) Oil life reset procedure
+## 7) Oil life reset procedure
 
 Oil life is runtime-derived and should be reset after maintenance.
 
@@ -185,7 +215,7 @@ Derived behavior:
 - running detection uses `pump_on` when present; otherwise `oil_pressure_psi` hysteresis
 - reset sets runtime back to zero and updates reset timestamp
 
-## 7) Field diagnostics to collect
+## 8) Field diagnostics to collect
 
 If sensor values look wrong, capture:
 - raw I2C scan results

@@ -17,11 +17,13 @@ from .backends import (
     PlaceholderSensorBackend,
     RpiAdcSensorBackend,
     RpiI2CSensorBackend,
+    RpiMicrophoneSensorBackend,
+    RpiPowerI2CSensorBackend,
 )
 
-_VALID_BACKENDS = {"mock", "rpi_i2c", "rpi_adc", "derived", "composite"}
+_VALID_BACKENDS = {"mock", "rpi_i2c", "rpi_adc", "rpi_power_i2c", "rpi_microphone", "derived", "composite"}
 _METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_ALLOWED_UNITS = {"pct", "psi", "c", "v", "dbm", "gpm", "bool"}
+_ALLOWED_UNITS = {"pct", "psi", "c", "v", "a", "w", "dbm", "gpm", "db", "bool"}
 _ADC_KINDS = {"current_4_20ma", "voltage"}
 
 _PLACEHOLDER_KEYS: dict[str, frozenset[str]] = {}
@@ -128,6 +130,12 @@ def _build_backend(*, device_id: str, config: SensorConfig) -> SensorBackend:
 
     if config.backend == "rpi_adc":
         return _build_rpi_adc_backend(config=config)
+
+    if config.backend == "rpi_power_i2c":
+        return _build_rpi_power_i2c_backend(config=config)
+
+    if config.backend == "rpi_microphone":
+        return _build_rpi_microphone_backend(config=config)
 
     if config.backend == "derived":
         return _build_derived_backend(config=config)
@@ -609,5 +617,148 @@ def _build_derived_backend(*, config: SensorConfig) -> DerivedOilLifeBackend:
         state_path=state_path,
         run_on_threshold=run_on_threshold,
         run_off_threshold=run_off_threshold,
+        warning_interval_s=warning_interval_s,
+    )
+
+
+def _build_rpi_power_i2c_backend(*, config: SensorConfig) -> RpiPowerI2CSensorBackend:
+    power_settings = _mapping_value(config.backend_settings.get("rpi_power_i2c"))
+
+    sensor = _as_string(
+        _first_value(
+            config.backend_settings.get("sensor"),
+            power_settings.get("sensor"),
+            "ina260",
+        ),
+        message="rpi_power_i2c sensor must be a string",
+    ).strip()
+    if not sensor:
+        raise SensorConfigError("rpi_power_i2c sensor cannot be empty")
+
+    bus_number = _as_int(
+        _first_value(
+            config.backend_settings.get("bus"),
+            power_settings.get("bus"),
+            1,
+        ),
+        message="rpi_power_i2c bus must be an integer",
+    )
+    if bus_number < 0:
+        raise SensorConfigError("rpi_power_i2c bus must be >= 0")
+
+    address = _parse_i2c_address_value(
+        _first_value(
+            config.backend_settings.get("address"),
+            power_settings.get("address"),
+            0x40,
+        ),
+        type_message="rpi_power_i2c address must be an integer or hex string",
+        range_message="rpi_power_i2c address must be between 0x00 and 0x7f",
+    )
+
+    shunt_ohms = _as_float(
+        _first_value(
+            config.backend_settings.get("shunt_ohms"),
+            power_settings.get("shunt_ohms"),
+            0.1,
+        ),
+        message="rpi_power_i2c shunt_ohms must be numeric",
+    )
+    if shunt_ohms <= 0:
+        raise SensorConfigError("rpi_power_i2c shunt_ohms must be > 0")
+
+    source_solar_min_v = _as_float(
+        _first_value(
+            config.backend_settings.get("source_solar_min_v"),
+            power_settings.get("source_solar_min_v"),
+            13.2,
+        ),
+        message="rpi_power_i2c source_solar_min_v must be numeric",
+    )
+
+    warning_interval_s = _as_float(
+        _first_value(
+            config.backend_settings.get("warning_interval_s"),
+            power_settings.get("warning_interval_s"),
+            300.0,
+        ),
+        message="rpi_power_i2c warning_interval_s must be numeric",
+    )
+    if warning_interval_s < 0:
+        raise SensorConfigError("rpi_power_i2c warning_interval_s must be >= 0")
+
+    return RpiPowerI2CSensorBackend(
+        sensor=sensor,
+        bus_number=bus_number,
+        address=address,
+        shunt_ohms=shunt_ohms,
+        source_solar_min_v=source_solar_min_v,
+        warning_interval_s=warning_interval_s,
+    )
+
+
+def _build_rpi_microphone_backend(*, config: SensorConfig) -> RpiMicrophoneSensorBackend:
+    mic_settings = _mapping_value(config.backend_settings.get("rpi_microphone"))
+
+    device = _as_string(
+        _first_value(
+            config.backend_settings.get("device"),
+            mic_settings.get("device"),
+            "default",
+        ),
+        message="rpi_microphone device must be a string",
+    ).strip()
+    if not device:
+        raise SensorConfigError("rpi_microphone device cannot be empty")
+
+    sample_rate_hz = _as_int(
+        _first_value(
+            config.backend_settings.get("sample_rate_hz"),
+            mic_settings.get("sample_rate_hz"),
+            16_000,
+        ),
+        message="rpi_microphone sample_rate_hz must be an integer",
+    )
+    if sample_rate_hz <= 0:
+        raise SensorConfigError("rpi_microphone sample_rate_hz must be > 0")
+
+    capture_seconds = _as_float(
+        _first_value(
+            config.backend_settings.get("capture_seconds"),
+            mic_settings.get("capture_seconds"),
+            1.0,
+        ),
+        message="rpi_microphone capture_seconds must be numeric",
+    )
+    if capture_seconds <= 0:
+        raise SensorConfigError("rpi_microphone capture_seconds must be > 0")
+
+    command_timeout_s = _as_float(
+        _first_value(
+            config.backend_settings.get("command_timeout_s"),
+            mic_settings.get("command_timeout_s"),
+            max(2.0, capture_seconds + 2.0),
+        ),
+        message="rpi_microphone command_timeout_s must be numeric",
+    )
+    if command_timeout_s <= 0:
+        raise SensorConfigError("rpi_microphone command_timeout_s must be > 0")
+
+    warning_interval_s = _as_float(
+        _first_value(
+            config.backend_settings.get("warning_interval_s"),
+            mic_settings.get("warning_interval_s"),
+            300.0,
+        ),
+        message="rpi_microphone warning_interval_s must be numeric",
+    )
+    if warning_interval_s < 0:
+        raise SensorConfigError("rpi_microphone warning_interval_s must be >= 0")
+
+    return RpiMicrophoneSensorBackend(
+        device=device,
+        sample_rate_hz=sample_rate_hz,
+        capture_seconds=capture_seconds,
+        command_timeout_s=command_timeout_s,
         warning_interval_s=warning_interval_s,
     )

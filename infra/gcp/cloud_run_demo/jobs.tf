@@ -184,6 +184,7 @@ module "simulation_job" {
     AUTO_MIGRATE                 = "false"
     BOOTSTRAP_DEMO_DEVICE        = "false"
     SIMULATION_POINTS_PER_DEVICE = tostring(var.simulation_points_per_device)
+    SIMULATION_ALLOW_IN_PROD     = tostring(var.simulation_allow_in_prod)
   })
 
   secret_env = {

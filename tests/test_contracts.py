@@ -6,6 +6,7 @@ from api.app.contracts import load_telemetry_contract
 def test_load_contract_v1_has_expected_keys() -> None:
     c = load_telemetry_contract("v1")
     assert c.version == "v1"
+    assert "rpi_microphone_power_v1" in c.profiles
     assert "water_pressure_psi" in c.metrics
     assert c.metrics["water_pressure_psi"].type == "number"
     assert "oil_life_reset_at" in c.metrics

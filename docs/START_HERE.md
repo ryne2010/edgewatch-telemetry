@@ -11,6 +11,8 @@ If you're new to the project, follow this doc first, then jump into the detailed
 - Raspberry Pi agent (direct HTTP ingest or Pub/Sub lane)
 - Terraform (Cloud Run service, Cloud SQL Postgres, Secret Manager, scheduled jobs)
 - Simulation (Cloud Run Job that generates telemetry in dev/stage)
+  - default profile: microphone + power (`rpi_microphone_power_v1`)
+  - legacy full profile opt-in: `SIMULATION_PROFILE=legacy_full`
 - Retention job (Cloud Run Job + Scheduler to prune old telemetry)
 
 ## Prereqs
@@ -126,6 +128,14 @@ Docs:
 
 - Setup + provisioning: `docs/RPI_AGENT.md`
 - Agent config reference: `agent/README.md`
+- Sensor bring-up (microphone-first default): `docs/RUNBOOKS/SENSORS.md`
+- Solar/12V power management bring-up: `docs/RUNBOOKS/POWER.md`
+- Zero-touch first boot tutorial: `docs/TUTORIALS/RPI_ZERO_TOUCH_BOOTSTRAP.md`
+- Owner controls + durable delivery tutorial: `docs/TUTORIALS/OWNER_CONTROLS_AND_COMMAND_DELIVERY.md`
+- BYO cellular provider checklist: `docs/TUTORIALS/BYO_CELLULAR_PROVIDER_CHECKLIST.md`
+- Hybrid disable safeguard:
+  - owner/operator disable is logical-only
+  - admin shutdown intent requires `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1` on the device
 
 ## Operations
 

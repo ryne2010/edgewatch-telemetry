@@ -5,7 +5,11 @@ export type DeviceOut = {
   offline_after_s: number
   last_seen_at: string | null
   enabled: boolean
-  status: 'online' | 'offline' | 'unknown'
+  operation_mode: 'active' | 'sleep' | 'disabled'
+  sleep_poll_interval_s: number
+  alerts_muted_until: string | null
+  alerts_muted_reason: string | null
+  status: 'online' | 'offline' | 'unknown' | 'sleep' | 'disabled'
   seconds_since_last_seen: number | null
 }
 
@@ -15,6 +19,7 @@ export type CreateDeviceIn = {
   token: string
   heartbeat_interval_s?: number
   offline_after_s?: number
+  owner_emails?: string[]
 }
 
 export type UpdateDeviceIn = {
@@ -32,11 +37,52 @@ export type DeviceSummaryOut = {
   offline_after_s: number
   last_seen_at: string | null
   enabled: boolean
-  status: 'online' | 'offline' | 'unknown'
+  operation_mode: 'active' | 'sleep' | 'disabled'
+  sleep_poll_interval_s: number
+  alerts_muted_until: string | null
+  alerts_muted_reason: string | null
+  status: 'online' | 'offline' | 'unknown' | 'sleep' | 'disabled'
   seconds_since_last_seen: number | null
   latest_telemetry_at: string | null
   latest_message_id: string | null
   metrics: Record<string, unknown>
+}
+
+export type DeviceControlsOut = {
+  device_id: string
+  operation_mode: 'active' | 'sleep' | 'disabled'
+  sleep_poll_interval_s: number
+  disable_requires_manual_restart: boolean
+  alerts_muted_until: string | null
+  alerts_muted_reason: string | null
+  pending_command_count: number
+  latest_pending_command_expires_at: string | null
+  latest_pending_operation_mode: 'active' | 'sleep' | 'disabled' | null
+  latest_pending_shutdown_requested: boolean
+  latest_pending_shutdown_grace_s: number | null
+}
+
+export type DeviceOperationControlUpdateIn = {
+  operation_mode: 'active' | 'sleep' | 'disabled'
+  sleep_poll_interval_s?: number
+}
+
+export type DeviceAlertsControlUpdateIn = {
+  alerts_muted_until?: string | null
+  alerts_muted_reason?: string | null
+}
+
+export type AdminDeviceShutdownIn = {
+  reason: string
+  shutdown_grace_s?: number
+}
+
+export type DeviceAccessGrantOut = {
+  device_id: string
+  principal_email: string
+  access_role: 'viewer' | 'operator' | 'owner'
+  created_at: string
+  updated_at: string
 }
 
 export type AlertOut = {
@@ -69,6 +115,7 @@ export type TelemetryContract = {
   version: string
   sha256: string
   metrics: Record<string, TelemetryContractMetric>
+  profiles: Record<string, Record<string, unknown>>
 }
 
 export type EdgePolicyContractOut = {
@@ -90,6 +137,10 @@ export type EdgePolicyContractOut = {
   }
   delta_thresholds: Record<string, number>
   alert_thresholds: {
+    microphone_offline_db: number
+    microphone_offline_open_consecutive_samples: number
+    microphone_offline_resolve_consecutive_samples: number
+
     water_pressure_low_psi: number
     water_pressure_recover_psi: number
 
@@ -115,6 +166,28 @@ export type EdgePolicyContractOut = {
     max_bytes_per_day: number
     max_snapshots_per_day: number
     max_media_uploads_per_day: number
+  }
+  power_management: {
+    enabled: boolean
+    mode: string
+    input_warn_min_v: number
+    input_warn_max_v: number
+    input_critical_min_v: number
+    input_critical_max_v: number
+    sustainable_input_w: number
+    unsustainable_window_s: number
+    battery_trend_window_s: number
+    battery_drop_warn_v: number
+    saver_sample_interval_s: number
+    saver_heartbeat_interval_s: number
+    media_disabled_in_saver: boolean
+  }
+  operation_defaults: {
+    default_sleep_poll_interval_s: number
+    disable_requires_manual_restart: boolean
+    admin_remote_shutdown_enabled: boolean
+    shutdown_grace_s_default: number
+    control_command_ttl_s: number
   }
 }
 
@@ -359,6 +432,18 @@ export const api = {
     return getJSON<DeviceSummaryOut[]>(`/api/v1/devices/summary${qs ? `?${qs}` : ''}`)
   },
   device: (device_id: string) => getJSON<DeviceOut>(`/api/v1/devices/${encodeURIComponent(device_id)}`),
+  deviceControls: {
+    get: (device_id: string) =>
+      getJSON<DeviceControlsOut>(`/api/v1/devices/${encodeURIComponent(device_id)}/controls`),
+    updateOperation: (device_id: string, payload: DeviceOperationControlUpdateIn) =>
+      sendJSON<DeviceControlsOut>(`/api/v1/devices/${encodeURIComponent(device_id)}/controls/operation`, payload, {
+        method: 'PATCH',
+      }),
+    updateAlerts: (device_id: string, payload: DeviceAlertsControlUpdateIn) =>
+      sendJSON<DeviceControlsOut>(`/api/v1/devices/${encodeURIComponent(device_id)}/controls/alerts`, payload, {
+        method: 'PATCH',
+      }),
+  },
   alerts: (
     opts?: {
       limit?: number
@@ -452,6 +537,49 @@ export const api = {
         method: 'PATCH',
         headers: adminHeaders(adminKey),
       }),
+    shutdownDevice: (
+      adminKey: string | null | undefined,
+      deviceId: string,
+      payload: AdminDeviceShutdownIn,
+    ) =>
+      sendJSON<DeviceControlsOut>(
+        `/api/v1/admin/devices/${encodeURIComponent(deviceId)}/controls/shutdown`,
+        payload,
+        {
+          method: 'POST',
+          headers: adminHeaders(adminKey),
+        },
+      ),
+    deviceAccess: {
+      list: (adminKey: string, deviceId: string) =>
+        getJSON<DeviceAccessGrantOut[]>(
+          `/api/v1/admin/devices/${encodeURIComponent(deviceId)}/access`,
+          { headers: adminHeaders(adminKey) },
+        ),
+      put: (
+        adminKey: string,
+        deviceId: string,
+        principalEmail: string,
+        payload: { access_role: 'viewer' | 'operator' | 'owner' },
+      ) =>
+        sendJSON<DeviceAccessGrantOut>(
+          `/api/v1/admin/devices/${encodeURIComponent(deviceId)}/access/${encodeURIComponent(principalEmail)}`,
+          payload,
+          {
+            method: 'PUT',
+            headers: adminHeaders(adminKey),
+          },
+        ),
+      delete: (adminKey: string, deviceId: string, principalEmail: string) =>
+        sendJSON<DeviceAccessGrantOut>(
+          `/api/v1/admin/devices/${encodeURIComponent(deviceId)}/access/${encodeURIComponent(principalEmail)}`,
+          {},
+          {
+            method: 'DELETE',
+            headers: adminHeaders(adminKey),
+          },
+        ),
+    },
     ingestions: (adminKey: string, opts?: { device_id?: string; limit?: number }) => {
       const params = new URLSearchParams()
       if (opts?.device_id) params.set('device_id', opts.device_id)

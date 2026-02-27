@@ -6,6 +6,8 @@ installed near remote equipment (pumps/wells/engines) with intermittent connecti
 This document proposes a **practical, readily-available hardware bill of materials**
 that matches the requested scope:
 
+- microphone level (relative dB)
+- power input (volts/amps/watts + source classification)
 - temperature
 - humidity
 - oil pressure (0–100 psi)
@@ -51,6 +53,8 @@ If you need lower power/cost:
 
 - IP65+ outdoor enclosure (DIN rail is nice)
 - 12V/24V → 5V buck converter sized for Pi + peripherals
+- Solar charge controller + battery management path for dual solar/12V operation
+- Low-voltage disconnect / brownout protection for battery longevity
 - Fusing + surge protection (especially near pumps / long sensor runs)
 - Optional: UPS HAT or small 12V SLA/LiFePO4 backup
 
@@ -69,9 +73,14 @@ interfaces consistent (I2C + 4–20 mA/voltage into an ADC).
 
 ### Telemetry sensors
 
+Audio:
+
+- USB microphone or I2S microphone module supported by ALSA capture (`arecord`)
+
 Digital (I2C):
 
 - Temp/humidity: BME280 (I2C) or SHT31 (I2C)
+- Power monitor: INA219 or INA260 (I2C)
 
 Analog (ADC):
 
@@ -102,7 +111,54 @@ Drip oiler (small reservoir):
 - LTE antenna(s) (and GNSS antenna if your module supports it)
 - Keep modem firmware and carrier profile support aligned with your deployed SIM plan
 
+BYO provider prerequisites (must confirm before rollout):
+- APN (and credentials if required)
+- data-only SIM activation
+- IMEI allowlist policy (if enforced)
+- roaming and throttling limits
+- CGNAT/IPv4/IPv6 posture and idle timeout behavior
+
 ## Sensors
+
+### Microphone level
+
+Current default Raspberry Pi profile uses microphone-only telemetry:
+
+- Metric key: `microphone_level_db`
+- Capture backend: `arecord` (`alsa-utils`)
+- Alert threshold: `alert_thresholds.microphone_offline_db` (default `60`)
+
+### Power management (solar + 12V battery)
+
+EdgeWatch v1 power-management path uses:
+
+- I2C backend: `rpi_power_i2c`
+- Supported chips: INA219 / INA260
+- Telemetry keys:
+  - `power_input_v`, `power_input_a`, `power_input_w`
+  - `power_source` (`solar|battery|unknown`)
+  - `power_input_out_of_range`, `power_unsustainable`, `power_saver_active`
+
+Default policy profile (12V lead-acid):
+
+- Warn range: `11.8V` to `14.8V`
+- Critical range: `11.4V` to `15.2V`
+- Sustainable input ceiling: `15W` (900s window)
+- Fallback battery-trend drop: `0.25V` over `1800s`
+
+Operational expectation:
+
+- First response is `warn + degrade` (longer sample cadence, reduced heartbeat frequency, optional media disable).
+- No automatic power-off/shutdown is performed by the agent in v1.
+- Admin-only one-shot shutdown intent is available, but OS shutdown still requires local opt-in:
+  `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`.
+
+Operational control alignment:
+
+- Offseason posture: prefer `sleep` mode with long poll interval (default 7 days).
+- Use alert mute windows for notification suppression without losing lifecycle history.
+- Owner/operator `disabled` is logical-only and requires local restart.
+- Admins may queue `disabled + shutdown` only for devices explicitly configured to allow remote shutdown.
 
 ### Temperature + humidity
 
@@ -196,6 +252,16 @@ Practical selection guidance:
 - Choose **LTE HAT** when you want compact, integrated installs inside a single enclosure.
 - Choose **USB modem** when you want fastest replacement and easiest field swap workflow.
 - Choose **external router** when you need stronger remote network management, dual-SIM/failover, or Wi-Fi/LAN sharing.
+
+v1 baseline:
+- USB modem + nano-SIM is the default recommendation for easiest BYO carrier deployment.
+- eSIM is optional and depends on modem firmware + carrier eUICC support.
+
+Provider readiness checklist:
+- APN and authentication details.
+- IMEI registration requirements (if any).
+- CGNAT / inbound reachability expectations (EdgeWatch requires outbound HTTPS only).
+- Roaming restrictions and throttling limits for rural tower fallback scenarios.
 
 See runbook: `docs/RUNBOOKS/CELLULAR.md`.
 

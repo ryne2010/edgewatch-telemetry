@@ -19,18 +19,18 @@ cache_max_age_s: 3600
 
 reporting:
   # How often the agent reads sensors when the device is healthy (seconds).
-  sample_interval_s: 30
+  sample_interval_s: 600
 
   # How often the agent reads sensors while in a **critical** alert state (seconds).
   # (Currently: low water pressure)
-  alert_sample_interval_s: 10
+  alert_sample_interval_s: 600
 
   # Force a keepalive even if nothing changes (seconds).
   # This can be set higher to reduce data usage; alert transitions still send immediately.
-  heartbeat_interval_s: 300
+  heartbeat_interval_s: 600
 
   # While in a **critical** alert state, periodically send a full snapshot even if metrics are stable.
-  alert_report_interval_s: 60
+  alert_report_interval_s: 600
 
   # Batch / buffer tuning
   max_points_per_batch: 50
@@ -51,10 +51,42 @@ cost_caps:
   max_snapshots_per_day: 48
   max_media_uploads_per_day: 48
 
+# Power management profile (12V lead-acid defaults for solar + well battery operation).
+power_management:
+  enabled: true
+  mode: dual
+
+  input_warn_min_v: 11.8
+  input_warn_max_v: 14.8
+
+  input_critical_min_v: 11.4
+  input_critical_max_v: 15.2
+
+  sustainable_input_w: 15.0
+  unsustainable_window_s: 900
+  battery_trend_window_s: 1800
+  battery_drop_warn_v: 0.25
+
+  saver_sample_interval_s: 1200
+  saver_heartbeat_interval_s: 1800
+  media_disabled_in_saver: true
+
+# Device operation defaults for owner/operator runtime controls.
+operation_defaults:
+  default_sleep_poll_interval_s: 604800 # 7 days
+  disable_requires_manual_restart: true
+  admin_remote_shutdown_enabled: true
+  shutdown_grace_s_default: 30
+  control_command_ttl_s: 15552000 # 180 days
+
 # Metric-level delta thresholds.
 # If a metric changes by >= threshold (absolute), it's considered "worth sending".
 # Missing metrics are ignored; boolean and string metrics use equality.
 delta_thresholds:
+  microphone_level_db: 1.0
+  power_input_v: 0.1
+  power_input_a: 0.1
+  power_input_w: 0.5
   water_pressure_psi: 1.0
   oil_pressure_psi: 1.0
   temperature_c: 0.5
@@ -69,6 +101,11 @@ delta_thresholds:
 # Simple thresholds used for device-side "state" and to trigger immediate send.
 # Hysteresis prevents flapping.
 alert_thresholds:
+  # If microphone level falls below this threshold, the API emits a MICROPHONE_OFFLINE alert.
+  microphone_offline_db: 60.0
+  microphone_offline_open_consecutive_samples: 2
+  microphone_offline_resolve_consecutive_samples: 1
+
   water_pressure_low_psi: 30.0
   water_pressure_recover_psi: 32.0
 

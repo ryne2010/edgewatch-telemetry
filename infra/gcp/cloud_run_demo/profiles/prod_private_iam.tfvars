@@ -30,6 +30,9 @@ cloudsql_deletion_protection = true
 # Optional lanes (default OFF for cost-min posture)
 enable_pubsub_ingest    = false
 enable_analytics_export = false
+enable_simulation       = false
+# Guardrail: keep false unless you explicitly want synthetic telemetry in prod.
+simulation_allow_in_prod = false
 
 # Keep VPC connector OFF unless you must reach private IP resources
 enable_vpc_connector = false

@@ -35,6 +35,7 @@ const TIMELINE_WINDOWS: Array<{ hours: TimelineWindowHours; label: string }> = [
 function statusVariant(status: DeviceSummaryOut['status']): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'
   if (status === 'offline') return 'destructive'
+  if (status === 'sleep') return 'warning'
   return 'secondary'
 }
 
@@ -215,25 +216,24 @@ export function DashboardPage() {
     queryFn: () =>
       api.devicesSummary({
         metrics: [
-        'water_pressure_psi',
-        'oil_pressure_psi',
-        'oil_level_pct',
-        'drip_oil_level_pct',
-        'oil_life_pct',
-        'temperature_c',
-        'humidity_pct',
-        'battery_v',
-        'signal_rssi_dbm',
-        'latitude',
-        'longitude',
-        'lat',
-        'lon',
-        'lng',
-        'gps_latitude',
-        'gps_longitude',
-        'location_lat',
-        'location_lon',
-      ],
+          'microphone_level_db',
+          'power_input_v',
+          'power_input_a',
+          'power_input_w',
+          'power_source',
+          'power_input_out_of_range',
+          'power_unsustainable',
+          'power_saver_active',
+          'latitude',
+          'longitude',
+          'lat',
+          'lon',
+          'lng',
+          'gps_latitude',
+          'gps_longitude',
+          'location_lat',
+          'location_lon',
+        ],
       }),
     refetchInterval: 10_000,
   })

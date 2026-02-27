@@ -1,5 +1,5 @@
 import React from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Link, useParams } from '@tanstack/react-router'
 import {
@@ -41,9 +41,12 @@ type CameraFilter = 'all' | 'cam1' | 'cam2' | 'cam3' | 'cam4'
 const MEDIA_TOKEN_STORAGE_KEY = 'edgewatch_media_tokens_v1'
 const CAMERA_FILTERS: CameraFilter[] = ['all', 'cam1', 'cam2', 'cam3', 'cam4']
 
-function statusVariant(status: 'online' | 'offline' | 'unknown'): 'success' | 'warning' | 'destructive' | 'secondary' {
+function statusVariant(
+  status: 'online' | 'offline' | 'unknown' | 'sleep' | 'disabled',
+): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'
   if (status === 'offline') return 'destructive'
+  if (status === 'sleep') return 'warning'
   return 'secondary'
 }
 
@@ -355,9 +358,20 @@ export function DeviceDetailPage() {
   const [selectedMedia, setSelectedMedia] = React.useState<MediaObjectOut | null>(null)
   const [selectedMediaUrl, setSelectedMediaUrl] = React.useState<string>('')
   const [openingMediaId, setOpeningMediaId] = React.useState<string | null>(null)
+  const [operationModeInput, setOperationModeInput] = React.useState<'active' | 'sleep' | 'disabled'>('active')
+  const [sleepPollIntervalInput, setSleepPollIntervalInput] = React.useState<string>('604800')
+  const [alertsMutePreset, setAlertsMutePreset] = React.useState<'none' | '24h' | '7d' | 'season'>('none')
+  const [alertsMuteReason, setAlertsMuteReason] = React.useState<string>('')
+  const [shutdownReasonInput, setShutdownReasonInput] = React.useState<string>('seasonal intermission')
+  const [shutdownGraceInput, setShutdownGraceInput] = React.useState<string>('30')
   const mediaErrorToastRef = React.useRef<string>('')
 
   const deviceQ = useQuery({ queryKey: ['device', deviceId], queryFn: () => api.device(deviceId), refetchInterval: 10_000 })
+  const controlsQ = useQuery({
+    queryKey: ['deviceControls', deviceId],
+    queryFn: () => api.deviceControls.get(deviceId),
+    refetchInterval: 10_000,
+  })
   const contractQ = useQuery({ queryKey: ['telemetryContract'], queryFn: api.telemetryContract, staleTime: 5 * 60_000 })
   const latestQ = useQuery({ queryKey: ['latestTelemetry', deviceId], queryFn: () => api.latestTelemetry(deviceId), refetchInterval: 10_000 })
 
@@ -482,6 +496,116 @@ export function DeviceDetailPage() {
     [notificationsQ.error, adminAuthMode],
   )
 
+  const updateOperationMutation = useMutation({
+    mutationFn: async () => {
+      const sleepPollInterval = Number.parseInt(sleepPollIntervalInput, 10)
+      if (!Number.isFinite(sleepPollInterval) || sleepPollInterval <= 0) {
+        throw new Error('Sleep poll interval must be a positive integer.')
+      }
+      return api.deviceControls.updateOperation(deviceId, {
+        operation_mode: operationModeInput,
+        sleep_poll_interval_s: sleepPollInterval,
+      })
+    },
+    onSuccess: (out) => {
+      qc.invalidateQueries({ queryKey: ['device', deviceId] })
+      qc.invalidateQueries({ queryKey: ['deviceControls', deviceId] })
+      qc.invalidateQueries({ queryKey: ['devicesSummary'] })
+      toast({
+        title: 'Operation mode updated',
+        description: `${out.operation_mode} (${out.sleep_poll_interval_s}s poll cadence when sleeping)`,
+        variant: 'success',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to update operation mode',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const updateAlertsMutation = useMutation({
+    mutationFn: async () => {
+      if (alertsMutePreset === 'none') {
+        return api.deviceControls.updateAlerts(deviceId, {
+          alerts_muted_until: null,
+          alerts_muted_reason: null,
+        })
+      }
+      const now = Date.now()
+      const durationMs =
+        alertsMutePreset === '24h'
+          ? 24 * 60 * 60 * 1000
+          : alertsMutePreset === '7d'
+            ? 7 * 24 * 60 * 60 * 1000
+            : 120 * 24 * 60 * 60 * 1000
+      const until = new Date(now + durationMs).toISOString()
+      return api.deviceControls.updateAlerts(deviceId, {
+        alerts_muted_until: until,
+        alerts_muted_reason: alertsMuteReason.trim() || null,
+      })
+    },
+    onSuccess: (out) => {
+      qc.invalidateQueries({ queryKey: ['device', deviceId] })
+      qc.invalidateQueries({ queryKey: ['deviceControls', deviceId] })
+      qc.invalidateQueries({ queryKey: ['alerts'] })
+      if (out.alerts_muted_until) {
+        toast({
+          title: 'Alert notifications muted',
+          description: `Muted until ${fmtDateTime(out.alerts_muted_until)}.`,
+          variant: 'success',
+        })
+      } else {
+        toast({
+          title: 'Alert notifications unmuted',
+          variant: 'success',
+        })
+      }
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to update alert mute',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const shutdownDeviceMutation = useMutation({
+    mutationFn: async () => {
+      if (!adminAccess) throw new Error('Admin access is required for remote shutdown commands.')
+      const reason = shutdownReasonInput.trim()
+      if (!reason) throw new Error('Shutdown reason is required.')
+      const grace = Number.parseInt(shutdownGraceInput, 10)
+      if (!Number.isFinite(grace) || grace <= 0 || grace > 3600) {
+        throw new Error('Shutdown grace must be between 1 and 3600 seconds.')
+      }
+      return api.admin.shutdownDevice(adminCred, deviceId, {
+        reason,
+        shutdown_grace_s: grace,
+      })
+    },
+    onSuccess: (out) => {
+      qc.invalidateQueries({ queryKey: ['device', deviceId] })
+      qc.invalidateQueries({ queryKey: ['deviceControls', deviceId] })
+      qc.invalidateQueries({ queryKey: ['devicesSummary'] })
+      toast({
+        title: 'Shutdown command queued',
+        description: `Pending command(s): ${out.pending_command_count}. Grace ${out.latest_pending_shutdown_grace_s ?? 30}s.`,
+        variant: 'warning',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to queue shutdown command',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
   const mediaQ = useQuery({
     queryKey: ['media', deviceId, mediaToken],
     queryFn: () => api.media.list(deviceId, { token: mediaToken, limit: 200 }),
@@ -502,6 +626,15 @@ export function DeviceDetailPage() {
     const value = (latestMetrics as Record<string, unknown> | null)?.oil_life_reset_at
     return typeof value === 'string' && value.trim() ? value.trim() : null
   }, [latestMetrics])
+
+  React.useEffect(() => {
+    const controls = controlsQ.data
+    if (!controls) return
+    setOperationModeInput(controls.operation_mode)
+    setSleepPollIntervalInput(String(controls.sleep_poll_interval_s))
+    setAlertsMuteReason(controls.alerts_muted_reason ?? '')
+    setAlertsMutePreset('none')
+  }, [controlsQ.data])
 
   React.useEffect(() => {
     const stored = getStoredMediaToken(deviceId)
@@ -542,20 +675,16 @@ export function DeviceDetailPage() {
   }, [mediaQ.isSuccess])
 
   const pinned = React.useMemo(() => {
-    // Curated operational set.
+    // Default v1 Raspberry Pi profile (microphone + power).
     return [
-      'water_pressure_psi',
-      'oil_pressure_psi',
-      'temperature_c',
-      'humidity_pct',
-      'oil_level_pct',
-      'oil_life_pct',
-      'drip_oil_level_pct',
-      'battery_v',
-      'signal_rssi_dbm',
-      'pump_on',
-      'flow_rate_gpm',
-      'device_state',
+      'microphone_level_db',
+      'power_input_v',
+      'power_input_a',
+      'power_input_w',
+      'power_source',
+      'power_input_out_of_range',
+      'power_unsustainable',
+      'power_saver_active',
     ].filter((k) => (contract ? Boolean(contract.metrics[k]) : true))
   }, [contract])
 
@@ -857,6 +986,46 @@ export function DeviceDetailPage() {
                       <span className="text-muted-foreground">Enabled</span>
                       {deviceQ.data.enabled ? <Badge variant="success">enabled</Badge> : <Badge variant="secondary">disabled</Badge>}
                     </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Operation mode</span>
+                      <Badge variant={deviceQ.data.operation_mode === 'active' ? 'success' : deviceQ.data.operation_mode === 'sleep' ? 'warning' : 'secondary'}>
+                        {deviceQ.data.operation_mode}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Sleep poll interval</span>
+                      <span className="font-mono text-xs">{deviceQ.data.sleep_poll_interval_s}s</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Alerts muted</span>
+                      {deviceQ.data.alerts_muted_until ? (
+                        <Badge variant="warning">{fmtDateTime(deviceQ.data.alerts_muted_until)}</Badge>
+                      ) : (
+                        <Badge variant="secondary">no</Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Pending control commands</span>
+                      <Badge variant={controlsQ.data?.pending_command_count ? 'warning' : 'secondary'}>
+                        {controlsQ.data?.pending_command_count ?? 0}
+                      </Badge>
+                    </div>
+                    {controlsQ.data?.latest_pending_command_expires_at ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Latest command expires</span>
+                        <span className="font-mono text-xs">
+                          {fmtDateTime(controlsQ.data.latest_pending_command_expires_at)}
+                        </span>
+                      </div>
+                    ) : null}
+                    {controlsQ.data?.latest_pending_shutdown_requested ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Pending shutdown</span>
+                        <Badge variant="destructive">
+                          yes ({controlsQ.data.latest_pending_shutdown_grace_s ?? 30}s grace)
+                        </Badge>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -881,6 +1050,120 @@ export function DeviceDetailPage() {
                           </span>
                         </div>
                       ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="space-y-3 border-t pt-3">
+                  <div className="text-sm font-medium">Owner controls</div>
+                  {controlsQ.isError ? (
+                    <div className="text-xs text-destructive">
+                      Controls unavailable: {(controlsQ.error as Error).message}
+                    </div>
+                  ) : null}
+                  <div className="grid gap-3">
+                    <div className="space-y-2">
+                      <Label>Operation mode</Label>
+                      <SmallSelect
+                        value={operationModeInput}
+                        onChange={(v) => setOperationModeInput(v as 'active' | 'sleep' | 'disabled')}
+                        options={[
+                          { value: 'active', label: 'active (full monitoring)' },
+                          { value: 'sleep', label: 'sleep (long-cadence polling)' },
+                          { value: 'disabled', label: 'disabled (manual restart required)' },
+                        ]}
+                        disabled={updateOperationMutation.isPending}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Sleep poll interval (seconds)</Label>
+                      <Input
+                        value={sleepPollIntervalInput}
+                        onChange={(e) => setSleepPollIntervalInput(e.target.value)}
+                        placeholder="604800"
+                        disabled={updateOperationMutation.isPending}
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Sleep keeps telemetry active at this cadence. Default is 7 days (604800s).
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => updateOperationMutation.mutate()}
+                      disabled={updateOperationMutation.isPending}
+                    >
+                      {updateOperationMutation.isPending ? 'Saving operation…' : 'Save operation mode'}
+                    </Button>
+                  </div>
+
+                  <div className="grid gap-3 border-t pt-3">
+                    <div className="space-y-2">
+                      <Label>Alert mute window</Label>
+                      <SmallSelect
+                        value={alertsMutePreset}
+                        onChange={(v) => setAlertsMutePreset(v as 'none' | '24h' | '7d' | 'season')}
+                        options={[
+                          { value: 'none', label: 'unmuted' },
+                          { value: '24h', label: 'mute 24 hours' },
+                          { value: '7d', label: 'mute 7 days' },
+                          { value: 'season', label: 'mute 120 days (offseason)' },
+                        ]}
+                        disabled={updateAlertsMutation.isPending}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Mute reason (optional)</Label>
+                      <Input
+                        value={alertsMuteReason}
+                        onChange={(e) => setAlertsMuteReason(e.target.value)}
+                        placeholder="offseason / maintenance"
+                        disabled={updateAlertsMutation.isPending}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => updateAlertsMutation.mutate()}
+                      disabled={updateAlertsMutation.isPending}
+                    >
+                      {updateAlertsMutation.isPending ? 'Saving alert mute…' : 'Save alert mute'}
+                    </Button>
+                  </div>
+
+                  {adminAccess ? (
+                    <div className="grid gap-3 border-t pt-3">
+                      <div className="text-sm font-medium">Admin-only shutdown command</div>
+                      <div className="text-xs text-muted-foreground">
+                        Queues a one-shot <span className="font-mono">disabled + shutdown</span> command. Actual shutdown runs only when the agent has{' '}
+                        <span className="font-mono">EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1</span>.
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Shutdown reason</Label>
+                        <Input
+                          value={shutdownReasonInput}
+                          onChange={(e) => setShutdownReasonInput(e.target.value)}
+                          placeholder="seasonal intermission"
+                          disabled={shutdownDeviceMutation.isPending}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Shutdown grace (seconds)</Label>
+                        <Input
+                          value={shutdownGraceInput}
+                          onChange={(e) => setShutdownGraceInput(e.target.value)}
+                          placeholder="30"
+                          disabled={shutdownDeviceMutation.isPending}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => shutdownDeviceMutation.mutate()}
+                        disabled={shutdownDeviceMutation.isPending}
+                      >
+                        {shutdownDeviceMutation.isPending ? 'Queueing shutdown…' : 'Queue disable + shutdown'}
+                      </Button>
                     </div>
                   ) : null}
                 </div>

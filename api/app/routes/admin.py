@@ -12,10 +12,11 @@ from ..auth.principal import Principal
 from ..auth.rbac import require_admin_role
 from ..config import settings
 from ..db import db_session
-from ..edge_policy import EdgePolicy, load_edge_policy_source, save_edge_policy_source
+from ..edge_policy import EdgePolicy, load_edge_policy, load_edge_policy_source, save_edge_policy_source
 from ..models import (
     AdminEvent,
     Device,
+    DeviceAccessGrant,
     DriftEvent,
     ExportBatch,
     IngestionBatch,
@@ -26,7 +27,12 @@ from ..observability import get_request_id
 from ..schemas import (
     AdminEventOut,
     AdminDeviceCreate,
+    AdminDeviceShutdownIn,
     AdminDeviceUpdate,
+    DeviceAccessRole,
+    DeviceAccessGrantOut,
+    DeviceAccessGrantPutIn,
+    DeviceControlsOut,
     DeviceOut,
     DriftEventOut,
     EdgePolicyAlertThresholdsOut,
@@ -34,9 +40,12 @@ from ..schemas import (
     EdgePolicyContractSourceOut,
     EdgePolicyContractUpdateIn,
     EdgePolicyCostCapsOut,
+    EdgePolicyOperationDefaultsOut,
+    EdgePolicyPowerManagementOut,
     EdgePolicyReportingOut,
     ExportBatchOut,
     IngestionBatchOut,
+    OperationMode,
     NotificationDestinationCreate,
     NotificationDestinationOut,
     NotificationDestinationUpdate,
@@ -44,11 +53,22 @@ from ..schemas import (
 )
 from ..security import hash_token, token_fingerprint
 from ..services.admin_audit import record_admin_event
+from ..services.device_access import normalize_access_role, normalize_principal_email
+from ..services.device_commands import enqueue_device_shutdown_command, pending_command_summary
 from ..services.device_identity import safe_display_name
 from ..services.monitor import compute_status
 from ..services.notifications import destination_fingerprint, mask_webhook_url
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"], dependencies=[Depends(require_admin_role)])
+
+
+def _normalized_operation_mode(value: object) -> OperationMode:
+    mode = str(value or "active").strip().lower()
+    if mode == "sleep":
+        return "sleep"
+    if mode == "disabled":
+        return "disabled"
+    return "active"
 
 
 def _normalize_webhook_url(value: str) -> str:
@@ -78,6 +98,76 @@ def _notification_destination_out(row: NotificationDestination) -> NotificationD
     )
 
 
+def _device_out(row: Device, *, now: datetime) -> DeviceOut:
+    status_str, seconds = compute_status(row, now)
+    return DeviceOut(
+        device_id=row.device_id,
+        display_name=safe_display_name(row.device_id, row.display_name),
+        heartbeat_interval_s=row.heartbeat_interval_s,
+        offline_after_s=row.offline_after_s,
+        last_seen_at=row.last_seen_at,
+        enabled=row.enabled,
+        operation_mode=_normalized_operation_mode(getattr(row, "operation_mode", "active")),
+        sleep_poll_interval_s=int(getattr(row, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)),
+        alerts_muted_until=getattr(row, "alerts_muted_until", None),
+        alerts_muted_reason=getattr(row, "alerts_muted_reason", None),
+        status=status_str,
+        seconds_since_last_seen=seconds,
+    )
+
+
+def _device_controls_out(
+    row: Device,
+    *,
+    disable_requires_manual_restart: bool,
+    pending_command_count: int,
+    latest_pending_command_expires_at: datetime | None,
+    latest_pending_operation_mode: OperationMode | None = None,
+    latest_pending_shutdown_requested: bool = False,
+    latest_pending_shutdown_grace_s: int | None = None,
+) -> DeviceControlsOut:
+    return DeviceControlsOut(
+        device_id=row.device_id,
+        operation_mode=_normalized_operation_mode(getattr(row, "operation_mode", "active")),
+        sleep_poll_interval_s=int(getattr(row, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)),
+        disable_requires_manual_restart=disable_requires_manual_restart,
+        alerts_muted_until=getattr(row, "alerts_muted_until", None),
+        alerts_muted_reason=getattr(row, "alerts_muted_reason", None),
+        pending_command_count=pending_command_count,
+        latest_pending_command_expires_at=latest_pending_command_expires_at,
+        latest_pending_operation_mode=latest_pending_operation_mode,
+        latest_pending_shutdown_requested=latest_pending_shutdown_requested,
+        latest_pending_shutdown_grace_s=latest_pending_shutdown_grace_s,
+    )
+
+
+def _device_access_grant_out(row: DeviceAccessGrant) -> DeviceAccessGrantOut:
+    access_role: DeviceAccessRole = "viewer"
+    if row.access_role == "operator":
+        access_role = "operator"
+    elif row.access_role == "owner":
+        access_role = "owner"
+    return DeviceAccessGrantOut(
+        device_id=row.device_id,
+        principal_email=row.principal_email,
+        access_role=access_role,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _normalized_owner_emails(raw: list[str] | None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in raw or []:
+        email = normalize_principal_email(value)
+        if email in seen:
+            continue
+        seen.add(email)
+        out.append(email)
+    return out
+
+
 def _edge_policy_contract_out(policy: EdgePolicy) -> EdgePolicyContractOut:
     return EdgePolicyContractOut(
         policy_version=policy.version,
@@ -96,6 +186,13 @@ def _edge_policy_contract_out(policy: EdgePolicy) -> EdgePolicyContractOut:
         ),
         delta_thresholds={k: policy.delta_thresholds[k] for k in sorted(policy.delta_thresholds)},
         alert_thresholds=EdgePolicyAlertThresholdsOut(
+            microphone_offline_db=policy.alert_thresholds.microphone_offline_db,
+            microphone_offline_open_consecutive_samples=(
+                policy.alert_thresholds.microphone_offline_open_consecutive_samples
+            ),
+            microphone_offline_resolve_consecutive_samples=(
+                policy.alert_thresholds.microphone_offline_resolve_consecutive_samples
+            ),
             water_pressure_low_psi=policy.alert_thresholds.water_pressure_low_psi,
             water_pressure_recover_psi=policy.alert_thresholds.water_pressure_recover_psi,
             oil_pressure_low_psi=policy.alert_thresholds.oil_pressure_low_psi,
@@ -115,6 +212,28 @@ def _edge_policy_contract_out(policy: EdgePolicy) -> EdgePolicyContractOut:
             max_bytes_per_day=policy.cost_caps.max_bytes_per_day,
             max_snapshots_per_day=policy.cost_caps.max_snapshots_per_day,
             max_media_uploads_per_day=policy.cost_caps.max_media_uploads_per_day,
+        ),
+        power_management=EdgePolicyPowerManagementOut(
+            enabled=policy.power_management.enabled,
+            mode=policy.power_management.mode,
+            input_warn_min_v=policy.power_management.input_warn_min_v,
+            input_warn_max_v=policy.power_management.input_warn_max_v,
+            input_critical_min_v=policy.power_management.input_critical_min_v,
+            input_critical_max_v=policy.power_management.input_critical_max_v,
+            sustainable_input_w=policy.power_management.sustainable_input_w,
+            unsustainable_window_s=policy.power_management.unsustainable_window_s,
+            battery_trend_window_s=policy.power_management.battery_trend_window_s,
+            battery_drop_warn_v=policy.power_management.battery_drop_warn_v,
+            saver_sample_interval_s=policy.power_management.saver_sample_interval_s,
+            saver_heartbeat_interval_s=policy.power_management.saver_heartbeat_interval_s,
+            media_disabled_in_saver=policy.power_management.media_disabled_in_saver,
+        ),
+        operation_defaults=EdgePolicyOperationDefaultsOut(
+            default_sleep_poll_interval_s=policy.operation_defaults.default_sleep_poll_interval_s,
+            disable_requires_manual_restart=policy.operation_defaults.disable_requires_manual_restart,
+            admin_remote_shutdown_enabled=policy.operation_defaults.admin_remote_shutdown_enabled,
+            shutdown_grace_s_default=policy.operation_defaults.shutdown_grace_s_default,
+            control_command_ttl_s=policy.operation_defaults.control_command_ttl_s,
         ),
     )
 
@@ -181,6 +300,10 @@ def update_edge_policy_contract_admin(
 def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require_admin_role)) -> DeviceOut:
     actor = audit_actor_from_principal(principal)
     display_name = safe_display_name(req.device_id, req.display_name)
+    try:
+        owner_emails = _normalized_owner_emails(req.owner_emails)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     with db_session() as session:
         existing = session.query(Device).filter(Device.device_id == req.device_id).one_or_none()
         if existing:
@@ -196,6 +319,14 @@ def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require
             enabled=True,
         )
         session.add(d)
+        for email in owner_emails:
+            session.add(
+                DeviceAccessGrant(
+                    device_id=d.device_id,
+                    principal_email=email,
+                    access_role="owner",
+                )
+            )
         record_admin_event(
             session,
             actor_email=actor.email,
@@ -207,6 +338,7 @@ def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require
                 "enabled": True,
                 "heartbeat_interval_s": req.heartbeat_interval_s,
                 "offline_after_s": req.offline_after_s,
+                "owner_emails": owner_emails,
                 "actor_role": actor.role,
                 "actor_source": actor.source,
             },
@@ -214,17 +346,7 @@ def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require
         )
 
         now = datetime.now(timezone.utc)
-        status_str, seconds = compute_status(d, now)
-        return DeviceOut(
-            device_id=d.device_id,
-            display_name=safe_display_name(d.device_id, d.display_name),
-            heartbeat_interval_s=d.heartbeat_interval_s,
-            offline_after_s=d.offline_after_s,
-            last_seen_at=d.last_seen_at,
-            enabled=d.enabled,
-            status=status_str,
-            seconds_since_last_seen=seconds,
-        )
+        return _device_out(d, now=now)
 
 
 @router.patch("/devices/{device_id}", response_model=DeviceOut)
@@ -272,17 +394,7 @@ def update_device(
             )
 
         now = datetime.now(timezone.utc)
-        status_str, seconds = compute_status(d, now)
-        return DeviceOut(
-            device_id=d.device_id,
-            display_name=safe_display_name(d.device_id, d.display_name),
-            heartbeat_interval_s=d.heartbeat_interval_s,
-            offline_after_s=d.offline_after_s,
-            last_seen_at=d.last_seen_at,
-            enabled=d.enabled,
-            status=status_str,
-            seconds_since_last_seen=seconds,
-        )
+        return _device_out(d, now=now)
 
 
 @router.get("/devices", response_model=List[DeviceOut])
@@ -292,19 +404,194 @@ def list_devices_admin() -> List[DeviceOut]:
         devices = session.query(Device).order_by(Device.device_id.asc()).all()
         out: List[DeviceOut] = []
         for d in devices:
-            status_str, seconds = compute_status(d, now)
-            out.append(
-                DeviceOut(
-                    device_id=d.device_id,
-                    display_name=safe_display_name(d.device_id, d.display_name),
-                    heartbeat_interval_s=d.heartbeat_interval_s,
-                    offline_after_s=d.offline_after_s,
-                    last_seen_at=d.last_seen_at,
-                    enabled=d.enabled,
-                    status=status_str,
-                    seconds_since_last_seen=seconds,
-                )
+            out.append(_device_out(d, now=now))
+        return out
+
+
+@router.post("/devices/{device_id}/controls/shutdown", response_model=DeviceControlsOut)
+def shutdown_device_admin(
+    device_id: str,
+    req: AdminDeviceShutdownIn,
+    principal: Principal = Depends(require_admin_role),
+) -> DeviceControlsOut:
+    actor = audit_actor_from_principal(principal)
+    reason = req.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="reason is required")
+
+    policy = load_edge_policy(settings.edge_policy_version)
+    if not policy.operation_defaults.admin_remote_shutdown_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Admin remote shutdown is disabled by policy",
+        )
+
+    shutdown_grace_s = req.shutdown_grace_s
+    if shutdown_grace_s is None:
+        shutdown_grace_s = policy.operation_defaults.shutdown_grace_s_default
+
+    with db_session() as session:
+        device = session.query(Device).filter(Device.device_id == device_id).one_or_none()
+        if device is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+        device.operation_mode = "disabled"
+        command = enqueue_device_shutdown_command(
+            session,
+            device=device,
+            reason=reason,
+            shutdown_grace_s=shutdown_grace_s,
+            ttl_s=policy.operation_defaults.control_command_ttl_s,
+        )
+        pending_count, latest_pending_expires = pending_command_summary(session, device_id=device_id)
+        record_admin_event(
+            session,
+            actor_email=actor.email,
+            actor_subject=actor.subject,
+            action="device_control.shutdown.enqueue",
+            target_type="device_control_command",
+            target_device_id=device.device_id,
+            details={
+                "command_id": command.id,
+                "shutdown_grace_s": shutdown_grace_s,
+                "reason": reason,
+                "actor_role": actor.role,
+                "actor_source": actor.source,
+            },
+            request_id=get_request_id(),
+        )
+        return _device_controls_out(
+            device,
+            disable_requires_manual_restart=policy.operation_defaults.disable_requires_manual_restart,
+            pending_command_count=pending_count,
+            latest_pending_command_expires_at=latest_pending_expires,
+            latest_pending_operation_mode="disabled",
+            latest_pending_shutdown_requested=True,
+            latest_pending_shutdown_grace_s=int(
+                command.command_payload.get("shutdown_grace_s", shutdown_grace_s)
+            ),
+        )
+
+
+@router.get("/devices/{device_id}/access", response_model=List[DeviceAccessGrantOut])
+def list_device_access_admin(device_id: str) -> List[DeviceAccessGrantOut]:
+    with db_session() as session:
+        exists = session.query(Device.device_id).filter(Device.device_id == device_id).one_or_none()
+        if exists is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+        rows = (
+            session.query(DeviceAccessGrant)
+            .filter(DeviceAccessGrant.device_id == device_id)
+            .order_by(DeviceAccessGrant.principal_email.asc())
+            .all()
+        )
+        return [_device_access_grant_out(row) for row in rows]
+
+
+@router.put("/devices/{device_id}/access/{principal_email}", response_model=DeviceAccessGrantOut)
+def upsert_device_access_admin(
+    device_id: str,
+    principal_email: str,
+    req: DeviceAccessGrantPutIn,
+    principal: Principal = Depends(require_admin_role),
+) -> DeviceAccessGrantOut:
+    actor = audit_actor_from_principal(principal)
+    try:
+        normalized_email = normalize_principal_email(principal_email)
+        role = normalize_access_role(req.access_role)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    now = datetime.now(timezone.utc)
+
+    with db_session() as session:
+        exists = session.query(Device.device_id).filter(Device.device_id == device_id).one_or_none()
+        if exists is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+
+        row = (
+            session.query(DeviceAccessGrant)
+            .filter(
+                DeviceAccessGrant.device_id == device_id,
+                DeviceAccessGrant.principal_email == normalized_email,
             )
+            .one_or_none()
+        )
+        created = False
+        if row is None:
+            row = DeviceAccessGrant(
+                device_id=device_id,
+                principal_email=normalized_email,
+                access_role=role,
+                updated_at=now,
+            )
+            session.add(row)
+            created = True
+        else:
+            row.access_role = role
+            row.updated_at = now
+
+        record_admin_event(
+            session,
+            actor_email=actor.email,
+            actor_subject=actor.subject,
+            action="device_access_grant.upsert",
+            target_type="device_access_grant",
+            target_device_id=device_id,
+            details={
+                "principal_email": normalized_email,
+                "access_role": role,
+                "created": created,
+                "actor_role": actor.role,
+                "actor_source": actor.source,
+            },
+            request_id=get_request_id(),
+        )
+        session.flush()
+        return _device_access_grant_out(row)
+
+
+@router.delete("/devices/{device_id}/access/{principal_email}", response_model=DeviceAccessGrantOut)
+def delete_device_access_admin(
+    device_id: str,
+    principal_email: str,
+    principal: Principal = Depends(require_admin_role),
+) -> DeviceAccessGrantOut:
+    actor = audit_actor_from_principal(principal)
+    try:
+        normalized_email = normalize_principal_email(principal_email)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    with db_session() as session:
+        row = (
+            session.query(DeviceAccessGrant)
+            .filter(
+                DeviceAccessGrant.device_id == device_id,
+                DeviceAccessGrant.principal_email == normalized_email,
+            )
+            .one_or_none()
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device access grant not found")
+
+        out = _device_access_grant_out(row)
+        record_admin_event(
+            session,
+            actor_email=actor.email,
+            actor_subject=actor.subject,
+            action="device_access_grant.delete",
+            target_type="device_access_grant",
+            target_device_id=device_id,
+            details={
+                "principal_email": normalized_email,
+                "access_role": row.access_role,
+                "actor_role": actor.role,
+                "actor_source": actor.source,
+            },
+            request_id=get_request_id(),
+        )
+        session.delete(row)
         return out
 
 

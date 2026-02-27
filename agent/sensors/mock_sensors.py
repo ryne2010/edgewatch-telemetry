@@ -119,6 +119,10 @@ def read_metrics(device_id: str) -> Dict[str, Any]:
 
     battery_v = round(battery_base + rng.uniform(-0.2, 0.2), 2)
     signal_rssi_dbm = int(-65 + (idx - 1) * -2 + rng.uniform(-5, 5))
+    microphone_level_db = 66.0 + 4.0 * math.sin(t / 45.0 + idx * 0.3) + rng.uniform(-1.5, 1.5)
+    if int(t) % 240 < 60:
+        microphone_level_db -= 10.0 + rng.uniform(0.0, 3.0)
+    microphone_level_db = max(20.0, min(90.0, microphone_level_db))
     latitude, longitude = _location_for(device_id)
 
     # Simple flow model so dashboards can render a plausible gpm trace.
@@ -130,8 +134,11 @@ def read_metrics(device_id: str) -> Dict[str, Any]:
     device_state = "OK"
     if water_pressure < 25.0 or battery_v < 11.8 or signal_rssi_dbm < -95:
         device_state = "WARN"
+    if microphone_level_db < 60.0:
+        device_state = "WARN"
 
     return {
+        "microphone_level_db": round(microphone_level_db, 1),
         "water_pressure_psi": round(water_pressure, 1),
         "oil_pressure_psi": round(oil_pressure, 1),
         "temperature_c": round(temperature_c, 1),

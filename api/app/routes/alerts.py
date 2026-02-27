@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_
 
+from ..auth.principal import Principal
+from ..auth.rbac import require_viewer_role
 from ..db import db_session
 from ..models import Alert
 from ..schemas import AlertOut
+from ..services.device_access import accessible_device_ids_subquery, ensure_device_access
 
 router = APIRouter(prefix="/api/v1", tags=["alerts"])
 
@@ -30,6 +33,7 @@ def list_alerts(
         description="Cursor pagination tie-breaker when multiple alerts share the same created_at.",
     ),
     limit: int = Query(100, ge=1, le=1000),
+    principal: Principal = Depends(require_viewer_role),
 ) -> list[AlertOut]:
     """List alerts.
 
@@ -43,6 +47,14 @@ def list_alerts(
 
     with db_session() as session:
         q = session.query(Alert)
+
+        if device_id:
+            ensure_device_access(session, principal=principal, device_id=device_id, min_access_role="viewer")
+        accessible_ids = accessible_device_ids_subquery(
+            session, principal=principal, min_access_role="viewer"
+        )
+        if accessible_ids is not None:
+            q = q.filter(Alert.device_id.in_(accessible_ids))
 
         if device_id:
             q = q.filter(Alert.device_id == device_id)

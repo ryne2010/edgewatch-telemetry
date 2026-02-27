@@ -39,3 +39,25 @@ def test_compute_status_online_vs_offline_threshold() -> None:
     status, seconds = compute_status(d_offline, now=now)
     assert status == "offline"
     assert seconds == 61
+
+
+def test_compute_status_sleep_and_disabled_modes() -> None:
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    d_sleep = _device(last_seen_at=now - timedelta(seconds=10), offline_after_s=60)
+    d_sleep.operation_mode = "sleep"
+    status_sleep, seconds_sleep = compute_status(d_sleep, now=now)
+    assert status_sleep == "sleep"
+    assert seconds_sleep == 10
+
+    d_disabled_mode = _device(last_seen_at=now - timedelta(seconds=10), offline_after_s=60)
+    d_disabled_mode.operation_mode = "disabled"
+    status_disabled, seconds_disabled = compute_status(d_disabled_mode, now=now)
+    assert status_disabled == "disabled"
+    assert seconds_disabled == 10
+
+    d_disabled_flag = _device(last_seen_at=None, offline_after_s=60)
+    d_disabled_flag.enabled = False
+    status_disabled_flag, seconds_disabled_flag = compute_status(d_disabled_flag, now=now)
+    assert status_disabled_flag == "disabled"
+    assert seconds_disabled_flag is None

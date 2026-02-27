@@ -80,9 +80,36 @@ Supported backend names in this stage:
 
 - `mock`
 - `composite`
+- `rpi_microphone` (ALSA microphone level via `arecord`; requires `alsa-utils` on Pi)
+- `rpi_power_i2c` (INA219/INA260 input voltage/current/power via I2C; requires `smbus2` on Pi)
 - `rpi_i2c` (BME280 temperature + humidity via I2C; requires `smbus2` on Pi)
 - `rpi_adc` (ADS1115 pressures/levels via I2C; requires `smbus2` on Pi)
 - `derived` (runtime oil-life model with durable local state + manual reset)
+
+For Raspberry Pi microphone-only mode (minimal profile):
+
+```bash
+sudo apt-get install -y alsa-utils
+SENSOR_BACKEND=rpi_microphone uv run python agent/edgewatch_agent.py
+```
+
+Default microphone profile behavior:
+- polling cadence defaults to 10 minutes via edge policy (`reporting.sample_interval_s=600`)
+- `microphone_level_db` below threshold (`alert_thresholds.microphone_offline_db`, default `60`) produces a `MICROPHONE_OFFLINE` alert server-side
+
+For Raspberry Pi dual power mode (microphone + INA219/INA260):
+
+```bash
+sudo apt-get install -y alsa-utils
+pip install smbus2
+SENSOR_CONFIG_PATH=agent/config/rpi.microphone.sensors.yaml uv run python agent/edgewatch_agent.py
+```
+
+Power management behavior:
+- telemetry includes `power_input_v`, `power_input_a`, `power_input_w`, `power_source`
+- policy flags `power_input_out_of_range` and `power_unsustainable` trigger saver-mode degradation
+- saver mode increases sample/heartbeat intervals and can disable media capture/upload
+- durable rolling-window state lives at `EDGEWATCH_POWER_STATE_PATH` (default `./edgewatch_power_state_<device_id>.json`)
 
 For Raspberry Pi I2C:
 
