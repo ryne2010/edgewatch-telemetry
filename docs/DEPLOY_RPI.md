@@ -12,6 +12,7 @@ The agent:
 ## Target environment
 
 - Raspberry Pi OS Lite (64-bit) recommended
+- Ubuntu is best-effort only and is not the primary tested low-power path for v1
 - Python 3.10+ (3.11+ preferred)
 - Network access to your API (Cloud Run URL or local dev)
 
@@ -23,6 +24,8 @@ For fastest field startup:
 2. Set `SENSOR_CONFIG_PATH=./agent/config/rpi.microphone.sensors.yaml`.
 3. Insert SD card, connect 12V-to-5V regulated power path, boot device.
 4. Device fetches policy, applies pending control command (if any), and starts telemetry automatically.
+5. `runtime_power_mode=eco` needs no extra hardware. `deep_sleep` is optional and depends on Pi 5 RTC support or Pi 4 supervisor hardware.
+6. Keep the main enclosure sealed; mount the USB microphone on a short external protected run rather than loose inside the box.
 
 ## 1) Create the device on the server
 
@@ -170,9 +173,23 @@ EDGEWATCH_POWER_STATE_PATH=/var/lib/edgewatch/power_state_rpi-001.json
 # Persist durable control-command apply/ack state.
 EDGEWATCH_COMMAND_STATE_PATH=/var/lib/edgewatch/command_state_rpi-001.json
 
+# Persist durable OTA command/apply state.
+EDGEWATCH_UPDATE_STATE_PATH=/var/lib/edgewatch/update_state_rpi-001.json
+
+# Persist wake bookkeeping for eco/deep-sleep runtime.
+EDGEWATCH_LOW_POWER_STATE_PATH=/var/lib/edgewatch/low_power_state_rpi-001.json
+
+# Optional runtime power defaults (device policy remains the source of truth).
+# RUNTIME_POWER_MODE=continuous
+# DEEP_SLEEP_BACKEND=auto
+
 # Hybrid-disable guard (default safe posture):
 # keep remote OS shutdown disabled unless explicitly approved for this device.
 # EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=0
+
+# OTA apply guard (safe default is dry-run reporting only).
+# Enable after pilot validation.
+# EDGEWATCH_ENABLE_OTA_APPLY=0
 
 # Optional: write permanently-failed payloads for later inspection
 # EDGEWATCH_DEADLETTER_PATH=/var/lib/edgewatch/deadletter_rpi-001.jsonl
@@ -186,6 +203,15 @@ sudo apt-get install -y alsa-utils i2c-tools
 pip install smbus2
 ```
 
+Microphone mounting guidance:
+
+```text
+- Use a short external protected mic mount.
+- Add strain relief and a drip loop on the mic cable.
+- Prefer a small hood or downward-facing sheltered location.
+- Do not rely on a loose USB mic sitting inside the sealed enclosure.
+```
+
 Optional sensor tuning in `agent/.env`:
 
 ```bash
@@ -196,6 +222,21 @@ Optional sensor tuning in `agent/.env`:
 # POWER_INPUT_WARN_MAX_V=14.8
 # POWER_SUSTAINABLE_INPUT_W=15.0
 ```
+
+Low-power deployment tiers:
+
+1. `continuous`
+   - simplest default
+   - full-time connectivity
+   - best for pilot bring-up and debugging
+2. `eco`
+   - no extra hardware
+   - batches routine network reconnects to heartbeat windows
+   - recommended first power optimization step on Pi 4 and Pi 5
+3. `deep_sleep`
+   - Pi 5: use onboard RTC wakealarm path
+   - Pi 4: requires optional external RTC/power-latch supervisor
+   - commands and OTA apply on wake, not continuously
 
 Create the buffer directory:
 
@@ -277,6 +318,8 @@ Use device controls from the dashboard or API:
 - `PATCH /api/v1/devices/{device_id}/controls/operation`
   - `sleep` for low-duty polling (`sleep_poll_interval_s`, default 7 days)
   - `disabled` for logical disable; on-device restart required to resume
+  - `runtime_power_mode` (`continuous|eco|deep_sleep`)
+  - `deep_sleep_backend` (`auto|pi5_rtc|external_supervisor|none`)
 - `POST /api/v1/admin/devices/{device_id}/controls/shutdown` (admin-only)
   - queues one-shot `disabled + shutdown_requested` command
   - device executes OS shutdown only when `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`
@@ -285,6 +328,10 @@ Recommended operator posture:
 
 - offseason: set `sleep` + long mute window reasoned as `offseason`
 - service outage/maintenance: use alert mute without changing operation mode
+- lower power without extra hardware: use `runtime_power_mode=eco`
+- true between-sample halt:
+  - Pi 5: `runtime_power_mode=deep_sleep`, `deep_sleep_backend=pi5_rtc`
+  - Pi 4: `runtime_power_mode=deep_sleep`, `deep_sleep_backend=external_supervisor`
 - hard stop without remote power-off: use owner/operator `disabled`
 - hard stop with one-shot remote power-off (admin only): use shutdown endpoint on devices
   explicitly configured with `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`

@@ -2,7 +2,13 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
 import React from 'react'
-import { api, type AlertOut, type DeviceSummaryOut } from '../api'
+import {
+  api,
+  FLEET_LOCATION_SUMMARY_METRICS,
+  FLEET_VITALS_SUMMARY_METRICS,
+  type AlertOut,
+  type DeviceSummaryOut,
+} from '../api'
 import { FleetMap } from '../components/FleetMap'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page } from '../ui-kit'
 import type { Point } from '../ui/LineChart'
@@ -31,6 +37,8 @@ const TIMELINE_WINDOWS: Array<{ hours: TimelineWindowHours; label: string }> = [
   { hours: 168, label: '7d' },
   { hours: 336, label: '14d' },
 ]
+
+const DASHBOARD_SUMMARY_METRICS = [...FLEET_VITALS_SUMMARY_METRICS, ...FLEET_LOCATION_SUMMARY_METRICS] as const
 
 function statusVariant(status: DeviceSummaryOut['status']): 'success' | 'warning' | 'destructive' | 'secondary' {
   if (status === 'online') return 'success'
@@ -215,25 +223,8 @@ export function DashboardPage() {
     queryKey: ['devicesSummary', 'vitals'],
     queryFn: () =>
       api.devicesSummary({
-        metrics: [
-          'microphone_level_db',
-          'power_input_v',
-          'power_input_a',
-          'power_input_w',
-          'power_source',
-          'power_input_out_of_range',
-          'power_unsustainable',
-          'power_saver_active',
-          'latitude',
-          'longitude',
-          'lat',
-          'lon',
-          'lng',
-          'gps_latitude',
-          'gps_longitude',
-          'location_lat',
-          'location_lon',
-        ],
+        metrics: [...DASHBOARD_SUMMARY_METRICS],
+        limitMetrics: DASHBOARD_SUMMARY_METRICS.length,
       }),
     refetchInterval: 10_000,
   })

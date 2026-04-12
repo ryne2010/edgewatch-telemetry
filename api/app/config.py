@@ -78,6 +78,7 @@ class Settings:
     enable_ui: bool
     enable_ingest_routes: bool
     enable_read_routes: bool
+    enable_ota_updates: bool
 
     # Auth posture
     admin_auth_mode: AdminAuthMode
@@ -325,6 +326,7 @@ def load_settings() -> Settings:
         enable_ui=enable_ui,
         enable_ingest_routes=enable_ingest_routes,
         enable_read_routes=enable_read_routes,
+        enable_ota_updates=_get_bool("ENABLE_OTA_UPDATES", False),
         admin_auth_mode=admin_auth_mode,
         iap_auth_enabled=_get_bool("IAP_AUTH_ENABLED", False),
         authz_enabled=_get_bool("AUTHZ_ENABLED", app_env != "dev"),
@@ -350,9 +352,9 @@ def load_settings() -> Settings:
         rate_limit_enabled=_get_bool("RATE_LIMIT_ENABLED", True),
         ingest_rate_limit_points_per_min=_get_int("INGEST_RATE_LIMIT_POINTS_PER_MIN", 25_000),
         bootstrap_demo_device=_get_bool("BOOTSTRAP_DEMO_DEVICE", bootstrap_demo_default),
-        demo_fleet_size=_get_int("DEMO_FLEET_SIZE", 1),
-        demo_device_id=os.getenv("DEMO_DEVICE_ID", "demo-well-001"),
-        demo_device_name=os.getenv("DEMO_DEVICE_NAME", "Demo Well 001"),
+        demo_fleet_size=_get_int("DEMO_FLEET_SIZE", 11),
+        demo_device_id=os.getenv("DEMO_DEVICE_ID", "baxter-1"),
+        demo_device_name=os.getenv("DEMO_DEVICE_NAME", "baxter-1"),
         demo_device_token=os.getenv("DEMO_DEVICE_TOKEN", "dev-device-token-001"),
         telemetry_contract_version=(os.getenv("TELEMETRY_CONTRACT_VERSION", "v1").strip() or "v1"),
         telemetry_contract_enforce_types=_get_bool("TELEMETRY_CONTRACT_ENFORCE_TYPES", True),

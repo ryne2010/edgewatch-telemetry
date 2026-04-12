@@ -3,6 +3,24 @@ name: Deploy to GCP (Cloud Run)
 on:
   push:
     branches: [main]
+    paths:
+      - "api/**"
+      - "agent/**"
+      - "web/**"
+      - "Dockerfile"
+      - "docker/**"
+      - "infra/gcp/cloud_run_demo/**"
+      - "infra/gcp/modules/**"
+      - "migrations/**"
+      - "scripts/**"
+      - "Makefile"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/deploy-gcp.yml"
+      - ".github/workflows/terraform-apply-gcp.yml"
   workflow_dispatch:
     inputs:
       env:
@@ -83,22 +101,113 @@ jobs:
           gcloud config set project "${PROJECT_ID}"
           gcloud config set run/region "${REGION}"
 
-      - name: Build + deploy (safe sequence)
+      - name: Resolve deploy image settings
+        id: deploy_vars
         env:
           ENV: ${{ github.event.inputs.env || 'dev' }}
-          TAG: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
 
+          read_tfvars_string() {
+            python3 - "$TF_DIR/terraform.tfvars" "$1" <<'PY'
+            import re
+            import sys
+
+            path, key = sys.argv[1:]
+            pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*"([^"]*)"\s*$')
+            value = ""
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    match = pattern.match(line)
+                    if match:
+                        value = match.group(1)
+                        break
+            print(value)
+            PY
+          }
+
           TF_STATE_BUCKET_EFFECTIVE="${TF_STATE_BUCKET:-${PROJECT_ID}-tfstate}"
           TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-edgewatch/${ENV}}"
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
+          IMAGE_NAME_EFFECTIVE="$(read_tfvars_string image_name)"
+          IMAGE_NAME_EFFECTIVE="${IMAGE_NAME_EFFECTIVE:-edgewatch-api}"
 
-          TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
+          {
+            echo "tf_state_bucket=${TF_STATE_BUCKET_EFFECTIVE}"
+            echo "tf_state_prefix=${TF_STATE_PREFIX_EFFECTIVE}"
+            echo "ar_repo=${AR_REPO_EFFECTIVE}"
+            echo "image_name=${IMAGE_NAME_EFFECTIVE}"
+            echo "image_tag=${GITHUB_SHA}"
+          } >> "${GITHUB_OUTPUT}"
 
-          make deploy-gcp-safe \
-            TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
-            TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
-            AR_REPO="${AR_REPO_EFFECTIVE}" \
-            TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}"
+      - name: Build image
+        env:
+          ENV: ${{ github.event.inputs.env || 'dev' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          make build-gcp \
+            TF_STATE_BUCKET="${{ steps.deploy_vars.outputs.tf_state_bucket }}" \
+            TF_STATE_PREFIX="${{ steps.deploy_vars.outputs.tf_state_prefix }}" \
+            AR_REPO="${{ steps.deploy_vars.outputs.ar_repo }}" \
+            TF_BACKEND_HCL="backend.hcl" \
+            IMAGE_NAME="${{ steps.deploy_vars.outputs.image_name }}" \
+            TAG="${{ steps.deploy_vars.outputs.image_tag }}"
+
+      - name: Persist image tag to Terraform config bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          upsert_tfvars_string() {
+            python3 - "$TF_DIR/terraform.tfvars" "$1" "$2" <<'PY'
+            import re
+            import sys
+
+            path, key, value = sys.argv[1:]
+            pattern = re.compile(rf'^(\s*{re.escape(key)}\s*=\s*).*$')
+            with open(path, encoding="utf-8") as handle:
+                lines = handle.readlines()
+
+            replacement = f'{key} = "{value}"\n'
+            updated = False
+            for index, line in enumerate(lines):
+                if pattern.match(line):
+                    lines[index] = replacement
+                    updated = True
+                    break
+
+            if not updated:
+                if lines and lines[-1].strip():
+                    lines.append("\n")
+                lines.append(replacement)
+
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.writelines(lines)
+            PY
+          }
+
+          upsert_tfvars_string image ""
+          upsert_tfvars_string image_name "${{ steps.deploy_vars.outputs.image_name }}"
+          upsert_tfvars_string image_tag "${{ steps.deploy_vars.outputs.image_tag }}"
+          gcloud storage cp "${TF_DIR}/terraform.tfvars" "${GCP_TF_CONFIG_GCS_PATH}/terraform.tfvars"
+
+      - name: Apply + migrate + readiness verify
+        env:
+          ENV: ${{ github.event.inputs.env || 'dev' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          make apply-gcp \
+            TF_STATE_BUCKET="${{ steps.deploy_vars.outputs.tf_state_bucket }}" \
+            TF_STATE_PREFIX="${{ steps.deploy_vars.outputs.tf_state_prefix }}" \
+            AR_REPO="${{ steps.deploy_vars.outputs.ar_repo }}" \
+            TF_BACKEND_HCL="backend.hcl" \
+            IMAGE_NAME="${{ steps.deploy_vars.outputs.image_name }}" \
+            TAG="${{ steps.deploy_vars.outputs.image_tag }}"
+
+          make migrate-gcp ENV="${ENV}" PROJECT_ID="${PROJECT_ID}" REGION="${REGION}"
+          make verify-gcp-ready ENV="${ENV}" PROJECT_ID="${PROJECT_ID}" REGION="${REGION}"

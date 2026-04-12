@@ -161,7 +161,7 @@ make simulate
 
 If you don’t run the simulator (or a real agent), the UI will show devices but no telemetry points.
 
-`make simulate` runs a 3-device demo fleet by default. Override with `SIMULATE_FLEET_SIZE=1 make simulate`.
+`make simulate` runs the full 11-device demo fleet by default. Override with `SIMULATE_FLEET_SIZE=1 make simulate`.
 
 ### 6) Check device status
 

@@ -16,15 +16,26 @@ Goal: bring a new Raspberry Pi online with microphone + power telemetry using a 
    - `EDGEWATCH_POLICY_CACHE_PATH=/var/lib/edgewatch/policy_cache_<device>.json`
    - `EDGEWATCH_POWER_STATE_PATH=/var/lib/edgewatch/power_state_<device>.json`
    - `EDGEWATCH_COMMAND_STATE_PATH=/var/lib/edgewatch/command_state_<device>.json`
+   - `EDGEWATCH_LOW_POWER_STATE_PATH=/var/lib/edgewatch/low_power_state_<device>.json`
 5. Set shutdown guard explicitly:
    - default safe posture: `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=0`
+6. Choose runtime power posture explicitly:
+   - default safe/debug posture: `RUNTIME_POWER_MODE=continuous`
+   - software-only low-power: `RUNTIME_POWER_MODE=eco`
+   - optional true halt path: `RUNTIME_POWER_MODE=deep_sleep`, `DEEP_SLEEP_BACKEND=auto`
 
 ## 2) Hardware hookup at site
 
 1. Insert SD card.
 2. Connect regulated 5V rail fed from 12V lead-acid/solar chain.
-3. Connect microphone + INA219/INA260 on I2C.
+3. Connect INA219/INA260 on I2C and route the USB microphone to a short external protected mount.
+   - keep the main enclosure sealed
+   - add strain relief and a drip loop on the mic cable
+   - use a small hood or downward-facing sheltered location
 4. Connect USB LTE modem with active data SIM.
+5. Optional low-power hardware:
+   - Pi 5 RTC wakealarm path: no extra supervisor board
+   - Pi 4: add external RTC/power-latch supervisor only if true `deep_sleep` is required
 
 ## 3) First boot validation
 
@@ -36,6 +47,7 @@ Goal: bring a new Raspberry Pi online with microphone + power telemetry using a 
    - `microphone_level_db`
    - `power_input_v|a|w`
    - `power_*` flags
+   - `power_runtime_mode`, `power_sleep_backend`, `network_duty_cycled`
 
 ## 4) Remote control sanity check
 

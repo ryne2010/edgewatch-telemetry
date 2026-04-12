@@ -12,7 +12,15 @@ from ..auth.rbac import require_viewer_role
 from ..config import settings
 from ..db import db_session
 from ..models import Device, TelemetryPoint, TelemetryRollupHourly
-from ..schemas import DeviceOut, DeviceSummaryOut, OperationMode, TimeseriesMultiPointOut, TimeseriesPointOut
+from ..schemas import (
+    DeepSleepBackend,
+    DeviceOut,
+    DeviceSummaryOut,
+    OperationMode,
+    RuntimePowerMode,
+    TimeseriesMultiPointOut,
+    TimeseriesPointOut,
+)
 from ..services.device_access import accessible_device_ids_subquery, ensure_device_access
 from ..services.device_identity import safe_display_name
 from ..services.monitor import compute_status
@@ -68,6 +76,26 @@ def _normalized_operation_mode(value: object) -> OperationMode:
     return "active"
 
 
+def _normalized_runtime_power_mode(value: object) -> RuntimePowerMode:
+    mode = str(value or "continuous").strip().lower()
+    if mode == "eco":
+        return "eco"
+    if mode == "deep_sleep":
+        return "deep_sleep"
+    return "continuous"
+
+
+def _normalized_deep_sleep_backend(value: object) -> DeepSleepBackend:
+    backend = str(value or "auto").strip().lower()
+    if backend == "pi5_rtc":
+        return "pi5_rtc"
+    if backend == "external_supervisor":
+        return "external_supervisor"
+    if backend == "none":
+        return "none"
+    return "auto"
+
+
 def _device_out(device: Device, *, now: datetime) -> DeviceOut:
     device_status, seconds = compute_status(device, now)
     return DeviceOut(
@@ -79,6 +107,10 @@ def _device_out(device: Device, *, now: datetime) -> DeviceOut:
         enabled=device.enabled,
         operation_mode=_normalized_operation_mode(getattr(device, "operation_mode", "active")),
         sleep_poll_interval_s=int(getattr(device, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)),
+        runtime_power_mode=_normalized_runtime_power_mode(
+            getattr(device, "runtime_power_mode", "continuous")
+        ),
+        deep_sleep_backend=_normalized_deep_sleep_backend(getattr(device, "deep_sleep_backend", "auto")),
         alerts_muted_until=getattr(device, "alerts_muted_until", None),
         alerts_muted_reason=getattr(device, "alerts_muted_reason", None),
         status=device_status,
@@ -129,13 +161,6 @@ def list_device_summaries(
     else:
         requested = list(DEFAULT_SUMMARY_METRICS)
 
-    # Defensive limits (avoid returning huge JSON blobs per device).
-    if len(requested) > limit_metrics:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Too many metrics requested (max {limit_metrics})",
-        )
-
     # De-dupe while preserving order.
     seen: set[str] = set()
     unique_metrics: List[str] = []
@@ -146,6 +171,13 @@ def list_device_summaries(
             continue
         seen.add(metric_name)
         unique_metrics.append(metric_name)
+
+    # Defensive limits (avoid returning huge JSON blobs per device).
+    if len(unique_metrics) > limit_metrics:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many metrics requested (max {limit_metrics})",
+        )
 
     now = datetime.now(timezone.utc)
 
@@ -197,6 +229,12 @@ def list_device_summaries(
                     operation_mode=_normalized_operation_mode(getattr(d, "operation_mode", "active")),
                     sleep_poll_interval_s=int(
                         getattr(d, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)
+                    ),
+                    runtime_power_mode=_normalized_runtime_power_mode(
+                        getattr(d, "runtime_power_mode", "continuous")
+                    ),
+                    deep_sleep_backend=_normalized_deep_sleep_backend(
+                        getattr(d, "deep_sleep_backend", "auto")
                     ),
                     alerts_muted_until=getattr(d, "alerts_muted_until", None),
                     alerts_muted_reason=getattr(d, "alerts_muted_reason", None),

@@ -16,11 +16,11 @@ These live under `.github/workflows/`:
 - `terraform-hygiene.yml`
   - Runs Terraform quality/security/policy checks.
 - `gcp-terraform-plan.yml`
-  - Manual Terraform plan lane (recommended before apply).
+  - Manual Terraform plan lane (recommended before apply; supports an optional transient `image_tag` preview override).
 - `terraform-apply-gcp.yml`
-  - Manual Terraform apply lane.
+  - Manual Terraform apply lane (requires an explicit `image_tag`, persists it into `terraform.tfvars`, then applies).
 - `deploy-gcp.yml`
-  - Manual safe deploy lane (`make deploy-gcp-safe`: build, apply, migrate, readiness verify).
+  - Path-filtered push-to-`main` lane plus manual safe deploy sequence (build, persist `image_tag`, apply, migrate, readiness verify).
 - `publish-image-multiarch.yml`
   - Manual multi-arch image publish (`linux/amd64` + `linux/arm64`).
 - `terraform-drift.yml`
@@ -56,6 +56,9 @@ When `GCP_TF_CONFIG_GCS_PATH` is set, deploy/apply/plan/drift workflows automati
 - `${GCP_TF_CONFIG_GCS_PATH}/backend.hcl`
 - `${GCP_TF_CONFIG_GCS_PATH}/terraform.tfvars`
 
+Apply/deploy also update `${GCP_TF_CONFIG_GCS_PATH}/terraform.tfvars` so the selected `image_name` and
+`image_tag` become the shared source of truth for later plan/drift runs.
+
 ### Bootstrap and manage the bundle locally
 
 From repo root:
@@ -78,10 +81,13 @@ make tf-config-push-gcp ENV=dev
 3. Allow the provider principal to impersonate that service account.
 4. Grant minimal roles for Cloud Run deploy, Artifact Registry, Terraform backend access, and any required jobs.
 
+The WIF deploy service account also needs write access to the config bundle path so workflows can update
+`terraform.tfvars` after pinning a new image tag.
+
 ## Running deploy lanes
 
-- Plan: Actions -> **Terraform plan (GCP)**
-- Apply: Actions -> **Terraform apply (GCP)**
+- Plan: Actions -> **Terraform plan (GCP)** (optional transient `image_tag` override for preview)
+- Apply: Actions -> **Terraform apply (GCP)** (`image_tag` required)
 - Full safe deploy: Actions -> **Deploy to GCP (Cloud Run)**
 
-All are manual (`workflow_dispatch`) by design.
+Plan/apply are manual (`workflow_dispatch`) by design. The deploy lane also runs automatically on `main` pushes that touch deploy-relevant files.

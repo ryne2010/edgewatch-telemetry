@@ -40,6 +40,8 @@ def test_apply_pending_command_is_once_and_persistent(tmp_path: Path) -> None:
             expires_at="2026-08-27T00:00:00Z",
             operation_mode="sleep",
             sleep_poll_interval_s=7200,
+            runtime_power_mode="eco",
+            deep_sleep_backend="auto",
             shutdown_requested=False,
             shutdown_grace_s=30,
             alerts_muted_until=None,
@@ -48,26 +50,34 @@ def test_apply_pending_command_is_once_and_persistent(tmp_path: Path) -> None:
     )
     state_path = tmp_path / "command_state.json"
 
-    mode1, sleep1, last1, ack1, applied1 = agent_main._apply_pending_control_command_override(
-        policy=policy,
-        last_applied_command_id=None,
-        pending_ack_command_id=None,
-        command_state_path=state_path,
+    mode1, sleep1, runtime1, backend1, last1, ack1, applied1 = (
+        agent_main._apply_pending_control_command_override(
+            policy=policy,
+            last_applied_command_id=None,
+            pending_ack_command_id=None,
+            command_state_path=state_path,
+        )
     )
     assert mode1 == "sleep"
     assert sleep1 == 7200
+    assert runtime1 == "eco"
+    assert backend1 == "auto"
     assert last1 == "cmd-1"
     assert ack1 == "cmd-1"
     assert applied1 == "cmd-1"
 
-    mode2, sleep2, last2, ack2, applied2 = agent_main._apply_pending_control_command_override(
-        policy=policy,
-        last_applied_command_id=last1,
-        pending_ack_command_id=ack1,
-        command_state_path=state_path,
+    mode2, sleep2, runtime2, backend2, last2, ack2, applied2 = (
+        agent_main._apply_pending_control_command_override(
+            policy=policy,
+            last_applied_command_id=last1,
+            pending_ack_command_id=ack1,
+            command_state_path=state_path,
+        )
     )
     assert mode2 == "sleep"
     assert sleep2 == 7200
+    assert runtime2 == "eco"
+    assert backend2 == "auto"
     assert last2 == "cmd-1"
     assert ack2 == "cmd-1"
     assert applied2 is None
@@ -87,6 +97,8 @@ def test_expired_pending_command_is_not_applied(tmp_path: Path) -> None:
             expires_at="2026-01-02T00:00:00Z",
             operation_mode="disabled",
             sleep_poll_interval_s=3600,
+            runtime_power_mode="deep_sleep",
+            deep_sleep_backend="pi5_rtc",
             shutdown_requested=True,
             shutdown_grace_s=45,
             alerts_muted_until=None,
@@ -95,14 +107,18 @@ def test_expired_pending_command_is_not_applied(tmp_path: Path) -> None:
     )
     state_path = tmp_path / "command_state.json"
 
-    mode, sleep_s, last_applied, pending_ack, applied = agent_main._apply_pending_control_command_override(
-        policy=policy,
-        last_applied_command_id=None,
-        pending_ack_command_id=None,
-        command_state_path=state_path,
+    mode, sleep_s, runtime_mode, backend, last_applied, pending_ack, applied = (
+        agent_main._apply_pending_control_command_override(
+            policy=policy,
+            last_applied_command_id=None,
+            pending_ack_command_id=None,
+            command_state_path=state_path,
+        )
     )
     assert mode == base_policy.operation_mode
     assert sleep_s == base_policy.sleep_poll_interval_s
+    assert runtime_mode == base_policy.runtime_power_mode
+    assert backend == base_policy.deep_sleep_backend
     assert last_applied is None
     assert pending_ack is None
     assert applied is None
@@ -169,6 +185,8 @@ def test_pending_shutdown_state_skips_execution_when_remote_shutdown_disabled() 
         expires_at="2026-08-27T00:00:00Z",
         operation_mode="disabled",
         sleep_poll_interval_s=3600,
+        runtime_power_mode="continuous",
+        deep_sleep_backend="auto",
         shutdown_requested=True,
         shutdown_grace_s=30,
         alerts_muted_until=None,
@@ -203,6 +221,8 @@ def test_pending_shutdown_executes_after_ack_and_grace(
         expires_at="2026-08-27T00:00:00Z",
         operation_mode="disabled",
         sleep_poll_interval_s=3600,
+        runtime_power_mode="continuous",
+        deep_sleep_backend="auto",
         shutdown_requested=True,
         shutdown_grace_s=45,
         alerts_muted_until=None,

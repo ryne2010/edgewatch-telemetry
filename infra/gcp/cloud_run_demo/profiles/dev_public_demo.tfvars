@@ -9,7 +9,7 @@ allow_unauthenticated = true
 
 # Demo bootstrap (dev-only)
 bootstrap_demo_device = true
-demo_fleet_size       = 3
+demo_fleet_size       = 11
 
 # Cost controls
 min_instances = 0

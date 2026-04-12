@@ -22,6 +22,10 @@ profiles:
       - power_input_out_of_range
       - power_unsustainable
       - power_saver_active
+      - power_runtime_mode
+      - power_sleep_backend
+      - wake_reason
+      - network_duty_cycled
 
 metrics:
   water_pressure_psi:
@@ -103,6 +107,22 @@ metrics:
   power_saver_active:
     type: boolean
     description: True when power management has enabled saver-mode runtime degradation.
+
+  power_runtime_mode:
+    type: string
+    description: Applied runtime power mode on the device (continuous|eco|deep_sleep).
+
+  power_sleep_backend:
+    type: string
+    description: Applied deep-sleep backend (none|pi5_rtc|external_supervisor).
+
+  wake_reason:
+    type: string
+    description: Best-effort reason for the current boot or wake cycle (scheduled|manual|cold_boot|unknown).
+
+  network_duty_cycled:
+    type: boolean
+    description: True when the agent is intentionally limiting network reconnects to startup, alerts, and heartbeat windows.
 
   signal_rssi_dbm:
     type: number

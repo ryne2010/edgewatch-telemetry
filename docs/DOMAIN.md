@@ -7,7 +7,7 @@
 - **Problem:** Field/ops teams often need reliable *heartbeat + metric telemetry* from remote devices (ex: pumps/wells/equipment) under intermittent connectivity, without the overhead of a full IoT fleet product.
 - **Users:** Operators and engineers who want a simple dashboard and an audit-friendly event trail; developers who want a reference implementation of patterns (idempotency, buffering, offline detection, Cloud Run demo posture).
 - **Non-goals:**
-  - Full IoT fleet manager (device provisioning at scale, OTA updates, device identity PKI, etc.)
+  - Full IoT fleet manager (multi-tenant billing, device identity PKI, generic app marketplace, etc.)
   - High-throughput time-series warehouse
   - Multi-tenant SaaS (this repo is a reference implementation)
 
@@ -74,11 +74,22 @@ These are the rules that must always hold (and should be enforced mechanically).
   - `active`: normal cadence
   - `sleep`: long-cadence polling (default 7 days)
   - `disabled`: logical disable; local restart required to resume
+- Owners/operators can independently select runtime power behavior:
+  - `continuous`: always-on Linux loop
+  - `eco`: software-only network duty cycling
+  - `deep_sleep`: true between-sample halt/power-off when supported
 - Admins can additionally issue a one-shot remote shutdown intent:
   - command payload still latches `disabled`
   - actual OS shutdown only runs on devices that explicitly allow it via local env guard
 - Control changes are enqueued as durable per-device commands (default TTL 180 days) and applied by agents
   on next policy fetch; devices ack application.
+
+7) **Fleet OTA deployments**
+- Admins publish release manifests (tag + commit + signature metadata).
+- Admins start staged deployments (`1% -> 10% -> 50% -> 100%`) for target selectors (`all|cohort|labels|explicit_ids`).
+- Device policy carries a pending update command for in-scope devices and stages.
+- Devices report update transitions (`downloading` to `healthy|rolled_back|failed`) and converge after reconnect.
+- Deployments auto-halt when stage failure-rate exceeds configured thresholds.
 
 ## Vocabulary
 
@@ -89,10 +100,15 @@ These are the rules that must always hold (and should be enforced mechanically).
 - **Offline:** `now - last_seen_at > offline_after_s`.
 - **Sleep:** device intentionally uses long-cadence polling; offline lifecycle is suppressed.
 - **Disabled:** device is logically disabled and requires on-device restart to resume telemetry.
+- **Runtime power mode:** device-side power behavior layered on top of operation mode (`continuous|eco|deep_sleep`).
+- **Deep-sleep backend:** applied hardware path for true between-sample low power (`none|pi5_rtc|external_supervisor`).
 - **Hybrid disable:** owner/operator disable is logical-only; admin shutdown intent can request one-shot OS shutdown,
   but device-side execution remains opt-in.
 - **Alert:** an operational event derived from telemetry or offline checks.
 - **Control command:** a durable, per-device control snapshot delivered via policy and acknowledged by device.
+- **Release manifest:** immutable release metadata (`git_tag`, `commit_sha`, signature, key id, constraints).
+- **Deployment:** staged rollout of one release manifest with pause/resume/abort lifecycle.
+- **Deployment target:** per-device deployment state row tied to a deployment.
 
 ## Canonical metric keys (contracted)
 
@@ -110,6 +126,10 @@ Common operational metrics:
 - `power_input_out_of_range`
 - `power_unsustainable`
 - `power_saver_active`
+- `power_runtime_mode`
+- `power_sleep_backend`
+- `wake_reason`
+- `network_duty_cycled`
 - `water_pressure_psi`
 - `oil_pressure_psi`
 - `temperature_c`

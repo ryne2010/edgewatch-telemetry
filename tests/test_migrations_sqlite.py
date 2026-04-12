@@ -31,6 +31,11 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     assert "telemetry_rollups_hourly" in tables
     assert "device_access_grants" in tables
     assert "device_control_commands" in tables
+    assert "release_manifests" in tables
+    assert "deployments" in tables
+    assert "deployment_targets" in tables
+    assert "device_release_state" in tables
+    assert "deployment_events" in tables
 
     admin_columns = {col["name"] for col in inspector.get_columns("admin_events")}
     assert "actor_subject" in admin_columns
@@ -38,8 +43,12 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     device_columns = {col["name"] for col in inspector.get_columns("devices")}
     assert "operation_mode" in device_columns
     assert "sleep_poll_interval_s" in device_columns
+    assert "runtime_power_mode" in device_columns
+    assert "deep_sleep_backend" in device_columns
     assert "alerts_muted_until" in device_columns
     assert "alerts_muted_reason" in device_columns
+    assert "cohort" in device_columns
+    assert "labels" in device_columns
 
     command_columns = {col["name"] for col in inspector.get_columns("device_control_commands")}
     assert "device_id" in command_columns

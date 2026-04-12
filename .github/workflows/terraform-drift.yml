@@ -87,23 +87,42 @@ jobs:
       - name: Terraform drift check (plan -detailed-exitcode)
         env:
           ENV: ${{ github.event.inputs.env || 'prod' }}
-          TAG: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
 
+          read_tfvars_string() {
+            python3 - "$TF_DIR/terraform.tfvars" "$1" <<'PY'
+            import re
+            import sys
+
+            path, key = sys.argv[1:]
+            pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*"([^"]*)"\s*$')
+            value = ""
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    match = pattern.match(line)
+                    if match:
+                        value = match.group(1)
+                        break
+            print(value)
+            PY
+          }
+
           TF_STATE_BUCKET_EFFECTIVE="${TF_STATE_BUCKET:-${PROJECT_ID}-tfstate}"
           TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-edgewatch/${ENV}}"
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
-
           TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
+          IMAGE_NAME_EFFECTIVE="$(read_tfvars_string image_name)"
+          IMAGE_TAG_EFFECTIVE="$(read_tfvars_string image_tag)"
+
+          IMAGE_NAME_EFFECTIVE="${IMAGE_NAME_EFFECTIVE:-edgewatch-api}"
+          IMAGE_TAG_EFFECTIVE="${IMAGE_TAG_EFFECTIVE:-latest}"
 
           make tf-init-gcp \
             TF_STATE_BUCKET="${TF_STATE_BUCKET_EFFECTIVE}" \
             TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
             TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}"
-
-          IMAGE_EFFECTIVE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/edgewatch-api:${TAG}"
 
           set +e
           terraform -chdir="${TF_DIR}" plan -detailed-exitcode -no-color \
@@ -115,7 +134,8 @@ jobs:
             -var "enable_observability=${ENABLE_OBSERVABILITY:-true}" \
             -var "service_name=edgewatch-${ENV}" \
             -var "artifact_repo_name=${AR_REPO_EFFECTIVE}" \
-            -var "image=${IMAGE_EFFECTIVE}"
+            -var "image_name=${IMAGE_NAME_EFFECTIVE}" \
+            -var "image_tag=${IMAGE_TAG_EFFECTIVE}"
           rc=$?
           set -e
 

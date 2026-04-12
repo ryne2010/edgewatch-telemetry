@@ -56,7 +56,7 @@ def main() -> None:
     args = parser.parse_args()
 
     api_url = os.getenv("EDGEWATCH_API_URL", "http://localhost:8082")
-    device_id = os.getenv("EDGEWATCH_DEVICE_ID", "demo-well-001")
+    device_id = os.getenv("EDGEWATCH_DEVICE_ID", "baxter-1")
     token = os.getenv("EDGEWATCH_DEVICE_TOKEN", "dev-device-token-001")
 
     buffer_path = os.getenv("BUFFER_DB_PATH", "./edgewatch_buffer.sqlite")

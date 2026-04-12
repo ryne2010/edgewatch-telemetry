@@ -2,7 +2,7 @@ import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Link, useLocation } from '@tanstack/react-router'
-import { api, type DeviceSummaryOut } from '../api'
+import { api, FLEET_VITALS_SUMMARY_METRICS, type DeviceSummaryOut } from '../api'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, DataTable, Input, Label, Page } from '../ui-kit'
 import { fmtDateTime, fmtNumber, timeAgo } from '../utils/format'
 
@@ -159,7 +159,7 @@ function computeFleetHealth(
 function MetricChip(props: { label: string; value: unknown; unit?: string; variant?: 'secondary' | 'warning' | 'destructive' }) {
   const v = props.value
   const text = typeof v === 'number' ? fmtNumber(v) : v == null ? '—' : String(v)
-  const unit = props.unit ? ` ${props.unit}` : ''
+  const unit = v == null ? '' : props.unit ? ` ${props.unit}` : ''
   const variant = props.variant ?? 'secondary'
   return (
     <Badge variant={variant} className="font-mono text-[11px]">
@@ -177,16 +177,7 @@ export function DevicesPage() {
     queryKey: ['devicesSummary', 'devicesPage'],
     queryFn: () =>
       api.devicesSummary({
-        metrics: [
-          'microphone_level_db',
-          'power_input_v',
-          'power_input_a',
-          'power_input_w',
-          'power_source',
-          'power_input_out_of_range',
-          'power_unsustainable',
-          'power_saver_active',
-        ],
+        metrics: [...FLEET_VITALS_SUMMARY_METRICS],
       }),
     refetchInterval: 10_000,
   })
@@ -381,6 +372,7 @@ export function DevicesPage() {
 
   return (
     <Page
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
       title="Devices"
       description="Searchable fleet table with quick filters, health reasons, and latest vitals."
       actions={
@@ -397,11 +389,11 @@ export function DevicesPage() {
         </div>
       }
     >
-      <Card>
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <CardHeader>
           <CardTitle>Fleet</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="grid min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)] gap-4 overflow-hidden">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="search">Search</Label>
@@ -462,7 +454,14 @@ export function DevicesPage() {
             </div>
           ) : null}
 
-          <DataTable<DeviceSummaryOut> data={filtered} columns={cols} height={560} enableSorting emptyState={emptyState} />
+          <DataTable<DeviceSummaryOut>
+            data={filtered}
+            columns={cols}
+            height="100%"
+            className="min-h-0 flex-1"
+            enableSorting
+            emptyState={emptyState}
+          />
         </CardContent>
       </Card>
     </Page>

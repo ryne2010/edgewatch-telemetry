@@ -15,7 +15,7 @@ allow_demo_in_non_dev = true
 
 # Demo fleet bootstrap (staging only)
 bootstrap_demo_device = true
-demo_fleet_size       = 3
+demo_fleet_size       = 11
 
 # Cost controls
 min_instances = 0

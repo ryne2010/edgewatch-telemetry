@@ -6,11 +6,13 @@ import { useDebouncedValue } from '@tanstack/react-pacer/debouncer'
 import {
   api,
   type AdminEventOut,
+  type DeploymentDetailOut,
   type DeviceAccessGrantOut,
   type DriftEventOut,
   type ExportBatchOut,
   type IngestionBatchOut,
   type NotificationEventOut,
+  type ReleaseManifestOut,
 } from '../api'
 import { useAppSettings } from '../app/settings'
 import { useAdminAccess } from '../hooks/useAdminAccess'
@@ -56,6 +58,7 @@ export function AdminPage() {
 
   const adminEnabled = Boolean(healthQ.data?.features?.admin?.enabled)
   const adminAuthMode = String(healthQ.data?.features?.admin?.auth_mode ?? 'key').toLowerCase()
+  const otaUpdatesEnabled = Boolean(healthQ.data?.features?.routes?.ota_updates)
   const { adminAccess, adminCred, keyRequired, keyInvalid, keyValidating } = useAdminAccess({
     adminEnabled,
     adminAuthMode,
@@ -89,6 +92,28 @@ export function AdminPage() {
   const [shutdownDeviceId, setShutdownDeviceId] = React.useState('')
   const [shutdownReason, setShutdownReason] = React.useState('seasonal intermission')
   const [shutdownGraceS, setShutdownGraceS] = React.useState('30')
+  const [manifestGitTag, setManifestGitTag] = React.useState('')
+  const [manifestCommitSha, setManifestCommitSha] = React.useState('')
+  const [manifestSignature, setManifestSignature] = React.useState('')
+  const [manifestSignatureKeyId, setManifestSignatureKeyId] = React.useState('ops-key-1')
+  const [manifestConstraints, setManifestConstraints] = React.useState('{}')
+  const [manifestStatus, setManifestStatus] = React.useState('active')
+  const [deploymentManifestId, setDeploymentManifestId] = React.useState('')
+  const [deploymentSelectorMode, setDeploymentSelectorMode] = React.useState<
+    'all' | 'cohort' | 'labels' | 'explicit_ids'
+  >('all')
+  const [deploymentSelectorCohort, setDeploymentSelectorCohort] = React.useState('')
+  const [deploymentSelectorLabels, setDeploymentSelectorLabels] = React.useState('{}')
+  const [deploymentSelectorIds, setDeploymentSelectorIds] = React.useState('')
+  const [deploymentRolloutStages, setDeploymentRolloutStages] = React.useState('1,10,50,100')
+  const [deploymentFailureRateThreshold, setDeploymentFailureRateThreshold] = React.useState('0.2')
+  const [deploymentNoQuorumTimeoutS, setDeploymentNoQuorumTimeoutS] = React.useState('1800')
+  const [deploymentHealthTimeoutS, setDeploymentHealthTimeoutS] = React.useState('300')
+  const [deploymentCommandTtlS, setDeploymentCommandTtlS] = React.useState(String(180 * 24 * 3600))
+  const [deploymentPowerGuardRequired, setDeploymentPowerGuardRequired] = React.useState(true)
+  const [deploymentRollbackToTag, setDeploymentRollbackToTag] = React.useState('')
+  const [deploymentLookupId, setDeploymentLookupId] = React.useState('')
+  const [deploymentAbortReason, setDeploymentAbortReason] = React.useState('manual abort')
 
   const upsertMutation = useMutation({
     mutationFn: async () => {
@@ -196,6 +221,18 @@ export function AdminPage() {
     enabled: tab === 'exports' && adminAccess,
   })
 
+  const releaseManifestsQ = useQuery({
+    queryKey: ['admin', 'releaseManifests'],
+    queryFn: () => api.admin.releaseManifests(adminCred, { limit: 200 }),
+    enabled: adminAccess && otaUpdatesEnabled,
+  })
+
+  const deploymentDetailQ = useQuery({
+    queryKey: ['admin', 'deploymentDetail', deploymentLookupId.trim()],
+    queryFn: () => api.admin.deployment(adminCred, deploymentLookupId.trim()),
+    enabled: adminAccess && otaUpdatesEnabled && Boolean(deploymentLookupId.trim()),
+  })
+
   const accessDevice = accessDeviceId.trim()
   const deviceAccessQ = useQuery({
     queryKey: ['admin', 'deviceAccess', accessDevice],
@@ -279,6 +316,181 @@ export function AdminPage() {
     onError: (error) => {
       toast({
         title: 'Unable to queue shutdown command',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const createManifestMutation = useMutation({
+    mutationFn: async () => {
+      const gitTag = manifestGitTag.trim()
+      const commitSha = manifestCommitSha.trim()
+      const signature = manifestSignature.trim()
+      const signatureKeyId = manifestSignatureKeyId.trim()
+      if (!gitTag) throw new Error('Git tag is required.')
+      if (!commitSha) throw new Error('Commit SHA is required.')
+      if (!signature) throw new Error('Signature is required.')
+      if (!signatureKeyId) throw new Error('Signature key id is required.')
+      let constraints: Record<string, unknown> = {}
+      if (manifestConstraints.trim()) {
+        try {
+          const parsed = JSON.parse(manifestConstraints)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Manifest constraints must be a JSON object.')
+          }
+          constraints = parsed as Record<string, unknown>
+        } catch {
+          throw new Error('Manifest constraints must be valid JSON object.')
+        }
+      }
+      return api.admin.createReleaseManifest(adminCred, {
+        git_tag: gitTag,
+        commit_sha: commitSha,
+        signature,
+        signature_key_id: signatureKeyId,
+        constraints,
+        status: manifestStatus.trim() || 'active',
+      })
+    },
+    onSuccess: (manifest) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'releaseManifests'] })
+      setDeploymentManifestId((prev) => prev || manifest.id)
+      toast({
+        title: 'Release manifest created',
+        description: `${manifest.git_tag} (${manifest.id.slice(0, 8)})`,
+        variant: 'success',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to create release manifest',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const createDeploymentMutation = useMutation({
+    mutationFn: async () => {
+      const manifestId = deploymentManifestId.trim()
+      if (!manifestId) throw new Error('Manifest ID is required.')
+
+      const targetSelector: {
+        mode: 'all' | 'cohort' | 'labels' | 'explicit_ids'
+        cohort?: string
+        labels?: Record<string, string>
+        device_ids?: string[]
+      } = { mode: deploymentSelectorMode }
+      if (deploymentSelectorMode === 'cohort') {
+        const cohort = deploymentSelectorCohort.trim()
+        if (!cohort) throw new Error('Cohort is required for cohort selector.')
+        targetSelector.cohort = cohort
+      } else if (deploymentSelectorMode === 'labels') {
+        try {
+          const parsed = JSON.parse(deploymentSelectorLabels)
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Labels must be a JSON object.')
+          }
+          const labels = Object.fromEntries(
+            Object.entries(parsed).map(([k, v]) => [String(k).trim(), String(v).trim()]),
+          )
+          if (!Object.keys(labels).length) throw new Error('At least one label is required.')
+          targetSelector.labels = labels
+        } catch {
+          throw new Error('Labels must be valid JSON object.')
+        }
+      } else if (deploymentSelectorMode === 'explicit_ids') {
+        const ids = Array.from(
+          new Set(
+            deploymentSelectorIds
+              .split(',')
+              .map((v) => v.trim())
+              .filter(Boolean),
+          ),
+        )
+        if (!ids.length) throw new Error('At least one device ID is required for explicit selector.')
+        targetSelector.device_ids = ids
+      }
+
+      const rolloutStages = Array.from(
+        new Set(
+          deploymentRolloutStages
+            .split(',')
+            .map((v) => Number.parseInt(v.trim(), 10))
+            .filter((v) => Number.isFinite(v) && v > 0 && v <= 100),
+        ),
+      ).sort((a, b) => a - b)
+      if (!rolloutStages.length) throw new Error('Rollout stages must include at least one value 1..100.')
+
+      const failureRateThreshold = Number.parseFloat(deploymentFailureRateThreshold)
+      if (!Number.isFinite(failureRateThreshold) || failureRateThreshold < 0 || failureRateThreshold > 1) {
+        throw new Error('Failure threshold must be between 0 and 1.')
+      }
+      const noQuorumTimeoutS = Number.parseInt(deploymentNoQuorumTimeoutS, 10)
+      if (!Number.isFinite(noQuorumTimeoutS) || noQuorumTimeoutS < 60) {
+        throw new Error('No-quorum timeout must be >= 60.')
+      }
+      const healthTimeoutS = Number.parseInt(deploymentHealthTimeoutS, 10)
+      if (!Number.isFinite(healthTimeoutS) || healthTimeoutS < 10) {
+        throw new Error('Health timeout must be >= 10.')
+      }
+      const commandTtlS = Number.parseInt(deploymentCommandTtlS, 10)
+      if (!Number.isFinite(commandTtlS) || commandTtlS < 60) {
+        throw new Error('Command TTL must be >= 60.')
+      }
+
+      return api.admin.createDeployment(adminCred, {
+        manifest_id: manifestId,
+        target_selector: targetSelector,
+        rollout_stages_pct: rolloutStages,
+        failure_rate_threshold: failureRateThreshold,
+        no_quorum_timeout_s: noQuorumTimeoutS,
+        health_timeout_s: healthTimeoutS,
+        command_ttl_s: commandTtlS,
+        power_guard_required: deploymentPowerGuardRequired,
+        rollback_to_tag: deploymentRollbackToTag.trim() || null,
+      })
+    },
+    onSuccess: (deployment) => {
+      setDeploymentLookupId(deployment.id)
+      qc.invalidateQueries({ queryKey: ['admin', 'deploymentDetail', deployment.id] })
+      qc.invalidateQueries({ queryKey: ['admin', 'events'] })
+      toast({
+        title: 'Deployment created',
+        description: `ID ${deployment.id.slice(0, 8)} stage ${deployment.stage}`,
+        variant: 'success',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to create deployment',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const deploymentActionMutation = useMutation({
+    mutationFn: async (action: 'pause' | 'resume' | 'abort') => {
+      const deploymentId = deploymentLookupId.trim()
+      if (!deploymentId) throw new Error('Deployment ID is required.')
+      if (action === 'pause') return api.admin.pauseDeployment(adminCred, deploymentId)
+      if (action === 'resume') return api.admin.resumeDeployment(adminCred, deploymentId)
+      return api.admin.abortDeployment(adminCred, deploymentId, { reason: deploymentAbortReason.trim() || undefined })
+    },
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'deploymentDetail', result.id] })
+      qc.invalidateQueries({ queryKey: ['admin', 'events'] })
+      toast({
+        title: 'Deployment updated',
+        description: `${result.id.slice(0, 8)} → ${result.status}`,
+        variant: result.status === 'aborted' ? 'warning' : 'success',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to update deployment',
         description: (error as Error).message,
         variant: 'error',
       })
@@ -673,6 +885,380 @@ export function AdminPage() {
               >
                 {shutdownMutation.isPending ? 'Queueing shutdown…' : 'Queue disable + shutdown'}
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>OTA releases and deployments</CardTitle>
+              <CardDescription>
+                Publish signed release manifests and manage staged fleet rollouts.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {!otaUpdatesEnabled ? (
+                <Callout title="OTA routes disabled">
+                  Enable <span className="font-mono">ENABLE_OTA_UPDATES=1</span> on the API service to use
+                  manifest/deployment controls.
+                </Callout>
+              ) : null}
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Git tag</Label>
+                  <Input
+                    value={manifestGitTag}
+                    onChange={(e) => setManifestGitTag(e.target.value)}
+                    placeholder="v1.4.0"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Commit SHA</Label>
+                  <Input
+                    value={manifestCommitSha}
+                    onChange={(e) => setManifestCommitSha(e.target.value)}
+                    placeholder="abc123..."
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Signature key ID</Label>
+                  <Input
+                    value={manifestSignatureKeyId}
+                    onChange={(e) => setManifestSignatureKeyId(e.target.value)}
+                    placeholder="ops-key-1"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Input
+                    value={manifestStatus}
+                    onChange={(e) => setManifestStatus(e.target.value)}
+                    placeholder="active"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Signature</Label>
+                  <Input
+                    value={manifestSignature}
+                    onChange={(e) => setManifestSignature(e.target.value)}
+                    placeholder="base64-signature"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Constraints JSON</Label>
+                  <textarea
+                    className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+                    value={manifestConstraints}
+                    onChange={(e) => setManifestConstraints(e.target.value)}
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => createManifestMutation.mutate()}
+                  disabled={inputsDisabled || !otaUpdatesEnabled || createManifestMutation.isPending}
+                >
+                  {createManifestMutation.isPending ? 'Creating manifest…' : 'Create manifest'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'releaseManifests'] })}
+                  disabled={inputsDisabled || !otaUpdatesEnabled}
+                >
+                  Refresh manifests
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Manifests</Label>
+                {releaseManifestsQ.isError ? (
+                  <div className="text-sm text-destructive">Error: {(releaseManifestsQ.error as Error).message}</div>
+                ) : null}
+                {(releaseManifestsQ.data ?? []).length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No manifests found.</div>
+                ) : (
+                  <div className="max-h-56 overflow-auto rounded-md border">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="px-2 py-2">Tag</th>
+                          <th className="px-2 py-2">Manifest ID</th>
+                          <th className="px-2 py-2">Status</th>
+                          <th className="px-2 py-2">Created</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(releaseManifestsQ.data ?? []).map((row: ReleaseManifestOut) => (
+                          <tr
+                            key={row.id}
+                            className="cursor-pointer border-t hover:bg-muted/20"
+                            onClick={() => setDeploymentManifestId(row.id)}
+                          >
+                            <td className="px-2 py-2 font-mono">{row.git_tag}</td>
+                            <td className="px-2 py-2 font-mono">{row.id}</td>
+                            <td className="px-2 py-2">
+                              <Badge variant="secondary">{row.status}</Badge>
+                            </td>
+                            <td className="px-2 py-2 text-muted-foreground">{fmtDateTime(row.created_at)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Manifest ID</Label>
+                  <Input
+                    value={deploymentManifestId}
+                    onChange={(e) => setDeploymentManifestId(e.target.value)}
+                    placeholder="manifest UUID"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Selector mode</Label>
+                  <select
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={deploymentSelectorMode}
+                    onChange={(e) =>
+                      setDeploymentSelectorMode(
+                        e.target.value as 'all' | 'cohort' | 'labels' | 'explicit_ids',
+                      )
+                    }
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  >
+                    <option value="all">all</option>
+                    <option value="cohort">cohort</option>
+                    <option value="labels">labels</option>
+                    <option value="explicit_ids">explicit_ids</option>
+                  </select>
+                </div>
+                {deploymentSelectorMode === 'cohort' ? (
+                  <div className="space-y-2">
+                    <Label>Cohort</Label>
+                    <Input
+                      value={deploymentSelectorCohort}
+                      onChange={(e) => setDeploymentSelectorCohort(e.target.value)}
+                      placeholder="pilot-west"
+                      disabled={inputsDisabled || !otaUpdatesEnabled}
+                    />
+                  </div>
+                ) : null}
+                {deploymentSelectorMode === 'labels' ? (
+                  <div className="space-y-2 lg:col-span-2">
+                    <Label>Labels JSON</Label>
+                    <textarea
+                      className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+                      value={deploymentSelectorLabels}
+                      onChange={(e) => setDeploymentSelectorLabels(e.target.value)}
+                      disabled={inputsDisabled || !otaUpdatesEnabled}
+                    />
+                  </div>
+                ) : null}
+                {deploymentSelectorMode === 'explicit_ids' ? (
+                  <div className="space-y-2 lg:col-span-2">
+                    <Label>Device IDs (comma-separated)</Label>
+                    <Input
+                      value={deploymentSelectorIds}
+                      onChange={(e) => setDeploymentSelectorIds(e.target.value)}
+                      placeholder="well-001, well-002"
+                      disabled={inputsDisabled || !otaUpdatesEnabled}
+                    />
+                  </div>
+                ) : null}
+                <div className="space-y-2">
+                  <Label>Rollout stages</Label>
+                  <Input
+                    value={deploymentRolloutStages}
+                    onChange={(e) => setDeploymentRolloutStages(e.target.value)}
+                    placeholder="1,10,50,100"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Failure threshold</Label>
+                  <Input
+                    value={deploymentFailureRateThreshold}
+                    onChange={(e) => setDeploymentFailureRateThreshold(e.target.value)}
+                    placeholder="0.2"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>No-quorum timeout (s)</Label>
+                  <Input
+                    value={deploymentNoQuorumTimeoutS}
+                    onChange={(e) => setDeploymentNoQuorumTimeoutS(e.target.value)}
+                    placeholder="1800"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Health timeout (s)</Label>
+                  <Input
+                    value={deploymentHealthTimeoutS}
+                    onChange={(e) => setDeploymentHealthTimeoutS(e.target.value)}
+                    placeholder="300"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Command TTL (s)</Label>
+                  <Input
+                    value={deploymentCommandTtlS}
+                    onChange={(e) => setDeploymentCommandTtlS(e.target.value)}
+                    placeholder="15552000"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Rollback tag (optional)</Label>
+                  <Input
+                    value={deploymentRollbackToTag}
+                    onChange={(e) => setDeploymentRollbackToTag(e.target.value)}
+                    placeholder="v1.3.9"
+                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Power guard required</Label>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={deploymentPowerGuardRequired}
+                      onChange={(e) => setDeploymentPowerGuardRequired(e.target.checked)}
+                      disabled={inputsDisabled || !otaUpdatesEnabled}
+                    />
+                    <span className="text-sm text-muted-foreground">defer when power is unstable</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  onClick={() => createDeploymentMutation.mutate()}
+                  disabled={inputsDisabled || !otaUpdatesEnabled || createDeploymentMutation.isPending}
+                >
+                  {createDeploymentMutation.isPending ? 'Creating deployment…' : 'Create deployment'}
+                </Button>
+                <Input
+                  value={deploymentLookupId}
+                  onChange={(e) => setDeploymentLookupId(e.target.value)}
+                  placeholder="deployment UUID"
+                  disabled={inputsDisabled || !otaUpdatesEnabled}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() =>
+                    qc.invalidateQueries({
+                      queryKey: ['admin', 'deploymentDetail', deploymentLookupId.trim()],
+                    })
+                  }
+                  disabled={inputsDisabled || !otaUpdatesEnabled || !deploymentLookupId.trim()}
+                >
+                  Refresh deployment
+                </Button>
+              </div>
+
+              {deploymentDetailQ.isError ? (
+                <div className="text-sm text-destructive">
+                  Error: {(deploymentDetailQ.error as Error).message}
+                </div>
+              ) : null}
+              {deploymentDetailQ.data ? (
+                <div className="space-y-3 rounded-md border p-3 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">{deploymentDetailQ.data.status}</Badge>
+                    <span className="font-mono text-xs">stage {deploymentDetailQ.data.stage}</span>
+                    <span className="font-mono text-xs">targets {deploymentDetailQ.data.total_targets}</span>
+                    <span className="font-mono text-xs">healthy {deploymentDetailQ.data.healthy_targets}</span>
+                    <span className="font-mono text-xs">failed {deploymentDetailQ.data.failed_targets}</span>
+                    <span className="font-mono text-xs">deferred {deploymentDetailQ.data.deferred_targets}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Deployment: <span className="font-mono">{deploymentDetailQ.data.id}</span>
+                    {' · '}
+                    Manifest tag: <span className="font-mono">{deploymentDetailQ.data.manifest.git_tag}</span>
+                    {' · '}
+                    Updated: <span className="font-mono">{fmtDateTime(deploymentDetailQ.data.updated_at)}</span>
+                  </div>
+                  {deploymentDetailQ.data.halt_reason ? (
+                    <div className="text-xs text-destructive">
+                      Halt reason: {deploymentDetailQ.data.halt_reason}
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => deploymentActionMutation.mutate('pause')}
+                      disabled={
+                        inputsDisabled ||
+                        !otaUpdatesEnabled ||
+                        deploymentActionMutation.isPending ||
+                        deploymentDetailQ.data.status !== 'active'
+                      }
+                    >
+                      Pause
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => deploymentActionMutation.mutate('resume')}
+                      disabled={
+                        inputsDisabled ||
+                        !otaUpdatesEnabled ||
+                        deploymentActionMutation.isPending ||
+                        deploymentDetailQ.data.status !== 'paused'
+                      }
+                    >
+                      Resume
+                    </Button>
+                    <Input
+                      value={deploymentAbortReason}
+                      onChange={(e) => setDeploymentAbortReason(e.target.value)}
+                      placeholder="abort reason"
+                      disabled={inputsDisabled || !otaUpdatesEnabled}
+                    />
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => deploymentActionMutation.mutate('abort')}
+                      disabled={
+                        inputsDisabled ||
+                        !otaUpdatesEnabled ||
+                        deploymentActionMutation.isPending ||
+                        deploymentDetailQ.data.status === 'aborted' ||
+                        deploymentDetailQ.data.status === 'completed'
+                      }
+                    >
+                      Abort
+                    </Button>
+                  </div>
+                  <details className="text-xs text-muted-foreground">
+                    <summary className="cursor-pointer">Recent deployment events</summary>
+                    <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words">
+                      {JSON.stringify(
+                        (deploymentDetailQ.data as DeploymentDetailOut).events.slice(0, 30),
+                        null,
+                        2,
+                      )}
+                    </pre>
+                  </details>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </>

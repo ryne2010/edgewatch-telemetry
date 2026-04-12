@@ -360,6 +360,8 @@ export function DeviceDetailPage() {
   const [openingMediaId, setOpeningMediaId] = React.useState<string | null>(null)
   const [operationModeInput, setOperationModeInput] = React.useState<'active' | 'sleep' | 'disabled'>('active')
   const [sleepPollIntervalInput, setSleepPollIntervalInput] = React.useState<string>('604800')
+  const [runtimePowerModeInput, setRuntimePowerModeInput] = React.useState<'continuous' | 'eco' | 'deep_sleep'>('continuous')
+  const [deepSleepBackendInput, setDeepSleepBackendInput] = React.useState<'auto' | 'pi5_rtc' | 'external_supervisor' | 'none'>('auto')
   const [alertsMutePreset, setAlertsMutePreset] = React.useState<'none' | '24h' | '7d' | 'season'>('none')
   const [alertsMuteReason, setAlertsMuteReason] = React.useState<string>('')
   const [shutdownReasonInput, setShutdownReasonInput] = React.useState<string>('seasonal intermission')
@@ -505,6 +507,8 @@ export function DeviceDetailPage() {
       return api.deviceControls.updateOperation(deviceId, {
         operation_mode: operationModeInput,
         sleep_poll_interval_s: sleepPollInterval,
+        runtime_power_mode: runtimePowerModeInput,
+        deep_sleep_backend: deepSleepBackendInput,
       })
     },
     onSuccess: (out) => {
@@ -513,7 +517,7 @@ export function DeviceDetailPage() {
       qc.invalidateQueries({ queryKey: ['devicesSummary'] })
       toast({
         title: 'Operation mode updated',
-        description: `${out.operation_mode} (${out.sleep_poll_interval_s}s poll cadence when sleeping)`,
+        description: `${out.operation_mode} / ${out.runtime_power_mode} (${out.sleep_poll_interval_s}s sleep cadence)`,
         variant: 'success',
       })
     },
@@ -632,6 +636,8 @@ export function DeviceDetailPage() {
     if (!controls) return
     setOperationModeInput(controls.operation_mode)
     setSleepPollIntervalInput(String(controls.sleep_poll_interval_s))
+    setRuntimePowerModeInput(controls.runtime_power_mode)
+    setDeepSleepBackendInput(controls.deep_sleep_backend)
     setAlertsMuteReason(controls.alerts_muted_reason ?? '')
     setAlertsMutePreset('none')
   }, [controlsQ.data])
@@ -685,6 +691,9 @@ export function DeviceDetailPage() {
       'power_input_out_of_range',
       'power_unsustainable',
       'power_saver_active',
+      'power_runtime_mode',
+      'power_sleep_backend',
+      'network_duty_cycled',
     ].filter((k) => (contract ? Boolean(contract.metrics[k]) : true))
   }, [contract])
 
@@ -997,6 +1006,24 @@ export function DeviceDetailPage() {
                       <span className="font-mono text-xs">{deviceQ.data.sleep_poll_interval_s}s</span>
                     </div>
                     <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Runtime power mode</span>
+                      <Badge
+                        variant={
+                          deviceQ.data.runtime_power_mode === 'continuous'
+                            ? 'secondary'
+                            : deviceQ.data.runtime_power_mode === 'eco'
+                              ? 'warning'
+                              : 'destructive'
+                        }
+                      >
+                        {deviceQ.data.runtime_power_mode}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Deep-sleep backend</span>
+                      <span className="font-mono text-xs">{deviceQ.data.deep_sleep_backend}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">Alerts muted</span>
                       {deviceQ.data.alerts_muted_until ? (
                         <Badge variant="warning">{fmtDateTime(deviceQ.data.alerts_muted_until)}</Badge>
@@ -1087,6 +1114,43 @@ export function DeviceDetailPage() {
                         Sleep keeps telemetry active at this cadence. Default is 7 days (604800s).
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      <Label>Runtime power mode</Label>
+                      <SmallSelect
+                        value={runtimePowerModeInput}
+                        onChange={(v) => setRuntimePowerModeInput(v as 'continuous' | 'eco' | 'deep_sleep')}
+                        options={[
+                          { value: 'continuous', label: 'continuous (always on)' },
+                          { value: 'eco', label: 'eco (software duty cycling)' },
+                          { value: 'deep_sleep', label: 'deep_sleep (halt between polls)' },
+                        ]}
+                        disabled={updateOperationMutation.isPending}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Deep-sleep backend</Label>
+                      <SmallSelect
+                        value={deepSleepBackendInput}
+                        onChange={(v) =>
+                          setDeepSleepBackendInput(v as 'auto' | 'pi5_rtc' | 'external_supervisor' | 'none')
+                        }
+                        options={[
+                          { value: 'auto', label: 'auto (prefer supported backend)' },
+                          { value: 'pi5_rtc', label: 'pi5_rtc (Pi 5 onboard RTC)' },
+                          { value: 'external_supervisor', label: 'external_supervisor (Pi 4 power latch)' },
+                          { value: 'none', label: 'none (fall back to eco)' },
+                        ]}
+                        disabled={updateOperationMutation.isPending || runtimePowerModeInput !== 'deep_sleep'}
+                      />
+                    </div>
+                    <Callout title="Low-power behavior">
+                      <div>
+                        <span className="font-mono">eco</span> keeps Linux running but batches normal network activity to heartbeat windows and alert changes.
+                      </div>
+                      <div>
+                        <span className="font-mono">deep_sleep</span> applies commands and OTA on wake, not continuously. Pi 5 can use onboard RTC; Pi 4 needs optional supervisor hardware.
+                      </div>
+                    </Callout>
                     <Button
                       type="button"
                       variant="outline"

@@ -12,7 +12,7 @@ import { cn } from '../lib/utils'
 export type DataTableProps<T> = {
   data: T[]
   columns: ColumnDef<T, any>[]
-  height?: number
+  height?: number | string
   className?: string
   enableSorting?: boolean
   initialSorting?: SortingState

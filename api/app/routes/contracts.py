@@ -7,17 +7,33 @@ from ..config import settings
 from ..contracts import load_telemetry_contract
 from ..edge_policy import load_edge_policy
 from ..schemas import (
+    DeepSleepBackend,
     EdgePolicyAlertThresholdsOut,
     EdgePolicyCostCapsOut,
     EdgePolicyContractOut,
     EdgePolicyOperationDefaultsOut,
     EdgePolicyPowerManagementOut,
     EdgePolicyReportingOut,
+    RuntimePowerMode,
     TelemetryContractOut,
     TelemetryContractMetricOut,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["contracts"])
+
+
+def _normalized_runtime_power_mode(value: object) -> RuntimePowerMode:
+    text = str(value or "continuous").strip().lower()
+    if text in {"continuous", "eco", "deep_sleep"}:
+        return text  # type: ignore[return-value]
+    return "continuous"
+
+
+def _normalized_deep_sleep_backend(value: object) -> DeepSleepBackend:
+    text = str(value or "auto").strip().lower()
+    if text in {"auto", "pi5_rtc", "external_supervisor", "none"}:
+        return text  # type: ignore[return-value]
+    return "auto"
 
 
 @router.get(
@@ -165,6 +181,12 @@ def get_edge_policy_contract(
         ),
         operation_defaults=EdgePolicyOperationDefaultsOut(
             default_sleep_poll_interval_s=p.operation_defaults.default_sleep_poll_interval_s,
+            default_runtime_power_mode=_normalized_runtime_power_mode(
+                p.operation_defaults.default_runtime_power_mode
+            ),
+            default_deep_sleep_backend=_normalized_deep_sleep_backend(
+                p.operation_defaults.default_deep_sleep_backend
+            ),
             disable_requires_manual_restart=p.operation_defaults.disable_requires_manual_restart,
             admin_remote_shutdown_enabled=p.operation_defaults.admin_remote_shutdown_enabled,
             shutdown_grace_s_default=p.operation_defaults.shutdown_grace_s_default,

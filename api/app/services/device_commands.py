@@ -27,6 +27,20 @@ def _normalize_mode(value: object) -> str:
     return "active"
 
 
+def _normalize_runtime_power_mode(value: object) -> str:
+    mode = str(value or "continuous").strip().lower()
+    if mode in {"continuous", "eco", "deep_sleep"}:
+        return mode
+    return "continuous"
+
+
+def _normalize_deep_sleep_backend(value: object) -> str:
+    backend = str(value or "auto").strip().lower()
+    if backend in {"auto", "pi5_rtc", "external_supervisor", "none"}:
+        return backend
+    return "auto"
+
+
 def _normalize_opt_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -73,6 +87,10 @@ def command_payload_from_device(device: Device) -> dict[str, Any]:
         "sleep_poll_interval_s": int(
             getattr(device, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)
         ),
+        "runtime_power_mode": _normalize_runtime_power_mode(
+            getattr(device, "runtime_power_mode", "continuous")
+        ),
+        "deep_sleep_backend": _normalize_deep_sleep_backend(getattr(device, "deep_sleep_backend", "auto")),
         "shutdown_requested": False,
         "shutdown_grace_s": DEFAULT_SHUTDOWN_GRACE_S,
         "alerts_muted_until": muted_until.isoformat() if muted_until is not None else None,

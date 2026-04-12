@@ -3,6 +3,32 @@
 This repo is software-first, but the intended deployment target is an **edge node**
 installed near remote equipment (pumps/wells/engines) with intermittent connectivity.
 
+For the current v1 mic+power profile and per-node cost planning, start with:
+
+- `docs/BOM.md`
+
+Locked v1 field standard:
+
+- existing `Raspberry Pi 4B`
+- `Sixfab 4G/LTE Modem Kit`
+- modem option: `Telit LE910C4-NF (North America)`
+- `Hologram` physical SIM
+- `NowTH USB lavalier microphone` (`B0929CQSX4`) on a short external protected mount
+- `INA260`
+- fused `12V -> 5V` buck converter
+- weatherproof enclosure
+
+Platform note:
+
+- `Raspberry Pi 4B` and `Raspberry Pi 5` are the locked standard SBCs for the current build.
+- `Raspberry Pi Zero 2 W` is not part of the standard build and would require a separate constrained profile.
+- `Raspberry Pi Pico` is not compatible with the current Linux/Python agent runtime and would require
+  a separate firmware implementation.
+- For low-power behavior:
+  - Pi 4 supports `continuous` and `eco` without extra hardware
+  - Pi 4 true `deep_sleep` requires an optional external RTC/power-latch supervisor
+  - Pi 5 supports `continuous`, `eco`, and native `deep_sleep` via onboard RTC wakealarm
+
 This document proposes a **practical, readily-available hardware bill of materials**
 that matches the requested scope:
 
@@ -58,6 +84,13 @@ If you need lower power/cost:
 - Fusing + surge protection (especially near pumps / long sensor runs)
 - Optional: UPS HAT or small 12V SLA/LiFePO4 backup
 
+Solar sizing note for the current Pi + LTE profile:
+
+- `20W` is suitable for maintenance or low-duty/offseason operation.
+- `30W` is a bare-minimum dedicated-battery option in favorable sun conditions.
+- `50W` remains the recommended standalone year-round size for an always-on Pi + LTE node.
+- `20W-30W` becomes more plausible when the node uses `eco` aggressively or `deep_sleep` for seasonal deployments.
+
 ## Suggested bill of materials (per node)
 
 This list is intentionally "boring and available" — you can swap vendors, but keep
@@ -75,7 +108,8 @@ interfaces consistent (I2C + 4–20 mA/voltage into an ADC).
 
 Audio:
 
-- USB microphone or I2S microphone module supported by ALSA capture (`arecord`)
+- `NowTH USB lavalier microphone` (`B0929CQSX4`) on a short external protected mount
+- Do not rely on a loose microphone inside a sealed enclosure for outdoor threshold monitoring
 
 Digital (I2C):
 
@@ -127,6 +161,12 @@ Current default Raspberry Pi profile uses microphone-only telemetry:
 - Metric key: `microphone_level_db`
 - Capture backend: `arecord` (`alsa-utils`)
 - Alert threshold: `alert_thresholds.microphone_offline_db` (default `60`)
+- Current pilot hardware choice: `NowTH USB lavalier microphone` (`B0929CQSX4`)
+- Standard hardware posture:
+  - keep the main electronics enclosure sealed
+  - route the mic on a short cable to a sheltered external mount
+  - use a hood/downward-facing mount plus strain relief and drip loop
+  - avoid long exposed USB runs
 
 ### Power management (solar + 12V battery)
 
@@ -149,7 +189,10 @@ Default policy profile (12V lead-acid):
 Operational expectation:
 
 - First response is `warn + degrade` (longer sample cadence, reduced heartbeat frequency, optional media disable).
-- No automatic power-off/shutdown is performed by the agent in v1.
+- Default `continuous` and `eco` modes do not power off the board between samples.
+- Optional `deep_sleep` can halt/power off between samples when supported:
+  - Pi 5 via onboard RTC wakealarm
+  - Pi 4 via external supervisor hardware
 - Admin-only one-shot shutdown intent is available, but OS shutdown still requires local opt-in:
   `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`.
 
@@ -254,7 +297,11 @@ Practical selection guidance:
 - Choose **external router** when you need stronger remote network management, dual-SIM/failover, or Wi-Fi/LAN sharing.
 
 v1 baseline:
-- USB modem + nano-SIM is the default recommendation for easiest BYO carrier deployment.
+- `Sixfab 4G/LTE Modem Kit` with `Telit LE910C4-NF` is the default recommended modem stack
+  for North America deployments.
+- `Hologram` physical SIM is the default recommended provider for low-to-moderate telemetry usage.
+- A generic `SIM7600`-class modem can work for pilot use, but the Sixfab kit remains the preferred
+  production path for cleaner Pi integration and field supportability.
 - eSIM is optional and depends on modem firmware + carrier eUICC support.
 
 Provider readiness checklist:

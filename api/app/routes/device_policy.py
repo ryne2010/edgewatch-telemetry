@@ -11,16 +11,20 @@ from ..edge_policy import load_edge_policy
 from ..db import db_session
 from ..models import Device
 from ..schemas import (
+    DeepSleepBackend,
     DevicePolicyOut,
     EdgePolicyAlertThresholdsOut,
     EdgePolicyCostCapsOut,
     OperationMode,
     EdgePolicyPowerManagementOut,
+    PendingUpdateCommandOut,
     PendingControlCommandOut,
     EdgePolicyReportingOut,
+    RuntimePowerMode,
 )
 from ..security import require_device_auth
 from ..services.device_commands import control_command_etag_fragment, get_pending_device_command
+from ..services.device_updates import get_pending_update_command, update_command_etag_fragment
 
 
 router = APIRouter(prefix="/api/v1", tags=["device-policy"])
@@ -40,6 +44,26 @@ def _normalized_operation_mode(value: object) -> OperationMode:
     if mode == "disabled":
         return "disabled"
     return "active"
+
+
+def _normalized_runtime_power_mode(value: object) -> RuntimePowerMode:
+    mode = str(value or "continuous").strip().lower()
+    if mode == "eco":
+        return "eco"
+    if mode == "deep_sleep":
+        return "deep_sleep"
+    return "continuous"
+
+
+def _normalized_deep_sleep_backend(value: object) -> DeepSleepBackend:
+    backend = str(value or "auto").strip().lower()
+    if backend == "pi5_rtc":
+        return "pi5_rtc"
+    if backend == "external_supervisor":
+        return "external_supervisor"
+    if backend == "none":
+        return "none"
+    return "auto"
 
 
 def _parse_opt_utc(value: object) -> datetime | None:
@@ -123,6 +147,30 @@ def _safe_shutdown_grace_s(value: object) -> int:
     return parsed
 
 
+def _safe_health_timeout_s(value: object) -> int:
+    if isinstance(value, bool):
+        parsed = int(value)
+    elif isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        parsed = int(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return 300
+        try:
+            parsed = int(text)
+        except ValueError:
+            return 300
+    else:
+        return 300
+    if parsed < 10:
+        return 10
+    if parsed > 24 * 3600:
+        return 24 * 3600
+    return parsed
+
+
 def _pending_command_out(command) -> PendingControlCommandOut | None:
     if command is None:
         return None
@@ -133,12 +181,38 @@ def _pending_command_out(command) -> PendingControlCommandOut | None:
         expires_at=command.expires_at,
         operation_mode=_normalized_operation_mode(payload.get("operation_mode")),
         sleep_poll_interval_s=_safe_sleep_interval(payload.get("sleep_poll_interval_s", 7 * 24 * 3600)),
+        runtime_power_mode=_normalized_runtime_power_mode(payload.get("runtime_power_mode")),
+        deep_sleep_backend=_normalized_deep_sleep_backend(payload.get("deep_sleep_backend")),
         shutdown_requested=_safe_shutdown_requested(payload.get("shutdown_requested")),
         shutdown_grace_s=_safe_shutdown_grace_s(payload.get("shutdown_grace_s", 30)),
         alerts_muted_until=_parse_opt_utc(payload.get("alerts_muted_until")),
         alerts_muted_reason=(
             str(payload.get("alerts_muted_reason")).strip() if payload.get("alerts_muted_reason") else None
         ),
+    )
+
+
+def _pending_update_command_out(command: dict[str, object] | None) -> PendingUpdateCommandOut | None:
+    if not isinstance(command, dict):
+        return None
+    issued_at = command.get("issued_at")
+    expires_at = command.get("expires_at")
+    if not isinstance(issued_at, datetime) or not isinstance(expires_at, datetime):
+        return None
+    rollback_raw = command.get("rollback_to_tag")
+    rollback_to_tag = rollback_raw.strip() if isinstance(rollback_raw, str) and rollback_raw.strip() else None
+    return PendingUpdateCommandOut(
+        deployment_id=str(command.get("deployment_id") or ""),
+        manifest_id=str(command.get("manifest_id") or ""),
+        git_tag=str(command.get("git_tag") or ""),
+        commit_sha=str(command.get("commit_sha") or ""),
+        issued_at=issued_at,
+        expires_at=expires_at,
+        signature=str(command.get("signature") or ""),
+        signature_key_id=str(command.get("signature_key_id") or ""),
+        rollback_to_tag=rollback_to_tag,
+        health_timeout_s=_safe_health_timeout_s(command.get("health_timeout_s")),
+        power_guard_required=bool(command.get("power_guard_required", True)),
     )
 
 
@@ -188,16 +262,26 @@ def get_device_policy(
         getattr(device, "sleep_poll_interval_s", policy.operation_defaults.default_sleep_poll_interval_s)
         or policy.operation_defaults.default_sleep_poll_interval_s
     )
+    runtime_power_mode = _normalized_runtime_power_mode(
+        getattr(device, "runtime_power_mode", policy.operation_defaults.default_runtime_power_mode)
+    )
+    deep_sleep_backend = _normalized_deep_sleep_backend(
+        getattr(device, "deep_sleep_backend", policy.operation_defaults.default_deep_sleep_backend)
+    )
     if sleep_poll_interval_s <= 0:
         sleep_poll_interval_s = policy.operation_defaults.default_sleep_poll_interval_s
 
     try:
         with db_session() as session:
             command_fragment = control_command_etag_fragment(session, device_id=device.device_id)
+            update_fragment = update_command_etag_fragment(session, device_id=device.device_id)
             pending_command = get_pending_device_command(session, device_id=device.device_id)
+            pending_update_command = get_pending_update_command(session, device_id=device.device_id)
     except Exception:
         command_fragment = "none"
+        update_fragment = "none"
         pending_command = None
+        pending_update_command = None
 
     etag = _make_etag(
         policy.sha256,
@@ -205,10 +289,13 @@ def get_device_policy(
         str(device.offline_after_s),
         f"operation_mode={operation_mode}",
         f"sleep_poll_interval_s={sleep_poll_interval_s}",
+        f"runtime_power_mode={runtime_power_mode}",
+        f"deep_sleep_backend={deep_sleep_backend}",
         f"wp_low={wp_low}",
         f"batt_low={batt_low}",
         f"sig_low={sig_low}",
         f"control_command={command_fragment}",
+        f"update_command={update_fragment}",
     )
 
     if request.headers.get("if-none-match") == etag:
@@ -234,6 +321,8 @@ def get_device_policy(
         offline_after_s=device.offline_after_s,
         operation_mode=operation_mode,
         sleep_poll_interval_s=sleep_poll_interval_s,
+        runtime_power_mode=runtime_power_mode,
+        deep_sleep_backend=deep_sleep_backend,
         disable_requires_manual_restart=policy.operation_defaults.disable_requires_manual_restart,
         reporting=EdgePolicyReportingOut(
             sample_interval_s=policy.reporting.sample_interval_s,
@@ -291,4 +380,5 @@ def get_device_policy(
             media_disabled_in_saver=policy.power_management.media_disabled_in_saver,
         ),
         pending_control_command=_pending_command_out(pending_command),
+        pending_update_command=_pending_update_command_out(pending_update_command),
     )

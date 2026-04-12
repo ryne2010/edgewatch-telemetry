@@ -8,9 +8,8 @@ on:
         required: true
         default: "dev"
       image_tag:
-        description: "Optional Artifact Registry image tag to pin for terraform apply (defaults to latest existing tag)."
-        required: false
-        default: ""
+        description: "Artifact Registry image tag to pin for terraform apply."
+        required: true
 
 permissions:
   contents: read
@@ -93,29 +92,78 @@ jobs:
         run: |
           set -euo pipefail
 
+          read_tfvars_string() {
+            python3 - "$TF_DIR/terraform.tfvars" "$1" <<'PY'
+            import re
+            import sys
+
+            path, key = sys.argv[1:]
+            pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*"([^"]*)"\s*$')
+            value = ""
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    match = pattern.match(line)
+                    if match:
+                        value = match.group(1)
+                        break
+            print(value)
+            PY
+          }
+
+          upsert_tfvars_string() {
+            python3 - "$TF_DIR/terraform.tfvars" "$1" "$2" <<'PY'
+            import re
+            import sys
+
+            path, key, value = sys.argv[1:]
+            pattern = re.compile(rf'^(\s*{re.escape(key)}\s*=\s*).*$')
+            with open(path, encoding="utf-8") as handle:
+                lines = handle.readlines()
+
+            replacement = f'{key} = "{value}"\n'
+            updated = False
+            for index, line in enumerate(lines):
+                if pattern.match(line):
+                    lines[index] = replacement
+                    updated = True
+                    break
+
+            if not updated:
+                if lines and lines[-1].strip():
+                    lines.append("\n")
+                lines.append(replacement)
+
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.writelines(lines)
+            PY
+          }
+
           TF_STATE_BUCKET_EFFECTIVE="${TF_STATE_BUCKET:-${PROJECT_ID}-tfstate}"
           TF_STATE_PREFIX_EFFECTIVE="${TF_STATE_PREFIX:-edgewatch/${ENV}}"
           AR_REPO_EFFECTIVE="${AR_REPO:-edgewatch}"
-          IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/edgewatch-api"
-
           TF_BACKEND_HCL_EFFECTIVE="backend.hcl"
           TAG_EFFECTIVE="${IMAGE_TAG_INPUT}"
-
-          # Apply should reference a real image tag; default to latest pushed tag in Artifact Registry.
-          if [ -z "${TAG_EFFECTIVE}" ]; then
-            LATEST_TAG_REF="$(gcloud artifacts docker tags list "${IMAGE_BASE}" --sort-by=~CREATE_TIME --limit=1 --format='value(tag)' || true)"
-            TAG_EFFECTIVE="${LATEST_TAG_REF##*:}"
-          fi
+          IMAGE_NAME_EFFECTIVE="$(read_tfvars_string image_name)"
 
           if [ -z "${TAG_EFFECTIVE}" ]; then
-            echo "::error::No image tags found for ${IMAGE_BASE}. Run Deploy to GCP first (or pass image_tag)."
+            echo "::error::image_tag is required."
             exit 1
           fi
+
+          IMAGE_NAME_EFFECTIVE="${IMAGE_NAME_EFFECTIVE:-edgewatch-api}"
+          IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO_EFFECTIVE}/${IMAGE_NAME_EFFECTIVE}"
 
           if ! gcloud artifacts docker images describe "${IMAGE_BASE}:${TAG_EFFECTIVE}" >/dev/null 2>&1; then
             echo "::error::Resolved image not found: ${IMAGE_BASE}:${TAG_EFFECTIVE}"
             exit 1
           fi
+
+          export IMAGE_NAME_EFFECTIVE TAG_EFFECTIVE
+
+          upsert_tfvars_string image ""
+          upsert_tfvars_string image_name "${IMAGE_NAME_EFFECTIVE}"
+          upsert_tfvars_string image_tag "${TAG_EFFECTIVE}"
+          gcloud storage cp "${TF_DIR}/terraform.tfvars" "${GCP_TF_CONFIG_GCS_PATH}/terraform.tfvars"
 
           echo "Using image tag for terraform apply: ${TAG_EFFECTIVE}"
 
@@ -124,4 +172,5 @@ jobs:
             TF_STATE_PREFIX="${TF_STATE_PREFIX_EFFECTIVE}" \
             AR_REPO="${AR_REPO_EFFECTIVE}" \
             TF_BACKEND_HCL="${TF_BACKEND_HCL_EFFECTIVE}" \
+            IMAGE_NAME="${IMAGE_NAME_EFFECTIVE}" \
             TAG="${TAG_EFFECTIVE}"

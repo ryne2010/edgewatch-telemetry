@@ -29,6 +29,7 @@ from .routes.admin import router as admin_router
 from .routes.contracts import router as contracts_router
 from .routes.device_policy import router as device_policy_router
 from .routes.device_commands import router as device_commands_router
+from .routes.device_updates import router as device_updates_router
 from .routes.device_controls import router as device_controls_router
 from .routes.media import router as media_router
 from .routes.pubsub_worker import router as pubsub_worker_router
@@ -128,6 +129,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
             "routes": {
                 "ingest": bool(settings.enable_ingest_routes),
                 "read": bool(settings.enable_read_routes),
+                "ota_updates": bool(settings.enable_ota_updates),
             },
             "ingest": {"pipeline_mode": str(settings.ingest_pipeline_mode)},
             "analytics_export": {"enabled": bool(settings.analytics_export_enabled)},
@@ -292,6 +294,8 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
         app.include_router(ingest_router)
         app.include_router(device_policy_router)
         app.include_router(device_commands_router)
+        if settings.enable_ota_updates:
+            app.include_router(device_updates_router)
         app.include_router(media_router)
         app.include_router(pubsub_worker_router)
     else:

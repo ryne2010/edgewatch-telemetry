@@ -28,6 +28,8 @@ class AdminDeviceUpdate(BaseModel):
 
 
 OperationMode = Literal["active", "sleep", "disabled"]
+RuntimePowerMode = Literal["continuous", "eco", "deep_sleep"]
+DeepSleepBackend = Literal["auto", "pi5_rtc", "external_supervisor", "none"]
 DeviceAccessRole = Literal["viewer", "operator", "owner"]
 DeviceStatus = Literal["online", "offline", "unknown", "sleep", "disabled"]
 
@@ -41,6 +43,8 @@ class DeviceOut(BaseModel):
     enabled: bool
     operation_mode: OperationMode = "active"
     sleep_poll_interval_s: int = 7 * 24 * 3600
+    runtime_power_mode: RuntimePowerMode = "continuous"
+    deep_sleep_backend: DeepSleepBackend = "auto"
     alerts_muted_until: Optional[datetime] = None
     alerts_muted_reason: Optional[str] = None
 
@@ -62,6 +66,8 @@ class DeviceSummaryOut(BaseModel):
     enabled: bool
     operation_mode: OperationMode = "active"
     sleep_poll_interval_s: int = 7 * 24 * 3600
+    runtime_power_mode: RuntimePowerMode = "continuous"
+    deep_sleep_backend: DeepSleepBackend = "auto"
     alerts_muted_until: Optional[datetime] = None
     alerts_muted_reason: Optional[str] = None
 
@@ -200,6 +206,8 @@ class DeviceControlsOut(BaseModel):
     device_id: str
     operation_mode: OperationMode
     sleep_poll_interval_s: int
+    runtime_power_mode: RuntimePowerMode = "continuous"
+    deep_sleep_backend: DeepSleepBackend = "auto"
     disable_requires_manual_restart: bool = True
     alerts_muted_until: Optional[datetime] = None
     alerts_muted_reason: Optional[str] = None
@@ -213,6 +221,8 @@ class DeviceControlsOut(BaseModel):
 class DeviceOperationControlUpdateIn(BaseModel):
     operation_mode: OperationMode
     sleep_poll_interval_s: Optional[int] = Field(None, ge=60, le=60 * 60 * 24 * 30)
+    runtime_power_mode: Optional[RuntimePowerMode] = None
+    deep_sleep_backend: Optional[DeepSleepBackend] = None
 
 
 class DeviceAlertsControlUpdateIn(BaseModel):
@@ -369,6 +379,8 @@ class EdgePolicyPowerManagementOut(BaseModel):
 
 class EdgePolicyOperationDefaultsOut(BaseModel):
     default_sleep_poll_interval_s: int
+    default_runtime_power_mode: RuntimePowerMode = "continuous"
+    default_deep_sleep_backend: DeepSleepBackend = "auto"
     disable_requires_manual_restart: bool
     admin_remote_shutdown_enabled: bool = True
     shutdown_grace_s_default: int = 30
@@ -411,10 +423,26 @@ class PendingControlCommandOut(BaseModel):
     expires_at: datetime
     operation_mode: OperationMode
     sleep_poll_interval_s: int
+    runtime_power_mode: RuntimePowerMode = "continuous"
+    deep_sleep_backend: DeepSleepBackend = "auto"
     shutdown_requested: bool = False
     shutdown_grace_s: int = 30
     alerts_muted_until: Optional[datetime] = None
     alerts_muted_reason: Optional[str] = None
+
+
+class PendingUpdateCommandOut(BaseModel):
+    deployment_id: str
+    manifest_id: str
+    git_tag: str
+    commit_sha: str
+    issued_at: datetime
+    expires_at: datetime
+    signature: str
+    signature_key_id: str
+    rollback_to_tag: Optional[str] = None
+    health_timeout_s: int
+    power_guard_required: bool
 
 
 class DeviceCommandAckOut(BaseModel):
@@ -435,6 +463,8 @@ class DevicePolicyOut(BaseModel):
     offline_after_s: int
     operation_mode: OperationMode = "active"
     sleep_poll_interval_s: int = 7 * 24 * 3600
+    runtime_power_mode: RuntimePowerMode = "continuous"
+    deep_sleep_backend: DeepSleepBackend = "auto"
     disable_requires_manual_restart: bool = True
 
     reporting: EdgePolicyReportingOut
@@ -443,3 +473,128 @@ class DevicePolicyOut(BaseModel):
     cost_caps: EdgePolicyCostCapsOut
     power_management: EdgePolicyPowerManagementOut
     pending_control_command: Optional[PendingControlCommandOut] = None
+    pending_update_command: Optional[PendingUpdateCommandOut] = None
+
+
+class ReleaseManifestCreateIn(BaseModel):
+    git_tag: str = Field(..., min_length=1, max_length=128)
+    commit_sha: str = Field(..., min_length=7, max_length=64)
+    signature: str = Field(..., min_length=1, max_length=8192)
+    signature_key_id: str = Field(..., min_length=1, max_length=64)
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    status: str = Field("active", min_length=1, max_length=32)
+
+
+class ReleaseManifestOut(BaseModel):
+    id: str
+    git_tag: str
+    commit_sha: str
+    signature: str
+    signature_key_id: str
+    constraints: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str
+    created_at: datetime
+    status: str
+
+
+class DeploymentTargetSelectorIn(BaseModel):
+    mode: Literal["all", "cohort", "labels", "explicit_ids"] = "all"
+    cohort: Optional[str] = Field(None, min_length=1, max_length=128)
+    labels: Dict[str, str] = Field(default_factory=dict)
+    device_ids: List[str] = Field(default_factory=list, max_length=5000)
+
+
+class DeploymentCreateIn(BaseModel):
+    manifest_id: str = Field(..., min_length=1, max_length=36)
+    target_selector: Dict[str, Any] = Field(default_factory=lambda: {"mode": "all"})
+    rollout_stages_pct: List[int] = Field(
+        default_factory=lambda: [1, 10, 50, 100], min_length=1, max_length=10
+    )
+    failure_rate_threshold: float = Field(0.2, ge=0.0, le=1.0)
+    no_quorum_timeout_s: int = Field(1800, ge=60, le=7 * 24 * 3600)
+    health_timeout_s: int = Field(300, ge=10, le=24 * 3600)
+    command_ttl_s: int = Field(180 * 24 * 3600, ge=60, le=400 * 24 * 3600)
+    power_guard_required: bool = True
+    rollback_to_tag: Optional[str] = Field(None, min_length=1, max_length=128)
+
+
+class DeploymentTargetOut(BaseModel):
+    device_id: str
+    stage_assigned: int
+    status: str
+    last_report_at: Optional[datetime] = None
+    failure_reason: Optional[str] = None
+    report_details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DeploymentEventOut(BaseModel):
+    id: str
+    deployment_id: str
+    event_type: str
+    device_id: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class DeploymentOut(BaseModel):
+    id: str
+    manifest_id: str
+    strategy: Dict[str, Any] = Field(default_factory=dict)
+    stage: int
+    status: str
+    halt_reason: Optional[str] = None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    failure_rate_threshold: float
+    no_quorum_timeout_s: int
+    command_expires_at: datetime
+    power_guard_required: bool
+    health_timeout_s: int
+    rollback_to_tag: Optional[str] = None
+    target_selector: Dict[str, Any] = Field(default_factory=dict)
+    total_targets: int = 0
+    queued_targets: int = 0
+    in_progress_targets: int = 0
+    deferred_targets: int = 0
+    healthy_targets: int = 0
+    failed_targets: int = 0
+    rolled_back_targets: int = 0
+
+
+class DeploymentDetailOut(DeploymentOut):
+    manifest: ReleaseManifestOut
+    targets: List[DeploymentTargetOut] = Field(default_factory=list)
+    events: List[DeploymentEventOut] = Field(default_factory=list)
+
+
+class DeploymentActionOut(BaseModel):
+    id: str
+    status: str
+    stage: int
+    halt_reason: Optional[str] = None
+    updated_at: datetime
+
+
+class DeviceUpdateReportIn(BaseModel):
+    state: Literal[
+        "downloading",
+        "verifying",
+        "applying",
+        "restarting",
+        "healthy",
+        "rolled_back",
+        "failed",
+        "deferred",
+    ]
+    reason_code: Optional[str] = Field(None, min_length=1, max_length=128)
+    reason_detail: Optional[str] = Field(None, min_length=1, max_length=1024)
+
+
+class DeviceUpdateReportOut(BaseModel):
+    deployment_id: str
+    device_id: str
+    status: str
+    stage: int
+    deployment_status: str
+    updated_at: datetime

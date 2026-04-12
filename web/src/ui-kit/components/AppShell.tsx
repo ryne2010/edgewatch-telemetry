@@ -112,7 +112,7 @@ export function AppShell(props: AppShellProps) {
   }, [props.nav, props.adminEnabled, adminAccess])
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="h-screen overflow-hidden bg-background text-foreground">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:border focus:bg-background focus:px-3 focus:py-2"
@@ -120,7 +120,7 @@ export function AppShell(props: AppShellProps) {
         Skip to content
       </a>
 
-      <div className="flex min-h-screen">
+      <div className="flex h-full overflow-hidden">
         {/* Desktop sidebar */}
         <aside className="sticky top-0 hidden h-screen w-64 flex-col border-r bg-card lg:flex">
           <div className="flex items-center gap-2 px-4 py-4">
@@ -180,7 +180,7 @@ export function AppShell(props: AppShellProps) {
         </aside>
 
         {/* Main column */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* Mobile header */}
           <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur lg:hidden">
             <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
@@ -282,7 +282,7 @@ export function AppShell(props: AppShellProps) {
             </div>
           ) : null}
 
-          <main id="main" className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
+          <main id="main" className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-y-auto px-4 py-6">
             {props.children}
           </main>
 

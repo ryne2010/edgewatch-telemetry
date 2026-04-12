@@ -395,11 +395,11 @@ make migrate-gcp ENV=dev
 
 ## GitHub Actions protocol (team-ready)
 
-Use these manual workflows:
+Use these workflows:
 
 - `.github/workflows/gcp-terraform-plan.yml`
-- `.github/workflows/terraform-apply-gcp.yml`
-- `.github/workflows/deploy-gcp.yml`
+- `.github/workflows/terraform-apply-gcp.yml` (manual apply; requires `image_tag`)
+- `.github/workflows/deploy-gcp.yml` (path-filtered push-to-`main` plus manual safe deploy)
 - `.github/workflows/terraform-drift.yml`
 
 Required GitHub variables:
@@ -415,3 +415,5 @@ Recommended GitHub Environment variable (`dev`, `stage`, `prod`):
 
 When `GCP_TF_CONFIG_GCS_PATH` is set, workflows automatically pull
 `backend.hcl` + `terraform.tfvars` from that GCS path before Terraform runs.
+Apply/deploy workflows also push the updated `terraform.tfvars` back after pinning the selected
+`image_name` and `image_tag`.

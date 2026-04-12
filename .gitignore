@@ -63,3 +63,4 @@ infra/gcp/cloud_run_demo/terraform.tfvars
 .DS_Store
 
 .history
+.omx/

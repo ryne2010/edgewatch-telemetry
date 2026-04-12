@@ -4,6 +4,10 @@ locals {
     env = var.env
   }
 
+  # Prefer persisting image_tag in the shared config bundle and derive the URI.
+  # A full image URI remains available as an escape hatch for digest pinning.
+  image = length(trimspace(var.image)) > 0 ? trimspace(var.image) : "${var.region}-docker.pkg.dev/${var.project_id}/${var.artifact_repo_name}/${var.image_name}:${var.image_tag}"
+
   admin_service_name_effective = coalesce(var.admin_service_name, "${var.service_name}-admin")
   dashboard_service_name_effective = coalesce(
     var.dashboard_service_name,
@@ -244,7 +248,7 @@ module "cloud_run" {
   project_id            = var.project_id
   region                = var.region
   service_name          = var.service_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   cpu           = var.service_cpu
@@ -277,7 +281,7 @@ module "cloud_run_admin" {
   project_id            = var.project_id
   region                = var.region
   service_name          = local.admin_service_name_effective
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   allow_unauthenticated = var.admin_allow_unauthenticated
@@ -323,7 +327,7 @@ module "cloud_run_dashboard" {
   project_id            = var.project_id
   region                = var.region
   service_name          = local.dashboard_service_name_effective
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   allow_unauthenticated = var.dashboard_allow_unauthenticated

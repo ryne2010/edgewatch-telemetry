@@ -1,5 +1,369 @@
 # Change Summary
 
+## Summary metric cap + local env drift fixes (2026-04-04)
+
+### What changed
+
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/devices.py` so `/api/v1/devices/summary` applies `limit_metrics` after metric de-dupe and key validation instead of counting raw query params first.
+- Extended `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts` to support an explicit `limitMetrics` option for summary requests.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx` to keep its combined vitals + location metric list in one constant and pass the matching summary cap to the API.
+- Added `/Users/ryneschroder/Developer/git/edgewatch-telemetry/scripts/check_demo_env_sync.py` and wired it into `make up`, `make dev`, and `make simulate` in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile` so preserved `.env` files now emit a note when their tracked demo defaults differ from the current examples.
+- Added regression coverage in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_summary_routes.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_demo_env_sync.py`
+
+### Why it changed
+
+- The dashboard had started requesting 26 summary metrics while the route default cap remained 20, which could fail a fresh summary fetch.
+- The route also counted duplicate and invalid metric keys against the cap, so callers could hit the limit unnecessarily.
+- Local Make targets were silently preserving stale demo `.env` values, which is how the old `demo-well-001` simulator mismatch slipped through.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Existing local `.env` overrides are still preserved intentionally; the new behavior is visibility, not forced replacement.
+- Any future page that requests more than the default 20 summary metrics still needs to pass an explicit `limitMetrics` value.
+
+## Devices page vitals request the displayed metrics (2026-04-03)
+
+### What changed
+
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx` so the Devices page summary query requests the same telemetry keys that the Vitals column renders:
+  - water pressure
+  - oil pressure
+  - oil level
+  - drip oil level
+  - oil life
+  - temperature
+  - humidity
+  - battery
+  - RSSI
+- Tightened the Vitals pill formatting so truly missing values render as `—` without a dangling unit suffix.
+
+### Why it changed
+
+- The page was only requesting microphone and power metrics, so the Vitals pills had labels but no values.
+- Matching the requested summary metrics to the rendered pills makes the fleet table show the expected latest values from each device.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The Devices page now requests more summary keys per device, but it remains within the backend request cap and only fetches the latest telemetry point per device.
+
+## Devices page fleet card fills available height (2026-04-03)
+
+### What changed
+
+- Updated the app shell main content region in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx` to be a vertical flex container with bounded overflow sizing.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx` so the page, fleet card, and card content all participate in a full-height flex layout.
+- Extended `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/DataTable.tsx` to accept CSS string heights, then switched the Devices fleet table from a fixed `560px` height to `100%`.
+- Followed up with an explicit viewport-based minimum height and table height on `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx` so the Fleet card grows visibly on tall screens instead of depending only on inherited flex height.
+
+### Why it changed
+
+- The fleet card on the Devices page was vertically compressed because the table height was hardcoded and the page/card containers did not stretch to the available viewport height.
+- The final layout uses a viewport-based height target so the Fleet card grows predictably while keeping the table itself scrollable.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The height API for the shared `DataTable` component is now slightly broader (`number | string`), but existing callers still use the same numeric behavior.
+
+## Named sample fleet defaults for local/demo data (2026-04-03)
+
+### What changed
+
+- Replaced the default `demo-well-*` sample fleet seed with a shared named device list:
+  - `baxter-1`
+  - `sprinklers-west`
+  - `sprinklers-middle`
+  - `sprinklers-tw`
+  - `sprinklers-south`
+  - `lms-1` through `lms-4`
+  - `deen-1`
+  - `deen-2`
+- Increased the default local/demo fleet size from `3` to `11` so the entire named sample fleet is bootstrapped and simulated without extra env overrides.
+- Updated the shared demo-fleet helper in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/demo_fleet.py` so API bootstrap, Cloud simulation, and local Makefile simulation all resolve the same device IDs.
+- Updated local/demo defaults and examples in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/Makefile`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/config.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/infra/gcp/cloud_run_demo/variables.tf`
+  - agent defaults in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/simulator.py`, `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`, `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/replay.py`, and `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/tools/camera.py`
+- Added regression coverage for named fleet derivation in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_demo_fleet_derivation.py`.
+
+### Why it changed
+
+- The previous sample IDs read like placeholder fixtures rather than a plausible field fleet.
+- The local/demo experience now starts with the full realistic sample fleet without changing the existing fallback derivation behavior for custom numeric templates.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Existing local databases may still contain older `demo-well-*` rows; the new defaults affect new bootstrap/simulation runs, not historical cleanup.
+- Custom demo seeds that rely on `...001` suffix derivation continue to work unchanged.
+
+## Low-power runtime modes: eco + optional deep sleep (2026-03-17)
+
+### What changed
+
+- Extended per-device controls, policy payloads, and device outputs with:
+  - `runtime_power_mode` (`continuous|eco|deep_sleep`)
+  - `deep_sleep_backend` (`auto|pi5_rtc|external_supervisor|none`)
+- Added additive device schema support and migration:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0015_device_low_power_runtime.py`
+- Extended edge policy defaults:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/edge_policy/v1.yaml`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/edge_policy.py`
+- Extended telemetry/runtime surfaces with:
+  - `power_runtime_mode`
+  - `power_sleep_backend`
+  - `wake_reason`
+  - `network_duty_cycled`
+  - in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/contracts/telemetry/v1.yaml`
+- Implemented agent low-power behavior in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`:
+  - `continuous`: unchanged always-on behavior
+  - `eco`: software-only duty cycling of network syncs, local buffering of routine telemetry, platform radio/display reductions when cellular is used
+  - `deep_sleep`: optional halt path using Pi 5 RTC wakealarm or Pi 4 external supervisor, with automatic fallback to `eco` when unsupported
+- Updated UI control surfaces and visibility:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/DeviceDetail.tsx`
+- Updated deployment, hardware, BOM, and tutorial docs to describe:
+  - Raspberry Pi OS Lite as the standard OS
+  - Ubuntu as best-effort only
+  - standard always-on, `eco`, and hardware-assisted `deep_sleep` deployment tiers
+
+### Why it changed
+
+- The previous runtime only idled in-process between samples. That saved little board power because Linux and the modem stayed fully on.
+- The product needed a software-first low-power mode that works on existing Pi 4 hardware, plus an optional true deep-sleep path without making extra hardware mandatory.
+
+### Validation
+
+- `uv run pytest tests/test_agent_command_delivery.py tests/test_agent_runtime_power_saver.py tests/test_agent_device_policy.py tests/test_device_policy.py tests/test_migrations_sqlite.py` ✅
+
+### Risks / rollout notes
+
+- `eco` only saves meaningful energy if heartbeat cadence is longer than sample cadence or if alert transitions are infrequent.
+- `deep_sleep` changes command/OTA immediacy: durable commands are applied on wake windows, not continuously.
+- Pi 4 true `deep_sleep` still depends on external supervisor hardware and must be field-tested before broad rollout.
+
+### Lessons learned
+
+- The main architectural boundary is not “sampling” vs “not sampling”; it is “record locally” vs “turn the network on.”
+- Low-power claims on Linux need to be explicit about what remains powered. `time.sleep()` is not a hardware sleep strategy.
+
+## Locked v1 cellular hardware standard + checkout list (2026-03-15)
+
+### What changed
+
+- Locked the recommended v1 field hardware stack in docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/BOM.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+- Standardized recommendation:
+  - existing `Raspberry Pi 4B`
+  - `Sixfab 4G/LTE Modem Kit`
+  - `Telit LE910C4-NF (North America)`
+  - `Hologram` physical SIM
+  - `USB microphone`
+  - `INA260`
+  - fused `12V -> 5V` buck converter
+  - weatherproof enclosure
+- Added a concrete `Qty 1` pilot checkout list and updated cost band guidance.
+- Locked the low-cost solar add-on choice for standalone nodes:
+  - `Newpowa 50W` panel
+  - `Newpowa 10A PWM` controller
+
+### Why it changed
+
+- The repo needed one explicit production-standard cellular stack rather than a menu of plausible modem options.
+- The user is preparing to purchase hardware and needs a concrete pilot bill of materials.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+
+### Lessons learned
+
+- For this codebase, hardware choice should follow the runtime assumptions first:
+  Linux modem tooling, Python agent behavior, and OTA lifecycle matter more than radio cost alone.
+- A GPIO/HAT modem stack pairs more cleanly with a USB microphone than with another Pi HAT audio path.
+
+## Launch readiness + field BOM addition (2026-02-27)
+
+### What changed
+
+- Added dedicated bill-of-materials doc for the active v1 hardware profile:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/BOM.md`
+  - covers incremental per-node hardware, cost bands, data-plan sizing, and BYO carrier prerequisites
+- Linked BOM from startup and hardware docs:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/START_HERE.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/HARDWARE.md`
+
+### Why it changed
+
+- Field setup required a single purchase-and-assembly reference for SD flash to first telemetry,
+  scoped to the current microphone+power runtime profile.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`188 passed`)
+- `pre-commit run --all-files` ✅
+
+### Lessons learned
+
+- A focused BOM file reduces ambiguity compared to a broad hardware catalog when preparing first field installs.
+- Separating "incremental spend" from "already-owned hardware" makes planning faster and avoids overbuying.
+
+## OTA admin UI + launch checklist polish (2026-02-27)
+
+### What changed
+
+- Added OTA admin UI client/types/endpoints in:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx`
+- New UI capability:
+  - create/list release manifests
+  - create deployments with selector/stage config
+  - lookup deployment detail with pause/resume/abort controls
+  - show deployment counters and recent events
+- Added field launch tutorial:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/RPI_FLASH_ASSEMBLE_LAUNCH_CHECKLIST.md`
+- Updated start docs link:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/START_HERE.md`
+
+### Why it changed
+
+- Closed the operator gap between backend OTA APIs and day-to-day fleet operations.
+- Added a single practical checklist for flash/assemble/first launch readiness.
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅
+- `pre-commit run --all-files` ✅
+
+### Lessons learned
+
+- OTA rollout ergonomics improve materially when manifest/deployment controls are exposed directly in admin UI.
+- A single end-to-end launch checklist reduces missed env/power/guard settings during first hardware deployments.
+
+## EdgeWatch OTA fleet platform: signed manifests + staged deployments (2026-02-27)
+
+### What changed
+
+- Added OTA persistence + rollout state schema:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/migrations/versions/0014_release_deployments_ota.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/models.py`
+  - new tables:
+    - `release_manifests`
+    - `deployments`
+    - `deployment_targets`
+    - `device_release_state`
+    - `deployment_events`
+  - extended `devices` with rollout targeting metadata:
+    - `cohort`
+    - `labels`
+- Added OTA domain service and APIs:
+  - service:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/services/device_updates.py`
+  - device report route:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_updates.py`
+    - `POST /api/v1/device-updates/{deployment_id}/report`
+  - admin endpoints:
+    - `POST /api/v1/admin/releases/manifests`
+    - `GET /api/v1/admin/releases/manifests`
+    - `POST /api/v1/admin/deployments`
+    - `GET /api/v1/admin/deployments/{deployment_id}`
+    - `POST /api/v1/admin/deployments/{deployment_id}/pause`
+    - `POST /api/v1/admin/deployments/{deployment_id}/resume`
+    - `POST /api/v1/admin/deployments/{deployment_id}/abort`
+  - dark-launch gate:
+    - `ENABLE_OTA_UPDATES` in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/config.py`
+    - ingest route registration in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/main.py`
+- Extended device policy contract shape delivered to agents:
+  - `pending_update_command` added in:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/schemas.py`
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/device_policy.py`
+  - policy ETag now includes pending update command fragment.
+- Extended agent policy/runtime for OTA:
+  - parser + cache support:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/device_policy.py`
+  - runtime flow:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/edgewatch_agent.py`
+  - behaviors:
+    - update state reporting pipeline
+    - power-guard defer reporting
+    - dry-run apply default (`EDGEWATCH_ENABLE_OTA_APPLY=0`)
+    - optional git-tag apply/rollback path when explicitly enabled
+  - env docs:
+    - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/agent/.env.example`
+- Added OTA tests:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_updates_service.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_device_updates_routes.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_admin_deployments.py`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_update_delivery.py`
+  - plus updates to migration/policy/route-surface suites.
+- Added OTA docs/tutorial/ADR:
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/OTA_UPDATES.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/TUTORIALS/FLEET_DEPLOYMENTS_AND_ROLLBACK.md`
+  - `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DECISIONS/ADR-20260227-rpi-fleet-ota-signed-manifests.md`
+  - updated domain/design/contracts/start/deploy docs.
+
+### Why it changed
+
+- Required Particle-inspired fleet capability for RPi-first deployments:
+  - durable staged OTA command delivery
+  - auditability
+  - safe rollout progression with halt-on-failure behavior
+  - device-side power guard enforcement before apply
+
+### Validation
+
+- `python scripts/harness.py lint` ✅
+- `python scripts/harness.py typecheck` ✅
+- `python scripts/harness.py test` ✅ (`188 passed`)
+- `pre-commit run --all-files` ✅
+
+### Risks / rollout notes
+
+- OTA admin routes are gated by `ENABLE_OTA_UPDATES`; keep disabled until pilot readiness.
+- Agent apply path is dry-run by default; real filesystem switching requires explicit `EDGEWATCH_ENABLE_OTA_APPLY=1`.
+- Apply/rollback path assumes valid repository/tag layout on the device; pilot with rollback drills before broad rollout.
+
+### Lessons learned
+
+- A dark-launch flag at route registration time plus runtime checks keeps additive features safe for existing deployments.
+- Including pending-command state in policy ETag is critical for eventual-consistency delivery under long cache lifetimes.
+- Power guard defer reporting should be throttled to avoid noise while still giving operators clear rollout health signals.
+
 ## EdgeWatch mainline finalization: hybrid disable safeguards (2026-02-27)
 
 ### What changed
@@ -3005,6 +3369,66 @@ Files:
 
 - [ ] Add `backend.hcl` + `terraform.tfvars` to each environment’s config path in GCS.
 - [ ] Configure GitHub Environment variables per env (`dev|stage|prod`) and use the new `Terraform plan (GCP)` workflow as pre-apply gate.
+
+## Microphone Mounting Clarification for RPi Pilot Hardware (2026-03-20)
+
+### What changed
+
+- Updated the field hardware and deployment docs to lock the pilot microphone posture:
+  - use a short external protected USB microphone mount
+  - keep the main enclosure sealed
+  - do not rely on a loose microphone inside the sealed enclosure
+- Added microphone mount accessory guidance to:
+  - `docs/BOM.md`
+  - `docs/HARDWARE.md`
+  - `docs/DEPLOY_RPI.md`
+  - `docs/TUTORIALS/RPI_FLASH_ASSEMBLE_LAUNCH_CHECKLIST.md`
+  - `docs/TUTORIALS/RPI_ZERO_TOUCH_BOOTSTRAP.md`
+  - `docs/RUNBOOKS/SENSORS.md`
+
+### Why it changed
+
+- A sealed weatherproof enclosure materially attenuates and colors the outside sound field.
+- For threshold-based microphone monitoring, the pilot hardware needs a repeatable mounting pattern or the `60 dB` default becomes box-specific and unreliable.
+
+### How it was validated
+
+- Documentation review against the locked hardware posture and current Raspberry Pi microphone-first runtime.
+
+### Risks / rollout notes
+
+- The pilot build now assumes one additional short USB run and sheltered microphone mounting point outside the enclosure.
+- Keep the external microphone cable short, strain-relieved, and protected with a drip loop.
+
+### Follow-ups
+
+- [ ] Lock a specific pilot hood/bracket part once the final Amazon order is chosen.
+
+## Pilot microphone part selection locked (2026-03-20)
+
+### What changed
+
+- Updated the pilot BOM and hardware docs to name the current microphone choice explicitly:
+  - `NowTH USB lavalier microphone` (`B0929CQSX4`)
+- Updated:
+  - `docs/BOM.md`
+  - `docs/HARDWARE.md`
+
+### Why it changed
+
+- The pilot build now has a short external protected mic mount, and the selected lavalier form factor is a better mechanical fit than a stub USB mic because it already includes a `2 m` cable.
+
+### How it was validated
+
+- Documentation review against the locked field mounting posture and the current ALSA/`arecord` microphone runtime.
+
+### Risks / rollout notes
+
+- The chosen mic is still not weatherproof and must remain in a sheltered external mount with strain relief and a drip loop.
+
+### Follow-ups
+
+- [ ] Confirm USB audio enumeration on the first pilot Pi with `arecord -l` before sealing the field unit.
 
 ## Manual Deploy Runbook for EdgeWatch (2026-02-23)
 

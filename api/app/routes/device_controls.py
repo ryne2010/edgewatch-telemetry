@@ -11,10 +11,12 @@ from ..db import db_session
 from ..edge_policy import load_edge_policy
 from ..models import Device
 from ..schemas import (
+    DeepSleepBackend,
     DeviceAlertsControlUpdateIn,
     DeviceControlsOut,
     DeviceOperationControlUpdateIn,
     OperationMode,
+    RuntimePowerMode,
 )
 from ..services.device_access import ensure_device_access
 from ..services.device_commands import (
@@ -36,6 +38,26 @@ def _normalized_operation_mode(value: object) -> OperationMode:
     return "active"
 
 
+def _normalized_runtime_power_mode(value: object) -> RuntimePowerMode:
+    mode = str(value or "continuous").strip().lower()
+    if mode == "eco":
+        return "eco"
+    if mode == "deep_sleep":
+        return "deep_sleep"
+    return "continuous"
+
+
+def _normalized_deep_sleep_backend(value: object) -> DeepSleepBackend:
+    backend = str(value or "auto").strip().lower()
+    if backend == "pi5_rtc":
+        return "pi5_rtc"
+    if backend == "external_supervisor":
+        return "external_supervisor"
+    if backend == "none":
+        return "none"
+    return "auto"
+
+
 def _as_controls_out(
     device: Device,
     *,
@@ -50,6 +72,10 @@ def _as_controls_out(
         device_id=device.device_id,
         operation_mode=_normalized_operation_mode(getattr(device, "operation_mode", "active")),
         sleep_poll_interval_s=int(getattr(device, "sleep_poll_interval_s", 7 * 24 * 3600) or (7 * 24 * 3600)),
+        runtime_power_mode=_normalized_runtime_power_mode(
+            getattr(device, "runtime_power_mode", "continuous")
+        ),
+        deep_sleep_backend=_normalized_deep_sleep_backend(getattr(device, "deep_sleep_backend", "auto")),
         disable_requires_manual_restart=disable_requires_manual_restart,
         alerts_muted_until=getattr(device, "alerts_muted_until", None),
         alerts_muted_reason=getattr(device, "alerts_muted_reason", None),
@@ -133,6 +159,10 @@ def update_device_operation_controls(
         device.operation_mode = req.operation_mode
         if req.sleep_poll_interval_s is not None:
             device.sleep_poll_interval_s = req.sleep_poll_interval_s
+        if req.runtime_power_mode is not None:
+            device.runtime_power_mode = req.runtime_power_mode
+        if req.deep_sleep_backend is not None:
+            device.deep_sleep_backend = req.deep_sleep_backend
         enqueue_device_control_command(
             session,
             device=device,

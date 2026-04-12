@@ -34,7 +34,34 @@ variable "artifact_repo_name" {
 
 variable "image" {
   type        = string
-  description = "Container image URI."
+  description = <<EOT
+Optional full container image URI.
+
+If empty, the image URI is derived from:
+- region
+- project_id
+- artifact_repo_name
+- image_name
+- image_tag
+EOT
+  default     = ""
+}
+
+variable "image_name" {
+  type        = string
+  description = "Artifact Registry image name (the part after the repo)."
+  default     = "edgewatch-api"
+}
+
+variable "image_tag" {
+  type        = string
+  description = "Artifact Registry image tag used when deriving the image URI."
+  default     = "latest"
+
+  validation {
+    condition     = length(var.image) > 0 || length(trimspace(var.image_tag)) > 0
+    error_message = "Set either image (full URI) or image_tag (when using the derived image URI)."
+  }
 }
 
 # --- Public vs private posture ------------------------------------------------
@@ -880,19 +907,19 @@ variable "allow_demo_in_non_dev" {
 variable "demo_fleet_size" {
   type        = number
   description = "Number of demo devices to bootstrap when bootstrap_demo_device is true."
-  default     = 3
+  default     = 11
 }
 
 variable "demo_device_id" {
   type        = string
-  description = "Base demo device id (supports 3-digit suffix derivation)."
-  default     = "demo-well-001"
+  description = "Base demo device id (default seed expands through the named sample fleet; custom values still support 3-digit suffix derivation)."
+  default     = "baxter-1"
 }
 
 variable "demo_device_name" {
   type        = string
-  description = "Base demo device display name (supports 3-digit suffix derivation)."
-  default     = "Demo Well 001"
+  description = "Base demo device display name (default seed expands through the named sample fleet; custom values still support 3-digit suffix derivation)."
+  default     = "baxter-1"
 }
 
 variable "demo_device_token" {

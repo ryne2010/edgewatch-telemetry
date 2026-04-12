@@ -44,8 +44,12 @@ class Device(Base):
     offline_after_s: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     operation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     sleep_poll_interval_s: Mapped[int] = mapped_column(Integer, nullable=False, default=7 * 24 * 3600)
+    runtime_power_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="continuous")
+    deep_sleep_backend: Mapped[str] = mapped_column(String(32), nullable=False, default="auto")
     alerts_muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     alerts_muted_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    cohort: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    labels: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
 
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -64,6 +68,7 @@ class Device(Base):
     media_objects: Mapped[list["MediaObject"]] = relationship(back_populates="device")
     access_grants: Mapped[list["DeviceAccessGrant"]] = relationship(back_populates="device")
     control_commands: Mapped[list["DeviceControlCommand"]] = relationship(back_populates="device")
+    release_state: Mapped["DeviceReleaseState | None"] = relationship(back_populates="device", uselist=False)
 
     __table_args__ = (Index("ix_devices_token_fingerprint", "token_fingerprint", unique=True),)
 
@@ -110,6 +115,115 @@ class DeviceControlCommand(Base):
             "issued_at",
         ),
         Index("ix_device_control_commands_status_expires", "status", "expires_at"),
+    )
+
+
+class ReleaseManifest(Base):
+    __tablename__ = "release_manifests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    git_tag: Mapped[str] = mapped_column(String(128), nullable=False)
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    signature: Mapped[str] = mapped_column(Text, nullable=False)
+    signature_key_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    constraints: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    created_by: Mapped[str] = mapped_column(String(320), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+    deployments: Mapped[list["Deployment"]] = relationship(back_populates="manifest")
+
+    __table_args__ = (
+        UniqueConstraint("git_tag", "commit_sha", name="uq_release_manifests_tag_commit"),
+        Index("ix_release_manifests_created_at", "created_at"),
+        Index("ix_release_manifests_status_created_at", "status", "created_at"),
+    )
+
+
+class Deployment(Base):
+    __tablename__ = "deployments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    manifest_id: Mapped[str] = mapped_column(String(36), ForeignKey("release_manifests.id"), nullable=False)
+    strategy: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    stage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    halt_reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(320), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    failure_rate_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.2)
+    no_quorum_timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=1800)
+    command_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    power_guard_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    health_timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    rollback_to_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    target_selector: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+
+    manifest: Mapped["ReleaseManifest"] = relationship(back_populates="deployments")
+    targets: Mapped[list["DeploymentTarget"]] = relationship(back_populates="deployment")
+    events: Mapped[list["DeploymentEvent"]] = relationship(back_populates="deployment")
+
+    __table_args__ = (
+        Index("ix_deployments_manifest_created_at", "manifest_id", "created_at"),
+        Index("ix_deployments_status_updated_at", "status", "updated_at"),
+    )
+
+
+class DeploymentTarget(Base):
+    __tablename__ = "deployment_targets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    deployment_id: Mapped[str] = mapped_column(String(36), ForeignKey("deployments.id"), nullable=False)
+    device_id: Mapped[str] = mapped_column(String(128), ForeignKey("devices.device_id"), nullable=False)
+    stage_assigned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    last_report_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    report_details: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+
+    deployment: Mapped["Deployment"] = relationship(back_populates="targets")
+    device: Mapped["Device"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("deployment_id", "device_id", name="uq_deployment_targets_deployment_device"),
+        Index("ix_deployment_targets_deployment_status", "deployment_id", "status"),
+        Index("ix_deployment_targets_device_last_report_at", "device_id", "last_report_at"),
+    )
+
+
+class DeviceReleaseState(Base):
+    __tablename__ = "device_release_state"
+
+    device_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("devices.device_id"), primary_key=True, nullable=False
+    )
+    current_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    current_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_healthy_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failed_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    rollback_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_deployment_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device: Mapped["Device"] = relationship(back_populates="release_state")
+
+
+class DeploymentEvent(Base):
+    __tablename__ = "deployment_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    deployment_id: Mapped[str] = mapped_column(String(36), ForeignKey("deployments.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    details: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    deployment: Mapped["Deployment"] = relationship(back_populates="events")
+
+    __table_args__ = (
+        Index("ix_deployment_events_deployment_created_at", "deployment_id", "created_at"),
+        Index("ix_deployment_events_event_type_created_at", "event_type", "created_at"),
     )
 
 

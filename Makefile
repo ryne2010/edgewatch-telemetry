@@ -20,10 +20,11 @@ COMPOSE ?= docker compose
 
 # Defaults for local simulator (override as needed)
 EDGEWATCH_API_URL ?= http://localhost:8082
-EDGEWATCH_DEVICE_ID ?= demo-well-001
+EDGEWATCH_DEVICE_ID ?= baxter-1
+EDGEWATCH_DEVICE_NAME ?= $(EDGEWATCH_DEVICE_ID)
 EDGEWATCH_DEVICE_TOKEN ?= dev-device-token-001
 ADMIN_API_KEY ?= dev-admin-key
-SIMULATE_FLEET_SIZE ?= 3
+SIMULATE_FLEET_SIZE ?= 11
 
 # Fast host-dev lane defaults (used by `make dev`)
 DEV_API_URL ?= http://localhost:8080
@@ -128,7 +129,7 @@ help:
 	@echo "  db-migrate       Apply Alembic migrations (docker compose migrate)"
 	@echo "  db-revision      Create new Alembic revision (msg=...)"
 	@echo "  demo-device      Create a demo device via admin API"
-	@echo "  simulate         Run the edge simulator fleet (3 by default)"
+	@echo "  simulate         Run the edge simulator fleet (11 by default)"
 	@echo "  retention        Run DB retention/compaction (deletes old telemetry)"
 	@echo "  devices          List devices"
 	@echo "  alerts           List recent alerts"
@@ -343,6 +344,7 @@ doctor-dev: doctor
 	echo "Local simulator defaults (override with VAR=...):"; \
 	echo "  EDGEWATCH_API_URL=$(EDGEWATCH_API_URL)"; \
 	echo "  EDGEWATCH_DEVICE_ID=$(EDGEWATCH_DEVICE_ID)"; \
+	echo "  EDGEWATCH_DEVICE_NAME=$(EDGEWATCH_DEVICE_NAME)"; \
 	echo "  EDGEWATCH_DEVICE_TOKEN=$(EDGEWATCH_DEVICE_TOKEN)"; \
 	echo "  ADMIN_API_KEY=$(ADMIN_API_KEY)"; \
 	echo ""; \
@@ -363,6 +365,8 @@ doctor-gcp:
 	echo "  REGION=$(REGION)"; \
 	echo "  ENV=$(ENV)"; \
 	echo "  SERVICE_NAME=$(SERVICE_NAME)"; \
+	echo "  IMAGE_NAME=$(IMAGE_NAME)"; \
+	echo "  TAG=$(TAG)"; \
 	echo "  IMAGE=$(IMAGE)"; \
 	echo "  TF_STATE_BUCKET=$(TF_STATE_BUCKET)"; \
 	echo "  TF_STATE_PREFIX=$(TF_STATE_PREFIX)"; \
@@ -417,6 +421,8 @@ doctor-gcp:
 	echo "Doctor OK."
 up: doctor
 	cp -n .env.example .env || true
+	@python scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
+	  DEMO_FLEET_SIZE DEMO_DEVICE_ID DEMO_DEVICE_NAME DEMO_DEVICE_TOKEN
 	$(COMPOSE) up --build
 
 down:
@@ -469,6 +475,10 @@ web-dev: doctor-dev
 dev: doctor-dev db-up
 	cp -n .env.example .env || true
 	cp -n agent/.env.example agent/.env || true
+	@python scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
+	  DEMO_FLEET_SIZE DEMO_DEVICE_ID DEMO_DEVICE_NAME DEMO_DEVICE_TOKEN
+	@python scripts/check_demo_env_sync.py --example agent/.env.example --current agent/.env --label agent/.env --keys \
+	  EDGEWATCH_DEVICE_ID EDGEWATCH_DEVICE_TOKEN
 	@set -euo pipefail; \
 	pids=""; \
 	cleanup() { \
@@ -510,8 +520,8 @@ dev: doctor-dev db-up
 	if [ "$(DEV_BOOTSTRAP_DEMO_DEVICE)" = "1" ]; then \
 	  echo "Ensuring demo device exists on $(DEV_API_URL)"; \
 	  resp_file=$$(mktemp); \
-	  create_payload=$$(printf '{"device_id":"%s","display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900}' \
-	    "$(EDGEWATCH_DEVICE_ID)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	  create_payload=$$(printf '{"device_id":"%s","display_name":"%s","token":"%s","heartbeat_interval_s":300,"offline_after_s":900}' \
+	    "$(EDGEWATCH_DEVICE_ID)" "$(EDGEWATCH_DEVICE_NAME)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
 	  create_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X POST "$(DEV_API_URL)/api/v1/admin/devices" \
 	    -H "X-Admin-Key: $(ADMIN_API_KEY)" \
 	    -H "Content-Type: application/json" \
@@ -519,8 +529,8 @@ dev: doctor-dev db-up
 	  if [ "$$create_code" = "200" ] || [ "$$create_code" = "201" ]; then \
 	    echo "Demo device created: $(EDGEWATCH_DEVICE_ID)"; \
 	  elif [ "$$create_code" = "409" ]; then \
-	    update_payload=$$(printf '{"display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900,"enabled":true}' \
-	      "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	    update_payload=$$(printf '{"display_name":"%s","token":"%s","heartbeat_interval_s":300,"offline_after_s":900,"enabled":true}' \
+	      "$(EDGEWATCH_DEVICE_NAME)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
 	    update_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X PATCH "$(DEV_API_URL)/api/v1/admin/devices/$(EDGEWATCH_DEVICE_ID)" \
 	      -H "X-Admin-Key: $(ADMIN_API_KEY)" \
 	      -H "Content-Type: application/json" \
@@ -543,10 +553,11 @@ dev: doctor-dev db-up
 	if [ "$(DEV_START_SIMULATE)" = "1" ]; then \
 	  base_id="$(EDGEWATCH_DEVICE_ID)"; \
 	  base_tok="$(EDGEWATCH_DEVICE_TOKEN)"; \
+	  demo_nth() { python -c 'import sys; from api.app.demo_fleet import derive_nth; print(derive_nth(sys.argv[1], int(sys.argv[2])))' "$$1" "$$2"; }; \
 	  echo "Starting $(SIMULATE_FLEET_SIZE) simulator(s) against $(DEV_API_URL) ..."; \
 	  for n in $$(seq 1 "$(SIMULATE_FLEET_SIZE)"); do \
-	    if [[ "$$base_id" =~ ^(.*)([0-9]{3})$$ ]]; then id="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else id="$$base_id"; if [[ "$$n" -gt 1 ]]; then id="$$base_id-$$(printf "%03d" "$$n")"; fi; fi; \
-	    if [[ "$$base_tok" =~ ^(.*)([0-9]{3})$$ ]]; then tok="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else tok="$$base_tok"; if [[ "$$n" -gt 1 ]]; then tok="$$base_tok-$$(printf "%03d" "$$n")"; fi; fi; \
+	    id="$$(demo_nth "$$base_id" "$$n")"; \
+	    tok="$$(demo_nth "$$base_tok" "$$n")"; \
 	    buf="./edgewatch_buffer_$${id}.sqlite"; \
 	    echo "  - $$id"; \
 	    EDGEWATCH_API_URL="$(DEV_API_URL)" EDGEWATCH_DEVICE_ID="$$id" EDGEWATCH_DEVICE_TOKEN="$$tok" BUFFER_DB_PATH="$$buf" \
@@ -577,8 +588,8 @@ db-revision: doctor-dev
 demo-device:
 	@set -euo pipefail; \
 	resp_file=$$(mktemp); \
-	create_payload=$$(printf '{"device_id":"%s","display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900}' \
-	  "$(EDGEWATCH_DEVICE_ID)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	create_payload=$$(printf '{"device_id":"%s","display_name":"%s","token":"%s","heartbeat_interval_s":300,"offline_after_s":900}' \
+	  "$(EDGEWATCH_DEVICE_ID)" "$(EDGEWATCH_DEVICE_NAME)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
 	create_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X POST "$(EDGEWATCH_API_URL)/api/v1/admin/devices" \
 	  -H "X-Admin-Key: $(ADMIN_API_KEY)" \
 	  -H "Content-Type: application/json" \
@@ -586,8 +597,8 @@ demo-device:
 	if [ "$$create_code" = "200" ] || [ "$$create_code" = "201" ]; then \
 	  echo "Demo device created: $(EDGEWATCH_DEVICE_ID)"; \
 	elif [ "$$create_code" = "409" ]; then \
-	  update_payload=$$(printf '{"display_name":"Demo Well 001","token":"%s","heartbeat_interval_s":300,"offline_after_s":900,"enabled":true}' \
-	    "$(EDGEWATCH_DEVICE_TOKEN)"); \
+	  update_payload=$$(printf '{"display_name":"%s","token":"%s","heartbeat_interval_s":300,"offline_after_s":900,"enabled":true}' \
+	    "$(EDGEWATCH_DEVICE_NAME)" "$(EDGEWATCH_DEVICE_TOKEN)"); \
 	  update_code=$$(curl -sS -o "$$resp_file" -w "%{http_code}" -X PATCH "$(EDGEWATCH_API_URL)/api/v1/admin/devices/$(EDGEWATCH_DEVICE_ID)" \
 	    -H "X-Admin-Key: $(ADMIN_API_KEY)" \
 	    -H "Content-Type: application/json" \
@@ -613,16 +624,19 @@ demo-device:
 # Run the edge simulator (pretends to be an RPi).
 simulate: doctor-dev
 	cp -n agent/.env.example agent/.env || true
+	@python scripts/check_demo_env_sync.py --example agent/.env.example --current agent/.env --label agent/.env --keys \
+	  EDGEWATCH_DEVICE_ID EDGEWATCH_DEVICE_TOKEN
 	@set -euo pipefail; \
 	trap 'kill 0' INT TERM EXIT; \
 	base_id="$(EDGEWATCH_DEVICE_ID)"; \
 	base_tok="$(EDGEWATCH_DEVICE_TOKEN)"; \
+	demo_nth() { python -c 'import sys; from api.app.demo_fleet import derive_nth; print(derive_nth(sys.argv[1], int(sys.argv[2])))' "$$1" "$$2"; }; \
 	echo "Starting $(SIMULATE_FLEET_SIZE) simulators... (Ctrl-C to stop all)"; \
 	for n in $$(seq 1 "$(SIMULATE_FLEET_SIZE)"); do \
-	  if [[ "$$base_id" =~ ^(.*)([0-9]{3})$$ ]]; then id="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else id="$$base_id"; if [[ "$$n" -gt 1 ]]; then id="$$base_id-$$(printf "%03d" "$$n")"; fi; fi; \
-	  if [[ "$$base_tok" =~ ^(.*)([0-9]{3})$$ ]]; then tok="$$(printf "%s%03d" "$${BASH_REMATCH[1]}" "$$n")"; else tok="$$base_tok"; if [[ "$$n" -gt 1 ]]; then tok="$$base_tok-$$(printf "%03d" "$$n")"; fi; fi; \
+	  id="$$(demo_nth "$$base_id" "$$n")"; \
+	  tok="$$(demo_nth "$$base_tok" "$$n")"; \
 	  buf="./edgewatch_buffer_$${id}.sqlite"; \
-	  echo "  - $$id (token suffix $$(printf "%03d" "$$n"))"; \
+	  echo "  - $$id"; \
 	  EDGEWATCH_API_URL="$(EDGEWATCH_API_URL)" EDGEWATCH_DEVICE_ID="$$id" EDGEWATCH_DEVICE_TOKEN="$$tok" BUFFER_DB_PATH="$$buf" \
 	    uv run python agent/simulator.py & \
 	done; \
@@ -703,7 +717,8 @@ infra-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)" \
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)" \
 		-target=module.core_services \
 		-target=module.artifact_registry \
 		-target=module.service_accounts \
@@ -720,7 +735,8 @@ plan-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)"
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)"
 
 apply-gcp: tf-init-gcp
 	terraform -chdir=$(TF_DIR) apply -auto-approve \
@@ -733,7 +749,8 @@ apply-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)"
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)"
 
 grant-cloudbuild-gcp: doctor-gcp
 	@PROJECT_NUMBER=$$(gcloud projects describe "$(PROJECT_ID)" --format='value(projectNumber)'); \
@@ -949,7 +966,8 @@ destroy-gcp: tf-init-gcp
 		-var "enable_observability=$(ENABLE_OBSERVABILITY)" \
 		-var "service_name=$(SERVICE_NAME)" \
 		-var "artifact_repo_name=$(AR_REPO)" \
-		-var "image=$(IMAGE)"
+		-var "image_name=$(IMAGE_NAME)" \
+		-var "image_tag=$(TAG)"
 
 # Secret helper targets
 

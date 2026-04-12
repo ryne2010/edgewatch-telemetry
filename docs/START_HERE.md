@@ -129,13 +129,22 @@ Docs:
 - Setup + provisioning: `docs/RPI_AGENT.md`
 - Agent config reference: `agent/README.md`
 - Sensor bring-up (microphone-first default): `docs/RUNBOOKS/SENSORS.md`
+- Hardware BOM (mic+power v1): `docs/BOM.md`
 - Solar/12V power management bring-up: `docs/RUNBOOKS/POWER.md`
 - Zero-touch first boot tutorial: `docs/TUTORIALS/RPI_ZERO_TOUCH_BOOTSTRAP.md`
+- Flash + assemble + launch checklist: `docs/TUTORIALS/RPI_FLASH_ASSEMBLE_LAUNCH_CHECKLIST.md`
 - Owner controls + durable delivery tutorial: `docs/TUTORIALS/OWNER_CONTROLS_AND_COMMAND_DELIVERY.md`
 - BYO cellular provider checklist: `docs/TUTORIALS/BYO_CELLULAR_PROVIDER_CHECKLIST.md`
+- OTA updates runbook: `docs/RUNBOOKS/OTA_UPDATES.md`
+- Fleet deployment + rollback tutorial: `docs/TUTORIALS/FLEET_DEPLOYMENTS_AND_ROLLBACK.md`
+- Runtime low-power tiers:
+  - `continuous`: current always-on default
+  - `eco`: software-only duty cycling
+  - `deep_sleep`: optional true halt between polls (Pi 5 RTC or Pi 4 supervisor)
 - Hybrid disable safeguard:
   - owner/operator disable is logical-only
   - admin shutdown intent requires `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1` on the device
+  - OTA filesystem apply requires `EDGEWATCH_ENABLE_OTA_APPLY=1` on the device
 
 ## Operations
 

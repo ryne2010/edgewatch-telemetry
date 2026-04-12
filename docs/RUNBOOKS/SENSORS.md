@@ -21,6 +21,9 @@ Status:
 
 For current Raspberry Pi deployments, the minimal supported profile is microphone-only:
 
+- Keep the enclosure sealed and run the USB microphone to a short protected external mount.
+- Do not validate thresholds with the mic sitting loose inside the enclosure.
+
 1. Install ALSA capture utilities:
 
 ```bash

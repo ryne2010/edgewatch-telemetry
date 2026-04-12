@@ -7,6 +7,8 @@ export type DeviceOut = {
   enabled: boolean
   operation_mode: 'active' | 'sleep' | 'disabled'
   sleep_poll_interval_s: number
+  runtime_power_mode: 'continuous' | 'eco' | 'deep_sleep'
+  deep_sleep_backend: 'auto' | 'pi5_rtc' | 'external_supervisor' | 'none'
   alerts_muted_until: string | null
   alerts_muted_reason: string | null
   status: 'online' | 'offline' | 'unknown' | 'sleep' | 'disabled'
@@ -39,6 +41,8 @@ export type DeviceSummaryOut = {
   enabled: boolean
   operation_mode: 'active' | 'sleep' | 'disabled'
   sleep_poll_interval_s: number
+  runtime_power_mode: 'continuous' | 'eco' | 'deep_sleep'
+  deep_sleep_backend: 'auto' | 'pi5_rtc' | 'external_supervisor' | 'none'
   alerts_muted_until: string | null
   alerts_muted_reason: string | null
   status: 'online' | 'offline' | 'unknown' | 'sleep' | 'disabled'
@@ -48,10 +52,44 @@ export type DeviceSummaryOut = {
   metrics: Record<string, unknown>
 }
 
+export const FLEET_VITALS_SUMMARY_METRICS = [
+  'microphone_level_db',
+  'power_input_v',
+  'power_input_a',
+  'power_input_w',
+  'power_source',
+  'power_input_out_of_range',
+  'power_unsustainable',
+  'power_saver_active',
+  'water_pressure_psi',
+  'oil_pressure_psi',
+  'oil_level_pct',
+  'drip_oil_level_pct',
+  'oil_life_pct',
+  'temperature_c',
+  'humidity_pct',
+  'battery_v',
+  'signal_rssi_dbm',
+] as const
+
+export const FLEET_LOCATION_SUMMARY_METRICS = [
+  'latitude',
+  'longitude',
+  'lat',
+  'lon',
+  'lng',
+  'gps_latitude',
+  'gps_longitude',
+  'location_lat',
+  'location_lon',
+] as const
+
 export type DeviceControlsOut = {
   device_id: string
   operation_mode: 'active' | 'sleep' | 'disabled'
   sleep_poll_interval_s: number
+  runtime_power_mode: 'continuous' | 'eco' | 'deep_sleep'
+  deep_sleep_backend: 'auto' | 'pi5_rtc' | 'external_supervisor' | 'none'
   disable_requires_manual_restart: boolean
   alerts_muted_until: string | null
   alerts_muted_reason: string | null
@@ -65,6 +103,8 @@ export type DeviceControlsOut = {
 export type DeviceOperationControlUpdateIn = {
   operation_mode: 'active' | 'sleep' | 'disabled'
   sleep_poll_interval_s?: number
+  runtime_power_mode?: 'continuous' | 'eco' | 'deep_sleep'
+  deep_sleep_backend?: 'auto' | 'pi5_rtc' | 'external_supervisor' | 'none'
 }
 
 export type DeviceAlertsControlUpdateIn = {
@@ -82,6 +122,102 @@ export type DeviceAccessGrantOut = {
   principal_email: string
   access_role: 'viewer' | 'operator' | 'owner'
   created_at: string
+  updated_at: string
+}
+
+export type ReleaseManifestOut = {
+  id: string
+  git_tag: string
+  commit_sha: string
+  signature: string
+  signature_key_id: string
+  constraints: Record<string, unknown>
+  created_by: string
+  created_at: string
+  status: string
+}
+
+export type ReleaseManifestCreateIn = {
+  git_tag: string
+  commit_sha: string
+  signature: string
+  signature_key_id: string
+  constraints?: Record<string, unknown>
+  status?: string
+}
+
+export type DeploymentTargetOut = {
+  device_id: string
+  stage_assigned: number
+  status: string
+  last_report_at: string | null
+  failure_reason: string | null
+  report_details: Record<string, unknown>
+}
+
+export type DeploymentEventOut = {
+  id: string
+  deployment_id: string
+  event_type: string
+  device_id: string | null
+  details: Record<string, unknown>
+  created_at: string
+}
+
+export type DeploymentOut = {
+  id: string
+  manifest_id: string
+  strategy: Record<string, unknown>
+  stage: number
+  status: string
+  halt_reason: string | null
+  created_by: string
+  created_at: string
+  updated_at: string
+  failure_rate_threshold: number
+  no_quorum_timeout_s: number
+  command_expires_at: string
+  power_guard_required: boolean
+  health_timeout_s: number
+  rollback_to_tag: string | null
+  target_selector: Record<string, unknown>
+  total_targets: number
+  queued_targets: number
+  in_progress_targets: number
+  deferred_targets: number
+  healthy_targets: number
+  failed_targets: number
+  rolled_back_targets: number
+}
+
+export type DeploymentDetailOut = DeploymentOut & {
+  manifest: ReleaseManifestOut
+  targets: DeploymentTargetOut[]
+  events: DeploymentEventOut[]
+}
+
+export type DeploymentCreateIn = {
+  manifest_id: string
+  target_selector: {
+    mode: 'all' | 'cohort' | 'labels' | 'explicit_ids'
+    cohort?: string
+    labels?: Record<string, string>
+    device_ids?: string[]
+  }
+  rollout_stages_pct?: number[]
+  failure_rate_threshold?: number
+  no_quorum_timeout_s?: number
+  health_timeout_s?: number
+  command_ttl_s?: number
+  power_guard_required?: boolean
+  rollback_to_tag?: string | null
+}
+
+export type DeploymentActionOut = {
+  id: string
+  status: string
+  stage: number
+  halt_reason: string | null
   updated_at: string
 }
 
@@ -184,6 +320,8 @@ export type EdgePolicyContractOut = {
   }
   operation_defaults: {
     default_sleep_poll_interval_s: number
+    default_runtime_power_mode: 'continuous' | 'eco' | 'deep_sleep'
+    default_deep_sleep_backend: 'auto' | 'pi5_rtc' | 'external_supervisor' | 'none'
     disable_requires_manual_restart: boolean
     admin_remote_shutdown_enabled: boolean
     shutdown_grace_s_default: number
@@ -412,7 +550,7 @@ export const api = {
         docs?: { enabled?: boolean }
         otel?: { enabled?: boolean }
         ui?: { enabled?: boolean }
-        routes?: { ingest?: boolean; read?: boolean }
+        routes?: { ingest?: boolean; read?: boolean; ota_updates?: boolean }
         ingest?: { pipeline_mode?: string }
         analytics_export?: { enabled?: boolean }
         retention?: { enabled?: boolean }
@@ -425,9 +563,10 @@ export const api = {
       }
     }>('/api/v1/health'),
   devices: () => getJSON<DeviceOut[]>('/api/v1/devices'),
-  devicesSummary: (opts?: { metrics?: string[] }) => {
+  devicesSummary: (opts?: { metrics?: string[]; limitMetrics?: number }) => {
     const params = new URLSearchParams()
     for (const m of opts?.metrics ?? []) params.append('metrics', m)
+    if (typeof opts?.limitMetrics === 'number') params.set('limit_metrics', String(opts.limitMetrics))
     const qs = params.toString()
     return getJSON<DeviceSummaryOut[]>(`/api/v1/devices/summary${qs ? `?${qs}` : ''}`)
   },
@@ -550,6 +689,56 @@ export const api = {
           headers: adminHeaders(adminKey),
         },
       ),
+    createReleaseManifest: (
+      adminKey: string | null | undefined,
+      payload: ReleaseManifestCreateIn,
+    ) =>
+      sendJSON<ReleaseManifestOut>('/api/v1/admin/releases/manifests', payload, {
+        method: 'POST',
+        headers: adminHeaders(adminKey),
+      }),
+    releaseManifests: (adminKey: string, opts?: { status?: string; limit?: number }) => {
+      const params = new URLSearchParams()
+      if (opts?.status) params.set('status', opts.status)
+      params.set('limit', String(opts?.limit ?? 200))
+      return getJSON<ReleaseManifestOut[]>(`/api/v1/admin/releases/manifests?${params.toString()}`, {
+        headers: adminHeaders(adminKey),
+      })
+    },
+    createDeployment: (adminKey: string | null | undefined, payload: DeploymentCreateIn) =>
+      sendJSON<DeploymentOut>('/api/v1/admin/deployments', payload, {
+        method: 'POST',
+        headers: adminHeaders(adminKey),
+      }),
+    deployment: (adminKey: string, deploymentId: string) =>
+      getJSON<DeploymentDetailOut>(`/api/v1/admin/deployments/${encodeURIComponent(deploymentId)}`, {
+        headers: adminHeaders(adminKey),
+      }),
+    pauseDeployment: (adminKey: string | null | undefined, deploymentId: string) =>
+      sendJSON<DeploymentActionOut>(
+        `/api/v1/admin/deployments/${encodeURIComponent(deploymentId)}/pause`,
+        {},
+        {
+          method: 'POST',
+          headers: adminHeaders(adminKey),
+        },
+      ),
+    resumeDeployment: (adminKey: string | null | undefined, deploymentId: string) =>
+      sendJSON<DeploymentActionOut>(
+        `/api/v1/admin/deployments/${encodeURIComponent(deploymentId)}/resume`,
+        {},
+        {
+          method: 'POST',
+          headers: adminHeaders(adminKey),
+        },
+      ),
+    abortDeployment: (adminKey: string | null | undefined, deploymentId: string, opts?: { reason?: string }) => {
+      const params = new URLSearchParams()
+      if (opts?.reason?.trim()) params.set('reason', opts.reason.trim())
+      const qs = params.toString()
+      const path = `/api/v1/admin/deployments/${encodeURIComponent(deploymentId)}/abort${qs ? `?${qs}` : ''}`
+      return sendJSON<DeploymentActionOut>(path, {}, { method: 'POST', headers: adminHeaders(adminKey) })
+    },
     deviceAccess: {
       list: (adminKey: string, deviceId: string) =>
         getJSON<DeviceAccessGrantOut[]>(

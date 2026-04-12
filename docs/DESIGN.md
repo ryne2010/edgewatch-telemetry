@@ -10,6 +10,7 @@ Agents should not invent new structure without updating this file (and usually a
 - **Edge agent (`agent/`)**
   - Reads sensors (or simulated sensors)
   - Evaluates power-management state (dual-mode hardware + battery-trend fallback)
+  - Applies runtime power mode (`continuous|eco|deep_sleep`)
   - Buffers points locally (SQLite)
   - Flushes points to the API when online
 
@@ -89,6 +90,33 @@ Runtime path:
 Durability:
 - Edge rolling-window state is persisted per device in `edgewatch_power_state_<device_id>.json`.
 
+## Runtime low-power flow
+
+- Raspberry Pi OS Lite remains the standard and documented OS target.
+- Runtime power mode is layered on top of device operation mode:
+  - `continuous`: current always-on behavior
+  - `eco`: software-only low-power behavior
+  - `deep_sleep`: optional true halt/power-off between samples
+- `eco` behavior:
+  - keeps Linux up
+  - keeps microphone capture burst-based only
+  - buffers routine telemetry locally
+  - reconnects on startup, alert transitions, and heartbeat windows
+  - disables Wi-Fi/Bluetooth/HDMI by default when cellular is the intended uplink
+  - disables media capture/upload by default
+- `deep_sleep` behavior:
+  - boot -> fetch/apply policy -> sample -> send or buffer -> schedule wake -> halt
+  - commands and OTA apply on wake windows, not continuously
+  - backend selection:
+    - `pi5_rtc`: Raspberry Pi 5 onboard RTC wakealarm + low-power halt
+    - `external_supervisor`: Raspberry Pi 4 external RTC/power-latch supervisor
+    - unsupported backend selection falls back to `eco`
+- Applied runtime telemetry adds:
+  - `power_runtime_mode`
+  - `power_sleep_backend`
+  - `wake_reason`
+  - `network_duty_cycled`
+
 ## Ownership + control flow
 
 Runtime/API path:
@@ -110,11 +138,43 @@ Runtime/API path:
 Agent behavior:
 - `sleep`: telemetry polling remains active at `sleep_poll_interval_s`; media capture/upload disabled.
 - `disabled`: local runtime latches disabled and requires on-device service restart to resume.
+- `runtime_power_mode=eco` keeps the board on but batches normal network activity to heartbeat windows.
+- `runtime_power_mode=deep_sleep` uses Pi 5 RTC or Pi 4 supervisor when available and otherwise falls back to `eco`.
 - `shutdown_requested` command:
   - always applies logical disable
   - executes OS shutdown only when `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`
   - otherwise logs guarded non-execution and remains disabled
 - Offline monitor suppresses `DEVICE_OFFLINE` lifecycle while in `sleep` or `disabled`.
+
+## OTA deployment flow (RPi fleet)
+
+Runtime/API path:
+- Admin publishes signed release metadata in `release_manifests`.
+- Admin starts a deployment in `deployments` with:
+  - staged rollout percentages (`1/10/50/100` default)
+  - target selector (`all|cohort|labels|explicit_ids`)
+  - halt thresholds + command TTL
+- Per-device rows in `deployment_targets` track rollout stage assignment and state transitions.
+- Deployment lifecycle/audit events are recorded in `deployment_events`.
+- Device policy includes optional `pending_update_command` when:
+  - deployment is active
+  - target stage is currently enabled
+  - deployment command TTL is not expired
+
+Agent behavior:
+- Reports update transitions through `POST /api/v1/device-updates/{deployment_id}/report`.
+- Applies power guard before update execution:
+  - defer when `power_input_out_of_range` or `power_unsustainable` is active and command requires guard
+- Verifies `git_tag -> commit_sha` mapping before apply.
+- Applies update path with safe default:
+  - default is dry-run report mode (`EDGEWATCH_ENABLE_OTA_APPLY=0`)
+  - file/symlink switch only when explicitly enabled
+- Auto rollback report path is attempted when apply fails and `rollback_to_tag` is provided.
+
+Deployment controller behavior:
+- Advances rollout stage when all currently-enabled stage targets reach terminal states.
+- Halts deployment when observed failure rate breaches threshold.
+- Pause/resume/abort are explicit operator actions via admin APIs.
 
 ## Simulation environment guard
 

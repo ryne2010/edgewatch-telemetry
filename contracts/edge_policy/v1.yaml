@@ -74,6 +74,8 @@ power_management:
 # Device operation defaults for owner/operator runtime controls.
 operation_defaults:
   default_sleep_poll_interval_s: 604800 # 7 days
+  default_runtime_power_mode: continuous
+  default_deep_sleep_backend: auto
   disable_requires_manual_restart: true
   admin_remote_shutdown_enabled: true
   shutdown_grace_s_default: 30

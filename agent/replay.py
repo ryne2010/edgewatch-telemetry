@@ -132,7 +132,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--device-id",
-        default=os.getenv("EDGEWATCH_DEVICE_ID", "demo-well-001"),
+        default=os.getenv("EDGEWATCH_DEVICE_ID", "baxter-1"),
         help="Device ID (informational)",
     )
     parser.add_argument(

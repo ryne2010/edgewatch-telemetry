@@ -80,6 +80,8 @@ class PowerManagementPolicy:
 @dataclass(frozen=True)
 class OperationDefaultsPolicy:
     default_sleep_poll_interval_s: int
+    default_runtime_power_mode: str
+    default_deep_sleep_backend: str
     disable_requires_manual_restart: bool
     admin_remote_shutdown_enabled: bool
     shutdown_grace_s_default: int
@@ -200,6 +202,19 @@ def _validate_power_management(power: PowerManagementPolicy) -> None:
 def _validate_operation_defaults(operation_defaults: OperationDefaultsPolicy) -> None:
     if operation_defaults.default_sleep_poll_interval_s <= 0:
         raise ValueError("operation_defaults.default_sleep_poll_interval_s must be > 0")
+    if operation_defaults.default_runtime_power_mode not in {"continuous", "eco", "deep_sleep"}:
+        raise ValueError(
+            "operation_defaults.default_runtime_power_mode must be one of: continuous, eco, deep_sleep"
+        )
+    if operation_defaults.default_deep_sleep_backend not in {
+        "auto",
+        "pi5_rtc",
+        "external_supervisor",
+        "none",
+    }:
+        raise ValueError(
+            "operation_defaults.default_deep_sleep_backend must be one of: auto, pi5_rtc, external_supervisor, none"
+        )
     if operation_defaults.shutdown_grace_s_default <= 0:
         raise ValueError("operation_defaults.shutdown_grace_s_default must be > 0")
     if operation_defaults.shutdown_grace_s_default > 3600:
@@ -353,6 +368,12 @@ def _parse_edge_policy(version: str, raw: bytes) -> EdgePolicy:
         default_sleep_poll_interval_s=_int_with_default(
             operation_raw, "default_sleep_poll_interval_s", 7 * 24 * 3600
         ),
+        default_runtime_power_mode=_string_with_default(
+            operation_raw, "default_runtime_power_mode", "continuous"
+        ).lower(),
+        default_deep_sleep_backend=_string_with_default(
+            operation_raw, "default_deep_sleep_backend", "auto"
+        ).lower(),
         disable_requires_manual_restart=_bool_with_default(
             operation_raw, "disable_requires_manual_restart", True
         ),

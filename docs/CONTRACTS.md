@@ -16,9 +16,10 @@ Base: `/api/v1`
 - `GET  /devices/{device_id}/telemetry` — raw telemetry points
 - `GET  /devices/{device_id}/timeseries` — bucketed time series
 - `GET  /devices/{device_id}/controls` — device operation + alert mute controls
-- `PATCH /devices/{device_id}/controls/operation` — set `active|sleep|disabled` + sleep interval
+- `PATCH /devices/{device_id}/controls/operation` — set `active|sleep|disabled` + sleep interval + runtime power mode
 - `PATCH /devices/{device_id}/controls/alerts` — set/clear alert notification mute window
 - `POST /device-commands/{command_id}/ack` — device ack for durable control command delivery
+- `POST /device-updates/{deployment_id}/report` — device update lifecycle report for OTA deployments
 - `GET  /alerts` — recent alerts
 - `GET  /device-policy` — edge policy/config for devices (Bearer token; ETag cached)
 - `GET  /contracts/telemetry` — active telemetry contract (public)
@@ -29,6 +30,13 @@ Base: `/api/v1`
 - `GET  /media/{media_id}` — media metadata detail (device auth)
 - `GET  /media/{media_id}/download` — media bytes download (device auth; proxied or signed URL)
 - `POST /admin/devices` — register device (admin surface; optional)
+- `POST /admin/releases/manifests` — create signed release manifest metadata (admin)
+- `GET  /admin/releases/manifests` — list release manifests (admin)
+- `POST /admin/deployments` — create staged deployment (admin)
+- `GET  /admin/deployments/{deployment_id}` — deployment detail (admin)
+- `POST /admin/deployments/{deployment_id}/pause` — pause active deployment (admin)
+- `POST /admin/deployments/{deployment_id}/resume` — resume paused deployment (admin)
+- `POST /admin/deployments/{deployment_id}/abort` — abort deployment (admin)
 - `POST /admin/devices/{device_id}/controls/shutdown` — admin-only one-shot shutdown intent enqueue
 - `GET  /admin/devices/{device_id}/access` — list per-device access grants
 - `PUT  /admin/devices/{device_id}/access/{principal_email}` — create/update per-device access grant
@@ -92,6 +100,10 @@ Power-management telemetry (additive):
 - `metrics.power_input_out_of_range` (boolean)
 - `metrics.power_unsustainable` (boolean)
 - `metrics.power_saver_active` (boolean)
+- `metrics.power_runtime_mode` (`continuous|eco|deep_sleep`)
+- `metrics.power_sleep_backend` (`none|pi5_rtc|external_supervisor`)
+- `metrics.wake_reason` (`scheduled|manual|cold_boot|unknown`)
+- `metrics.network_duty_cycled` (boolean)
 
 A request includes:
 - `points: TelemetryPoint[]`
@@ -179,6 +191,8 @@ A request includes:
 - Device policy includes:
   - `operation_mode` (`active|sleep|disabled`)
   - `sleep_poll_interval_s` (default `604800`)
+  - `runtime_power_mode` (`continuous|eco|deep_sleep`, default `continuous`)
+  - `deep_sleep_backend` (`auto|pi5_rtc|external_supervisor|none`, default `auto`)
   - `disable_requires_manual_restart` (default `true`)
   - `admin_remote_shutdown_enabled` (default `true`)
   - `shutdown_grace_s_default` (default `30`)
@@ -186,12 +200,24 @@ A request includes:
 - Sleep mode keeps telemetry polling active with long cadence.
 - Disabled mode requires local restart to resume agent telemetry.
 
+6da) **Runtime power semantics**
+- `continuous` preserves current always-on behavior.
+- `eco` is software-only and requires no extra hardware.
+- `deep_sleep` is optional:
+  - Raspberry Pi 5 may use onboard RTC wakealarm (`pi5_rtc`)
+  - Raspberry Pi 4 requires optional external supervisor hardware (`external_supervisor`)
+- If `deep_sleep` is selected but no backend is available, the agent falls back to `eco`.
+- In `eco` and `deep_sleep`, routine network reconnects are limited to startup, alert transitions, and heartbeat windows.
+
 6f) **Durable control command delivery**
 - Owner/operator control writes enqueue a per-device durable command with default TTL `15552000s` (180 days).
 - Pending commands are delivered via `GET /api/v1/device-policy` and included in policy ETag state.
 - Pending command payload may include shutdown intent metadata:
   - `shutdown_requested` (default `false`)
   - `shutdown_grace_s` (default `30`)
+- Pending command payload may also include:
+  - `runtime_power_mode`
+  - `deep_sleep_backend`
 - Devices ack command application with `POST /api/v1/device-commands/{command_id}/ack`.
 - Older pending commands are superseded when a newer control command is enqueued.
 
@@ -204,6 +230,23 @@ A request includes:
 - Admin shutdown endpoint enqueues `disabled + shutdown_requested` command payload.
 - Device-side OS shutdown is guarded by `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`.
 - If the guard is unset/false, command still applies logical disable and is acknowledged.
+
+6h) **Device update command delivery**
+- `GET /api/v1/device-policy` may include optional `pending_update_command` with:
+  - `deployment_id`, `manifest_id`, `git_tag`, `commit_sha`
+  - `issued_at`, `expires_at`
+  - `signature`, `signature_key_id`
+  - `rollback_to_tag`, `health_timeout_s`, `power_guard_required`
+- `pending_update_command` must only be surfaced for active deployments where:
+  - the device is selected and in a rollout stage that is currently enabled
+  - deployment command TTL has not expired
+- Device update reports are idempotent by `(deployment_id, device_id, state transition)` and update the latest
+  target status.
+
+6i) **Deployment controller behavior**
+- Stage progression uses ordered rollout percentages (default `1/10/50/100`).
+- A deployment halts when observed stage failure rate exceeds configured threshold.
+- `pause`, `resume`, and `abort` mutate deployment status and emit deployment events for audit.
 
 5) **No secret leakage**
 - Logs and error messages must not include device tokens, admin keys, or database URLs.

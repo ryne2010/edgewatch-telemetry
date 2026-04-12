@@ -10,7 +10,7 @@ from agent.media.storage import MediaRingBuffer
 def main() -> None:
     parser = argparse.ArgumentParser(description="EdgeWatch manual camera capture tool")
     parser.add_argument("camera_id", help="camera id (for example: cam1)")
-    parser.add_argument("--device-id", default="demo-well-001", help="device id")
+    parser.add_argument("--device-id", default="baxter-1", help="device id")
     parser.add_argument(
         "--reason",
         default="manual",

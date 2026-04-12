@@ -4,6 +4,7 @@ import json
 import os
 import random
 import shlex
+import shutil
 import subprocess
 import time
 import uuid
@@ -135,6 +136,243 @@ def _run_remote_shutdown(*, shutdown_grace_s: int, command_id: str) -> bool:
         return False
 
 
+def _run_cmd(cmd: list[str], *, cwd: str | None = None) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=cwd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return proc.returncode, (proc.stdout or "").strip()
+    except Exception as exc:
+        return 1, repr(exc)
+
+
+def _normalized_runtime_power_mode(raw: str | None) -> str:
+    mode = (raw or "continuous").strip().lower()
+    if mode in {"continuous", "eco", "deep_sleep"}:
+        return mode
+    return "continuous"
+
+
+def _normalized_deep_sleep_backend(raw: str | None) -> str:
+    backend = (raw or "auto").strip().lower()
+    if backend in {"auto", "pi5_rtc", "external_supervisor", "none"}:
+        return backend
+    return "auto"
+
+
+def _low_power_state_path(device_id: str) -> Path:
+    default = f"./edgewatch_low_power_state_{device_id}.json"
+    raw = (os.getenv("EDGEWATCH_LOW_POWER_STATE_PATH") or default).strip()
+    if not raw:
+        return Path(default)
+    return Path(raw)
+
+
+def _load_wake_reason(path: Path) -> str:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return "cold_boot"
+    expected = bool(data.get("expected_wake"))
+    try:
+        path.write_text(json.dumps({"expected_wake": False}, sort_keys=True), encoding="utf-8")
+    except Exception:
+        pass
+    return "scheduled" if expected else "cold_boot"
+
+
+def _save_expected_wake(path: Path, *, expected_wake: bool) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"expected_wake": bool(expected_wake)}, sort_keys=True), encoding="utf-8")
+
+
+def _detect_pi_model() -> str:
+    model_path = Path("/proc/device-tree/model")
+    try:
+        raw = model_path.read_bytes().replace(b"\x00", b"")
+    except Exception:
+        return ""
+    return raw.decode("utf-8", errors="replace").strip()
+
+
+def _resolve_deep_sleep_backend(requested_backend: str) -> str:
+    backend = _normalized_deep_sleep_backend(requested_backend)
+    if backend == "none":
+        return "none"
+    model = _detect_pi_model()
+    pi5_supported = "Raspberry Pi 5" in model and shutil.which("rtcwake") is not None
+    external_supported = bool((os.getenv("EDGEWATCH_EXTERNAL_SUPERVISOR_ARM_CMD") or "").strip())
+    if backend == "pi5_rtc":
+        return "pi5_rtc" if pi5_supported else "none"
+    if backend == "external_supervisor":
+        return "external_supervisor" if external_supported else "none"
+    if pi5_supported:
+        return "pi5_rtc"
+    if external_supported:
+        return "external_supervisor"
+    return "none"
+
+
+def _resolve_applied_runtime_mode(*, requested_mode: str, requested_backend: str) -> tuple[str, str]:
+    mode = _normalized_runtime_power_mode(requested_mode)
+    if mode != "deep_sleep":
+        return mode, "none"
+    backend = _resolve_deep_sleep_backend(requested_backend)
+    if backend == "none":
+        return "eco", "none"
+    return "deep_sleep", backend
+
+
+def _best_effort_command(cmd: list[str], *, label: str) -> bool:
+    rc, out = _run_cmd(cmd)
+    if rc == 0:
+        return True
+    print(f"[edgewatch-agent] {label} command failed rc={rc}: {out[:200]}")
+    return False
+
+
+def _set_wifi_enabled(enabled: bool) -> bool:
+    if shutil.which("nmcli"):
+        return _best_effort_command(["nmcli", "radio", "wifi", "on" if enabled else "off"], label="wifi")
+    if shutil.which("rfkill"):
+        return _best_effort_command(
+            ["rfkill", "unblock" if enabled else "block", "wifi"],
+            label="wifi",
+        )
+    return False
+
+
+def _set_bluetooth_enabled(enabled: bool) -> bool:
+    if shutil.which("nmcli"):
+        return _best_effort_command(
+            ["nmcli", "radio", "bluetooth", "on" if enabled else "off"],
+            label="bluetooth",
+        )
+    if shutil.which("rfkill"):
+        return _best_effort_command(
+            ["rfkill", "unblock" if enabled else "block", "bluetooth"],
+            label="bluetooth",
+        )
+    return False
+
+
+def _set_hdmi_enabled(enabled: bool) -> bool:
+    if shutil.which("vcgencmd"):
+        return _best_effort_command(
+            ["vcgencmd", "display_power", "1" if enabled else "0"],
+            label="hdmi",
+        )
+    if shutil.which("tvservice"):
+        return _best_effort_command(["tvservice", "-p" if enabled else "-o"], label="hdmi")
+    return False
+
+
+def _apply_low_power_platform_settings(*, low_power_active: bool, cellular_enabled: bool) -> None:
+    if not cellular_enabled:
+        return
+    _set_wifi_enabled(not low_power_active)
+    _set_bluetooth_enabled(not low_power_active)
+    _set_hdmi_enabled(not low_power_active)
+
+
+def _enter_deep_sleep(*, backend: str, interval_s: int, state_path: Path) -> bool:
+    seconds = max(60, int(interval_s))
+    _save_expected_wake(state_path, expected_wake=True)
+    if backend == "pi5_rtc":
+        rc, out = _run_cmd(["rtcwake", "-m", "off", "-s", str(seconds)])
+        if rc == 0:
+            return True
+        print(f"[edgewatch-agent] pi5_rtc deep sleep failed: {out[:200]}")
+        _save_expected_wake(state_path, expected_wake=False)
+        return False
+    if backend == "external_supervisor":
+        arm_raw = (os.getenv("EDGEWATCH_EXTERNAL_SUPERVISOR_ARM_CMD") or "").strip()
+        if not arm_raw:
+            _save_expected_wake(state_path, expected_wake=False)
+            return False
+        try:
+            arm_cmd = [part.format(seconds=seconds) for part in shlex.split(arm_raw)]
+        except Exception as exc:
+            print(f"[edgewatch-agent] invalid EDGEWATCH_EXTERNAL_SUPERVISOR_ARM_CMD: {exc!r}")
+            _save_expected_wake(state_path, expected_wake=False)
+            return False
+        rc_arm, out_arm = _run_cmd(arm_cmd)
+        if rc_arm != 0:
+            print(f"[edgewatch-agent] external supervisor arm failed: {out_arm[:200]}")
+            _save_expected_wake(state_path, expected_wake=False)
+            return False
+        rc_halt, out_halt = _run_cmd(["sudo", "shutdown", "-h", "now"])
+        if rc_halt == 0:
+            return True
+        print(f"[edgewatch-agent] external supervisor halt failed: {out_halt[:200]}")
+        _save_expected_wake(state_path, expected_wake=False)
+        return False
+    _save_expected_wake(state_path, expected_wake=False)
+    return False
+
+
+def _verify_tag_commit(repo_dir: str, *, git_tag: str, commit_sha: str) -> tuple[bool, str]:
+    rc_tag, out_tag = _run_cmd(["git", "-C", repo_dir, "rev-list", "-n", "1", git_tag])
+    if rc_tag != 0:
+        return False, f"unable to resolve tag {git_tag}: {out_tag[:240]}"
+    resolved = out_tag.strip().splitlines()[-1].strip() if out_tag.strip() else ""
+    if not resolved:
+        return False, f"empty commit for tag {git_tag}"
+    if resolved.lower() != commit_sha.strip().lower():
+        return False, f"tag_commit_mismatch expected={commit_sha} actual={resolved}"
+    return True, "ok"
+
+
+def _apply_git_tag_release(
+    *,
+    repo_dir: str,
+    releases_root: str,
+    current_symlink: str,
+    git_tag: str,
+) -> tuple[bool, str]:
+    release_dir = Path(releases_root) / git_tag
+    current_link = Path(current_symlink)
+    archive_path = release_dir.parent / f".edgewatch-{git_tag}.tar"
+
+    rc_fetch, out_fetch = _run_cmd(["git", "-C", repo_dir, "fetch", "--tags", "--prune"])
+    if rc_fetch != 0:
+        return False, f"git_fetch_failed: {out_fetch[:240]}"
+
+    if release_dir.exists():
+        shutil.rmtree(release_dir, ignore_errors=True)
+    release_dir.mkdir(parents=True, exist_ok=True)
+    rc_archive, out_archive = _run_cmd(
+        ["git", "-C", repo_dir, "archive", "--format=tar", git_tag, "-o", str(archive_path)],
+    )
+    if rc_archive != 0:
+        return False, f"git_archive_failed: {out_archive[:240]}"
+
+    rc_extract, out_extract = _run_cmd(
+        ["tar", "-xf", str(archive_path), "-C", str(release_dir)],
+    )
+    try:
+        archive_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    if rc_extract != 0:
+        return False, f"archive_extract_failed: {out_extract[:240]}"
+
+    tmp_link = current_link.with_suffix(".tmp")
+    try:
+        if tmp_link.exists() or tmp_link.is_symlink():
+            tmp_link.unlink()
+        tmp_link.symlink_to(release_dir)
+        tmp_link.replace(current_link)
+    except Exception as exc:
+        return False, f"symlink_swap_failed: {exc!r}"
+    return True, "ok"
+
+
 def build_buffer_from_env(path: str) -> SqliteBuffer:
     return SqliteBuffer(
         path,
@@ -174,6 +412,30 @@ def ack_control_command(
         f"{api_url.rstrip('/')}/api/v1/device-commands/{command_id}/ack",
         headers={"Authorization": f"Bearer {token}"},
         json={},
+        timeout=timeout_s,
+    )
+
+
+def report_update_state(
+    session: requests.Session,
+    *,
+    api_url: str,
+    token: str,
+    deployment_id: str,
+    state: str,
+    reason_code: str | None = None,
+    reason_detail: str | None = None,
+    timeout_s: float = 5.0,
+) -> requests.Response:
+    payload: dict[str, Any] = {"state": state}
+    if reason_code:
+        payload["reason_code"] = reason_code
+    if reason_detail:
+        payload["reason_detail"] = reason_detail
+    return session.post(
+        f"{api_url.rstrip('/')}/api/v1/device-updates/{deployment_id}/report",
+        headers={"Authorization": f"Bearer {token}"},
+        json=payload,
         timeout=timeout_s,
     )
 
@@ -218,6 +480,31 @@ def _save_command_state(
     tmp_path.replace(path)
 
 
+def _update_state_path(device_id: str) -> Path:
+    default = f"./edgewatch_update_state_{device_id}.json"
+    raw = (os.getenv("EDGEWATCH_UPDATE_STATE_PATH") or default).strip()
+    return Path(raw or default)
+
+
+def _load_update_state(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _save_update_state(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(dict(payload), sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def _parse_iso_utc(value: str | None) -> datetime | None:
     if value is None:
         return None
@@ -254,6 +541,7 @@ class AgentState:
 
     last_sent_at: float = 0.0
     last_heartbeat_at: float = 0.0
+    last_network_sync_at: float = 0.0
     last_alert_snapshot_at: float = 0.0
     last_metrics_snapshot: Dict[str, Any] = field(default_factory=dict)
 
@@ -263,6 +551,7 @@ class AgentState:
     last_snapshot_cap_log_at: float = 0.0
     last_power_saver_active: bool = False
     last_power_saver_log_at: float = 0.0
+    low_power_tuning_active: bool = False
     disabled_latched: bool = False
     last_disabled_log_at: float = 0.0
     last_command_ack_log_at: float = 0.0
@@ -466,6 +755,10 @@ def _minimal_heartbeat_metrics(metrics: Mapping[str, Any]) -> Dict[str, Any]:
         "power_input_out_of_range",
         "power_unsustainable",
         "power_saver_active",
+        "power_runtime_mode",
+        "power_sleep_backend",
+        "wake_reason",
+        "network_duty_cycled",
         "water_pressure_psi",
         "pump_on",
     ):
@@ -504,6 +797,16 @@ def _media_disabled_by_power(*, policy: DevicePolicy, power_saver_active: bool) 
     return power_saver_active and policy.power_management.media_disabled_in_saver
 
 
+def _media_disabled_by_runtime_power_mode(*, runtime_power_mode: str) -> bool:
+    return runtime_power_mode in {"eco", "deep_sleep"}
+
+
+def _should_network_sync(*, runtime_power_mode: str, send_reason: str | None) -> bool:
+    if runtime_power_mode not in {"eco", "deep_sleep"}:
+        return True
+    return send_reason in {"startup", "state_change", "alert_change", "heartbeat"}
+
+
 def _normalized_operation_mode(raw: str) -> str:
     mode = (raw or "active").strip().lower()
     if mode in {"active", "sleep", "disabled"}:
@@ -518,9 +821,11 @@ def _apply_pending_control_command_override(
     pending_ack_command_id: str | None,
     command_state_path: Path,
     now_utc: datetime | None = None,
-) -> tuple[str, int, str | None, str | None, str | None]:
+) -> tuple[str, int, str, str, str | None, str | None, str | None]:
     operation_mode = _normalized_operation_mode(policy.operation_mode)
     sleep_poll_interval_s = max(60, int(policy.sleep_poll_interval_s))
+    runtime_power_mode = _normalized_runtime_power_mode(getattr(policy, "runtime_power_mode", "continuous"))
+    deep_sleep_backend = _normalized_deep_sleep_backend(getattr(policy, "deep_sleep_backend", "auto"))
     applied_command_id: str | None = None
 
     pending_command = policy.pending_control_command
@@ -529,6 +834,8 @@ def _apply_pending_control_command_override(
         return (
             operation_mode,
             sleep_poll_interval_s,
+            runtime_power_mode,
+            deep_sleep_backend,
             last_applied_command_id,
             pending_ack_command_id,
             applied_command_id,
@@ -540,6 +847,8 @@ def _apply_pending_control_command_override(
         return (
             operation_mode,
             sleep_poll_interval_s,
+            runtime_power_mode,
+            deep_sleep_backend,
             last_applied_command_id,
             pending_ack_command_id,
             applied_command_id,
@@ -547,6 +856,12 @@ def _apply_pending_control_command_override(
 
     operation_mode = _normalized_operation_mode(pending_command.operation_mode)
     sleep_poll_interval_s = max(60, int(pending_command.sleep_poll_interval_s))
+    runtime_power_mode = _normalized_runtime_power_mode(
+        getattr(pending_command, "runtime_power_mode", "continuous")
+    )
+    deep_sleep_backend = _normalized_deep_sleep_backend(
+        getattr(pending_command, "deep_sleep_backend", "auto")
+    )
 
     if pending_command.id != last_applied_command_id:
         last_applied_command_id = pending_command.id
@@ -561,9 +876,38 @@ def _apply_pending_control_command_override(
     return (
         operation_mode,
         sleep_poll_interval_s,
+        runtime_power_mode,
+        deep_sleep_backend,
         last_applied_command_id,
         pending_ack_command_id,
         applied_command_id,
+    )
+
+
+def _preview_pending_control_command_override(
+    *,
+    policy: DevicePolicy,
+    now_utc: datetime | None = None,
+) -> tuple[str, int, str, str]:
+    operation_mode = _normalized_operation_mode(policy.operation_mode)
+    sleep_poll_interval_s = max(60, int(policy.sleep_poll_interval_s))
+    runtime_power_mode = _normalized_runtime_power_mode(getattr(policy, "runtime_power_mode", "continuous"))
+    deep_sleep_backend = _normalized_deep_sleep_backend(getattr(policy, "deep_sleep_backend", "auto"))
+
+    pending_command = policy.pending_control_command
+    ts = now_utc or datetime.now(timezone.utc)
+    if pending_command is None:
+        return operation_mode, sleep_poll_interval_s, runtime_power_mode, deep_sleep_backend
+
+    expires_at = _parse_iso_utc(pending_command.expires_at)
+    if expires_at is not None and ts >= expires_at:
+        return operation_mode, sleep_poll_interval_s, runtime_power_mode, deep_sleep_backend
+
+    return (
+        _normalized_operation_mode(pending_command.operation_mode),
+        max(60, int(pending_command.sleep_poll_interval_s)),
+        _normalized_runtime_power_mode(getattr(pending_command, "runtime_power_mode", "continuous")),
+        _normalized_deep_sleep_backend(getattr(pending_command, "deep_sleep_backend", "auto")),
     )
 
 
@@ -712,6 +1056,250 @@ def _maybe_execute_pending_shutdown(
     state.pending_shutdown_execute_at = now_s + 300.0
     state.last_shutdown_log_at = now_s
     return False
+
+
+def _report_update_state_best_effort(
+    *,
+    session: requests.Session,
+    api_url: str,
+    token: str,
+    deployment_id: str,
+    state: str,
+    reason_code: str | None = None,
+    reason_detail: str | None = None,
+) -> None:
+    try:
+        resp = report_update_state(
+            session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state=state,
+            reason_code=reason_code,
+            reason_detail=reason_detail,
+        )
+        if not (200 <= resp.status_code < 300):
+            print(
+                "[edgewatch-agent] update report failed deployment=%s state=%s status=%s body=%s"
+                % (deployment_id, state, resp.status_code, (resp.text or "")[:200])
+            )
+    except Exception as exc:
+        print(
+            "[edgewatch-agent] update report failed deployment=%s state=%s err=%r"
+            % (deployment_id, state, exc)
+        )
+
+
+def _maybe_apply_pending_update_command(
+    *,
+    session: requests.Session,
+    api_url: str,
+    token: str,
+    policy: DevicePolicy,
+    update_state_path: Path,
+    power_input_out_of_range: bool,
+    power_unsustainable: bool,
+    now_s: float,
+) -> None:
+    command = policy.pending_update_command
+    if command is None:
+        return
+
+    expires_at = _parse_iso_utc(command.expires_at)
+    if expires_at is not None and datetime.now(timezone.utc) >= expires_at:
+        return
+
+    deployment_id = command.deployment_id.strip()
+    if not deployment_id:
+        return
+
+    state_data = _load_update_state(update_state_path)
+    last_applied_deployment_id = str(state_data.get("last_applied_deployment_id") or "").strip() or None
+    last_healthy_tag = str(state_data.get("last_healthy_tag") or "").strip() or None
+    last_failed_deployment_id = str(state_data.get("last_failed_deployment_id") or "").strip() or None
+    last_failed_at_raw = state_data.get("last_failed_at")
+    try:
+        last_failed_at = float(last_failed_at_raw) if last_failed_at_raw is not None else 0.0
+    except Exception:
+        last_failed_at = 0.0
+
+    if last_applied_deployment_id == deployment_id and last_healthy_tag == command.git_tag:
+        return
+
+    if command.power_guard_required and (power_input_out_of_range or power_unsustainable):
+        last_deferred_key = str(state_data.get("last_deferred_key") or "")
+        last_deferred_at_raw = state_data.get("last_deferred_at")
+        try:
+            last_deferred_at = float(last_deferred_at_raw) if last_deferred_at_raw is not None else 0.0
+        except Exception:
+            last_deferred_at = 0.0
+        deferred_key = f"{deployment_id}:{int(power_input_out_of_range)}:{int(power_unsustainable)}"
+        if deferred_key != last_deferred_key or (now_s - last_deferred_at) >= 1800.0:
+            _report_update_state_best_effort(
+                session=session,
+                api_url=api_url,
+                token=token,
+                deployment_id=deployment_id,
+                state="deferred",
+                reason_code="power_guard",
+                reason_detail=(
+                    "input_out_of_range=%s unsustainable=%s" % (power_input_out_of_range, power_unsustainable)
+                ),
+            )
+            state_data["last_deferred_key"] = deferred_key
+            state_data["last_deferred_at"] = now_s
+            _save_update_state(update_state_path, state_data)
+        return
+
+    retry_cooldown_s = max(60.0, min(1800.0, float(max(1, int(command.health_timeout_s)))))
+    if last_failed_deployment_id == deployment_id and (now_s - last_failed_at) < retry_cooldown_s:
+        return
+
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
+        state="downloading",
+    )
+
+    repo_dir = (os.getenv("EDGEWATCH_REPO_DIR") or str(Path(__file__).resolve().parents[1])).strip()
+    releases_root = (os.getenv("EDGEWATCH_RELEASES_ROOT") or "/opt/edgewatch/releases").strip()
+    current_symlink = (os.getenv("EDGEWATCH_CURRENT_SYMLINK") or "/opt/edgewatch/current").strip()
+    allow_apply = _parse_bool_env("EDGEWATCH_ENABLE_OTA_APPLY", default=False)
+
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
+        state="verifying",
+    )
+    verify_ok, verify_reason = _verify_tag_commit(
+        repo_dir=repo_dir,
+        git_tag=command.git_tag,
+        commit_sha=command.commit_sha,
+    )
+    if not verify_ok:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="failed",
+            reason_code="verify_failed",
+            reason_detail=verify_reason,
+        )
+        state_data["last_failed_deployment_id"] = deployment_id
+        state_data["last_failed_at"] = now_s
+        _save_update_state(update_state_path, state_data)
+        return
+
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
+        state="applying",
+    )
+
+    if not allow_apply:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="restarting",
+            reason_code="dry_run",
+            reason_detail="EDGEWATCH_ENABLE_OTA_APPLY=0",
+        )
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="healthy",
+            reason_code="dry_run",
+            reason_detail="no filesystem changes applied",
+        )
+        state_data["last_applied_deployment_id"] = deployment_id
+        state_data["last_healthy_tag"] = command.git_tag
+        state_data["last_failed_deployment_id"] = None
+        state_data["last_failed_at"] = 0.0
+        _save_update_state(update_state_path, state_data)
+        return
+
+    apply_ok, apply_reason = _apply_git_tag_release(
+        repo_dir=repo_dir,
+        releases_root=releases_root,
+        current_symlink=current_symlink,
+        git_tag=command.git_tag,
+    )
+    if not apply_ok:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="failed",
+            reason_code="apply_failed",
+            reason_detail=apply_reason,
+        )
+        rolled_back = False
+        if command.rollback_to_tag:
+            rb_ok, rb_reason = _apply_git_tag_release(
+                repo_dir=repo_dir,
+                releases_root=releases_root,
+                current_symlink=current_symlink,
+                git_tag=command.rollback_to_tag,
+            )
+            if rb_ok:
+                rolled_back = True
+                _report_update_state_best_effort(
+                    session=session,
+                    api_url=api_url,
+                    token=token,
+                    deployment_id=deployment_id,
+                    state="rolled_back",
+                    reason_code="auto_rollback",
+                    reason_detail=f"rollback_to_tag={command.rollback_to_tag}",
+                )
+            else:
+                _report_update_state_best_effort(
+                    session=session,
+                    api_url=api_url,
+                    token=token,
+                    deployment_id=deployment_id,
+                    state="failed",
+                    reason_code="rollback_failed",
+                    reason_detail=rb_reason,
+                )
+        state_data["last_failed_deployment_id"] = deployment_id
+        state_data["last_failed_at"] = now_s
+        if rolled_back and command.rollback_to_tag:
+            state_data["last_healthy_tag"] = command.rollback_to_tag
+        _save_update_state(update_state_path, state_data)
+        return
+
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
+        state="restarting",
+    )
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
+        state="healthy",
+    )
+    state_data["last_applied_deployment_id"] = deployment_id
+    state_data["last_healthy_tag"] = command.git_tag
+    state_data["last_failed_deployment_id"] = None
+    state_data["last_failed_at"] = 0.0
+    _save_update_state(update_state_path, state_data)
 
 
 def _flush_buffer(
@@ -875,6 +1463,8 @@ def _default_policy(device_id: str) -> DevicePolicy:
         offline_after_s=int(os.getenv("OFFLINE_AFTER_S", "600")),
         operation_mode=_normalized_operation_mode(os.getenv("OPERATION_MODE", "active")),
         sleep_poll_interval_s=max(60, int(os.getenv("SLEEP_POLL_INTERVAL_S", str(7 * 24 * 3600)))),
+        runtime_power_mode=_normalized_runtime_power_mode(os.getenv("RUNTIME_POWER_MODE", "continuous")),
+        deep_sleep_backend=_normalized_deep_sleep_backend(os.getenv("DEEP_SLEEP_BACKEND", "auto")),
         disable_requires_manual_restart=_parse_bool_env("DISABLE_REQUIRES_MANUAL_RESTART", default=True),
         reporting=reporting,
         delta_thresholds={
@@ -897,6 +1487,7 @@ def _default_policy(device_id: str) -> DevicePolicy:
         cost_caps=cost_caps,
         power_management=power_management,
         pending_control_command=None,
+        pending_update_command=None,
     )
 
 
@@ -948,7 +1539,7 @@ def main() -> None:
     load_dotenv(Path(__file__).resolve().parent / ".env")
 
     api_url = os.getenv("EDGEWATCH_API_URL", "http://localhost:8082")
-    device_id = os.getenv("EDGEWATCH_DEVICE_ID", "demo-well-001")
+    device_id = os.getenv("EDGEWATCH_DEVICE_ID", "baxter-1")
     token = os.getenv("EDGEWATCH_DEVICE_TOKEN", "dev-device-token-001")
 
     buffer_path = os.getenv("BUFFER_DB_PATH", "./edgewatch_buffer.sqlite")
@@ -994,11 +1585,14 @@ def main() -> None:
 
     allow_remote_shutdown = _parse_bool_env("EDGEWATCH_ALLOW_REMOTE_SHUTDOWN", default=False)
     command_state_path = _command_state_path(device_id)
+    update_state_path = _update_state_path(device_id)
+    low_power_state_path = _low_power_state_path(device_id)
     last_applied_command_id, pending_ack_command_id = _load_command_state(command_state_path)
+    wake_reason = _load_wake_reason(low_power_state_path)
 
     print(
         "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s cellular=%s "
-        "cost_caps=%s power_state=%s command_state=%s remote_shutdown=%s"
+        "cost_caps=%s power_state=%s command_state=%s update_state=%s low_power_state=%s wake_reason=%s remote_shutdown=%s"
         % (
             device_id,
             api_url,
@@ -1010,6 +1604,9 @@ def main() -> None:
             cost_cap_state.path,
             power_manager.path,
             command_state_path,
+            update_state_path,
+            low_power_state_path,
+            wake_reason,
             "enabled" if allow_remote_shutdown else "disabled",
         )
     )
@@ -1019,8 +1616,23 @@ def main() -> None:
     while True:
         now = time.time()
 
-        # Refresh device policy (best-effort).
-        if now >= next_policy_refresh_at:
+        (
+            _preview_operation_mode,
+            _preview_sleep_poll_interval_s,
+            preview_requested_runtime_power_mode,
+            preview_requested_deep_sleep_backend,
+        ) = _preview_pending_control_command_override(
+            policy=policy,
+            now_utc=datetime.now(timezone.utc),
+        )
+        preview_runtime_power_mode, _preview_power_sleep_backend = _resolve_applied_runtime_mode(
+            requested_mode=preview_requested_runtime_power_mode,
+            requested_backend=preview_requested_deep_sleep_backend,
+        )
+
+        # Continuous devices refresh policy eagerly. Duty-cycled modes refresh on
+        # the next network sync window later in the loop.
+        if preview_runtime_power_mode == "continuous" and now >= next_policy_refresh_at:
             try:
                 pol, etag, max_age = fetch_device_policy(session, api_url=api_url, token=token, cached=cached)
                 if pol is not None:
@@ -1050,6 +1662,8 @@ def main() -> None:
         (
             operation_mode,
             sleep_poll_interval_s,
+            requested_runtime_power_mode,
+            requested_deep_sleep_backend,
             last_applied_command_id,
             pending_ack_command_id,
             applied_command_id,
@@ -1062,13 +1676,27 @@ def main() -> None:
         )
         if applied_command_id is not None:
             print(
-                "[edgewatch-agent] applied pending control command id=%s mode=%s sleep_poll_interval_s=%s"
+                "[edgewatch-agent] applied pending control command id=%s mode=%s sleep_poll_interval_s=%s runtime_power_mode=%s deep_sleep_backend=%s"
                 % (
                     applied_command_id,
                     operation_mode,
                     sleep_poll_interval_s,
+                    requested_runtime_power_mode,
+                    requested_deep_sleep_backend,
                 )
             )
+
+        runtime_power_mode, power_sleep_backend = _resolve_applied_runtime_mode(
+            requested_mode=requested_runtime_power_mode,
+            requested_backend=requested_deep_sleep_backend,
+        )
+        low_power_active = runtime_power_mode in {"eco", "deep_sleep"}
+        if low_power_active != state.low_power_tuning_active:
+            _apply_low_power_platform_settings(
+                low_power_active=low_power_active,
+                cellular_enabled=cellular_monitor is not None,
+            )
+            state.low_power_tuning_active = low_power_active
 
         _sync_pending_shutdown_state(
             state=state,
@@ -1120,6 +1748,21 @@ def main() -> None:
 
         power_eval = power_manager.evaluate(metrics=metrics, policy=policy.power_management)
         metrics.update(power_eval.telemetry_flags())
+        metrics["power_runtime_mode"] = runtime_power_mode
+        metrics["power_sleep_backend"] = power_sleep_backend
+        metrics["wake_reason"] = wake_reason
+        metrics["network_duty_cycled"] = runtime_power_mode in {"eco", "deep_sleep"}
+
+        _maybe_apply_pending_update_command(
+            session=session,
+            api_url=api_url,
+            token=token,
+            policy=policy,
+            update_state_path=update_state_path,
+            power_input_out_of_range=power_eval.power_input_out_of_range,
+            power_unsustainable=power_eval.power_unsustainable,
+            now_s=now,
+        )
 
         current_state, current_alerts = _compute_state(metrics, state.last_alerts, policy)
         alert_transition = current_alerts != state.last_alerts
@@ -1164,6 +1807,7 @@ def main() -> None:
             operation_mode=operation_mode,
             sleep_poll_interval_s=sleep_poll_interval_s,
         )
+        heartbeat_reference_at = state.last_network_sync_at if low_power_active else state.last_heartbeat_at
 
         send_reason: Optional[str] = None
         payload_metrics: Dict[str, Any] = {}
@@ -1175,11 +1819,11 @@ def main() -> None:
             elif alert_transition:
                 send_reason = "state_change" if current_state != state.last_state else "alert_change"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
-            elif now - state.last_heartbeat_at >= heartbeat_interval_s:
+            elif now - heartbeat_reference_at >= heartbeat_interval_s:
                 send_reason = "heartbeat"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
         elif heartbeat_only_mode:
-            if now - state.last_heartbeat_at >= heartbeat_interval_s:
+            if now - heartbeat_reference_at >= heartbeat_interval_s:
                 send_reason = "heartbeat"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
         else:
@@ -1190,7 +1834,7 @@ def main() -> None:
                 elif alert_transition:
                     send_reason = "state_change" if current_state != state.last_state else "alert_change"
                     payload_metrics = dict(metrics)
-                elif now - state.last_heartbeat_at >= heartbeat_interval_s:
+                elif now - heartbeat_reference_at >= heartbeat_interval_s:
                     send_reason = "heartbeat"
                     payload_metrics = _minimal_heartbeat_metrics(metrics)
 
@@ -1213,7 +1857,7 @@ def main() -> None:
                     payload_metrics = dict(metrics)
 
                 # Heartbeat (only after a period of silence; last_heartbeat_at updates on any record)
-                elif now - state.last_heartbeat_at >= heartbeat_interval_s:
+                elif now - heartbeat_reference_at >= heartbeat_interval_s:
                     send_reason = "heartbeat"
                     payload_metrics = _minimal_heartbeat_metrics(metrics)
 
@@ -1227,6 +1871,11 @@ def main() -> None:
                     if changed:
                         send_reason = "delta"
                         payload_metrics = {k: metrics[k] for k in changed}
+
+        low_power_sync_requested = _should_network_sync(
+            runtime_power_mode=runtime_power_mode,
+            send_reason=send_reason,
+        )
 
         if send_reason:
             # Update local baseline for delta decisions.
@@ -1246,19 +1895,57 @@ def main() -> None:
             # Update local baseline immediately; even if offline we buffer the point.
             state.last_metrics_snapshot.update(baseline_update)
 
-            # If we're in backoff, don't burn energy attempting network.
-            if now < state.next_network_attempt_at:
+            if low_power_active and not low_power_sync_requested:
+                buf.enqueue(point["message_id"], point, point["ts"])
+                _maybe_prune(buf, policy)
+                print(
+                    f"[edgewatch-agent] network duty cycle active -> buffered ({send_reason}) queue={buf.count()}"
+                )
+            elif now < state.next_network_attempt_at:
                 buf.enqueue(point["message_id"], point, point["ts"])
                 _maybe_prune(buf, policy)
                 print(f"[edgewatch-agent] backoff active -> buffered ({send_reason}) queue={buf.count()}")
             else:
                 try:
+                    if low_power_sync_requested:
+                        try:
+                            pol, etag, max_age = fetch_device_policy(
+                                session,
+                                api_url=api_url,
+                                token=token,
+                                cached=cached,
+                            )
+                            if pol is not None:
+                                policy = pol
+                                if etag:
+                                    save_cached_policy(policy, etag)
+                                    cached = load_cached_policy()
+                            ttl = max_age if max_age is not None else policy.cache_max_age_s
+                            next_policy_refresh_at = time.time() + float(ttl)
+                        except Exception as exc:
+                            print(f"[edgewatch-agent] low-power sync policy fetch failed: {exc!r}")
+
+                    current_point_buffered = False
 
                     def _record_sent(points: List[Dict[str, Any]]) -> None:
                         cost_cap_state.record_bytes_sent(_estimate_ingest_payload_bytes(points))
 
+                    if low_power_active:
+                        buf.enqueue(point["message_id"], point, point["ts"])
+                        current_point_buffered = True
+                        _maybe_prune(buf, policy)
+                        ok = _flush_buffer(
+                            session=session,
+                            buf=buf,
+                            api_url=api_url,
+                            token=token,
+                            max_points_per_batch=policy.reporting.max_points_per_batch,
+                            on_batch_sent=_record_sent,
+                        )
+                        if not ok:
+                            raise RuntimeError("buffer flush failed")
                     # Flush buffered non-heartbeat points only when not in heartbeat/power saver/sleep modes.
-                    if not heartbeat_only_mode and not power_saver_active and operation_mode != "sleep":
+                    elif not heartbeat_only_mode and not power_saver_active and operation_mode != "sleep":
                         ok = _flush_buffer(
                             session=session,
                             buf=buf,
@@ -1270,22 +1957,32 @@ def main() -> None:
                         if not ok:
                             raise RuntimeError("buffer flush failed")
 
-                    resp = post_points(session, api_url, token, [point])
-                    if 200 <= resp.status_code < 300:
-                        _record_sent([point])
+                    if not low_power_active:
+                        resp = post_points(session, api_url, token, [point])
+                        if 200 <= resp.status_code < 300:
+                            _record_sent([point])
+                        else:
+                            if resp.status_code == 429:
+                                ra = _parse_retry_after_seconds(resp.headers)
+                                raise RateLimited(f"send failed: 429 {resp.text[:200]}", retry_after_s=ra)
+                            raise RuntimeError(f"send failed: {resp.status_code} {resp.text[:200]}")
+
+                    state.last_network_sync_at = now
+                    if low_power_active:
+                        print(
+                            f"[edgewatch-agent] synced ({send_reason}) state={current_state} alerts={sorted(current_alerts)} queue={buf.count()}"
+                        )
+                    else:
                         state.consecutive_failures = 0
-                        state.next_network_attempt_at = 0.0
                         print(
                             f"[edgewatch-agent] sent ({send_reason}) state={current_state} alerts={sorted(current_alerts)} queue={buf.count()}"
                         )
-                    else:
-                        if resp.status_code == 429:
-                            ra = _parse_retry_after_seconds(resp.headers)
-                            raise RateLimited(f"send failed: 429 {resp.text[:200]}", retry_after_s=ra)
-                        raise RuntimeError(f"send failed: {resp.status_code} {resp.text[:200]}")
+                    state.consecutive_failures = 0
+                    state.next_network_attempt_at = 0.0
 
                 except Exception as e:
-                    buf.enqueue(point["message_id"], point, point["ts"])
+                    if not low_power_active or not current_point_buffered:
+                        buf.enqueue(point["message_id"], point, point["ts"])
                     _maybe_prune(buf, policy)
 
                     retry_after_s = e.retry_after_s if isinstance(e, RateLimited) else None
@@ -1325,6 +2022,13 @@ def main() -> None:
                 if now - state.last_power_saver_log_at >= 60.0:
                     print("[edgewatch-agent] media disabled while operation mode is sleep/disabled")
                     state.last_power_saver_log_at = now
+                if runtime_power_mode == "deep_sleep":
+                    if _enter_deep_sleep(
+                        backend=power_sleep_backend,
+                        interval_s=sample_s,
+                        state_path=low_power_state_path,
+                    ):
+                        return
                 _sleep(sample_s)
                 continue
 
@@ -1336,6 +2040,32 @@ def main() -> None:
                 if now - state.last_power_saver_log_at >= 60.0:
                     print("[edgewatch-agent] media disabled while power saver is active")
                     state.last_power_saver_log_at = now
+                if runtime_power_mode == "deep_sleep":
+                    if _enter_deep_sleep(
+                        backend=power_sleep_backend,
+                        interval_s=sample_s,
+                        state_path=low_power_state_path,
+                    ):
+                        return
+                _sleep(sample_s)
+                continue
+
+            media_disabled_by_runtime_mode = _media_disabled_by_runtime_power_mode(
+                runtime_power_mode=runtime_power_mode,
+            )
+            if media_disabled_by_runtime_mode:
+                if now - state.last_power_saver_log_at >= 60.0:
+                    print(
+                        "[edgewatch-agent] media disabled while runtime power mode is %s" % runtime_power_mode
+                    )
+                    state.last_power_saver_log_at = now
+                if runtime_power_mode == "deep_sleep":
+                    if _enter_deep_sleep(
+                        backend=power_sleep_backend,
+                        interval_s=sample_s,
+                        state_path=low_power_state_path,
+                    ):
+                        return
                 _sleep(sample_s)
                 continue
 
@@ -1402,6 +2132,14 @@ def main() -> None:
                     print(f"[edgewatch-agent] media upload deferred: {exc}")
                 except Exception as exc:
                     print(f"[edgewatch-agent] media upload failed: {exc!r}")
+
+        if runtime_power_mode == "deep_sleep":
+            if _enter_deep_sleep(
+                backend=power_sleep_backend,
+                interval_s=sample_s,
+                state_path=low_power_state_path,
+            ):
+                return
 
         _sleep(sample_s)
 

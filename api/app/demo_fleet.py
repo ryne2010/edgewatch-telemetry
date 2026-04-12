@@ -5,8 +5,9 @@ where the Nth device is derived deterministically.
 
 Rules
 - Indexing is **1-based**.
-- If the base value ends with a 3-digit suffix (e.g. `demo-well-001`), we replace
-  that suffix with the requested index.
+- The default local/demo seed (`baxter-1`) expands through a shared named sample fleet.
+- If the base value ends with a 3-digit suffix (for example `demo-well-001`), we
+  replace that suffix with the requested index.
 - Otherwise, we append `-NNN` for n > 1.
 
 Why this matters
@@ -20,6 +21,20 @@ import re
 
 
 _SUFFIX_RE = re.compile(r"^(.*?)(\d{3})$")
+_NAMED_SAMPLE_FLEET = (
+    "baxter-1",
+    "sprinklers-west",
+    "sprinklers-middle",
+    "sprinklers-tw",
+    "sprinklers-south",
+    "lms-1",
+    "lms-2",
+    "lms-3",
+    "lms-4",
+    "deen-1",
+    "deen-2",
+)
+_NAMED_SAMPLE_INDEX = {value: idx for idx, value in enumerate(_NAMED_SAMPLE_FLEET)}
 
 
 def split_suffix_3digits(value: str) -> tuple[str, int] | None:
@@ -29,11 +44,27 @@ def split_suffix_3digits(value: str) -> tuple[str, int] | None:
     return m.group(1), int(m.group(2))
 
 
+def _derive_named_sample(value: str, n: int) -> str | None:
+    idx = _NAMED_SAMPLE_INDEX.get(value)
+    if idx is None:
+        return None
+
+    target = idx + (n - 1)
+    if target < len(_NAMED_SAMPLE_FLEET):
+        return _NAMED_SAMPLE_FLEET[target]
+    return None
+
+
 def derive_nth(value: str, n: int) -> str:
     """Derive the Nth demo value from a base template."""
 
     if n <= 1:
         return value
+
+    named = _derive_named_sample(value, n)
+    if named is not None:
+        return named
+
     split = split_suffix_3digits(value)
     if split:
         prefix, _ = split

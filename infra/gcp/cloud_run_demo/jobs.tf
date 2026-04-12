@@ -54,7 +54,7 @@ module "offline_check_job" {
   project_id            = var.project_id
   region                = var.region
   job_name              = local.offline_job_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   command = ["python", "-m", "api.app.jobs.offline_check"]
@@ -96,7 +96,7 @@ module "migrate_job" {
   project_id            = var.project_id
   region                = var.region
   job_name              = local.migrate_job_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   command = ["python", "-m", "api.app.jobs.migrate"]
@@ -132,7 +132,7 @@ module "analytics_export_job" {
   project_id            = var.project_id
   region                = var.region
   job_name              = local.analytics_job_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   command = ["python", "-m", "api.app.jobs.analytics_export"]
@@ -171,7 +171,7 @@ module "simulation_job" {
   project_id            = var.project_id
   region                = var.region
   job_name              = local.simulation_job_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   command = ["python", "-m", "api.app.jobs.simulate_telemetry"]
@@ -213,7 +213,7 @@ module "retention_job" {
   project_id            = var.project_id
   region                = var.region
   job_name              = local.retention_job_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   command = ["python", "-m", "api.app.jobs.retention"]
@@ -262,7 +262,7 @@ module "partition_manager_job" {
   project_id            = var.project_id
   region                = var.region
   job_name              = local.partition_manager_job_name
-  image                 = var.image
+  image                 = local.image
   service_account_email = module.service_accounts.runtime_service_account_email
 
   command = ["python", "-m", "api.app.jobs.partition_manager"]

@@ -84,10 +84,27 @@ class PendingControlCommand:
     expires_at: str
     operation_mode: str
     sleep_poll_interval_s: int
+    runtime_power_mode: str
+    deep_sleep_backend: str
     shutdown_requested: bool
     shutdown_grace_s: int
     alerts_muted_until: str | None
     alerts_muted_reason: str | None
+
+
+@dataclass(frozen=True)
+class PendingUpdateCommand:
+    deployment_id: str
+    manifest_id: str
+    git_tag: str
+    commit_sha: str
+    issued_at: str
+    expires_at: str
+    signature: str
+    signature_key_id: str
+    rollback_to_tag: str | None
+    health_timeout_s: int
+    power_guard_required: bool
 
 
 @dataclass(frozen=True)
@@ -101,6 +118,8 @@ class DevicePolicy:
     offline_after_s: int
     operation_mode: str
     sleep_poll_interval_s: int
+    runtime_power_mode: str
+    deep_sleep_backend: str
     disable_requires_manual_restart: bool
 
     reporting: ReportingPolicy
@@ -109,6 +128,7 @@ class DevicePolicy:
     cost_caps: CostCaps
     power_management: PowerManagement
     pending_control_command: PendingControlCommand | None
+    pending_update_command: PendingUpdateCommand | None
 
 
 @dataclass(frozen=True)
@@ -304,6 +324,12 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
     sleep_poll_interval_s = _int_with_default(payload, "sleep_poll_interval_s", 7 * 24 * 3600)
     if sleep_poll_interval_s <= 0:
         raise ValueError("'sleep_poll_interval_s' must be > 0")
+    runtime_power_mode = _string_with_default(payload, "runtime_power_mode", "continuous").lower()
+    if runtime_power_mode not in {"continuous", "eco", "deep_sleep"}:
+        raise ValueError("'runtime_power_mode' must be one of: continuous, eco, deep_sleep")
+    deep_sleep_backend = _string_with_default(payload, "deep_sleep_backend", "auto").lower()
+    if deep_sleep_backend not in {"auto", "pi5_rtc", "external_supervisor", "none"}:
+        raise ValueError("'deep_sleep_backend' must be one of: auto, pi5_rtc, external_supervisor, none")
     disable_requires_manual_restart = _bool_with_default(payload, "disable_requires_manual_restart", True)
 
     pending_raw = payload.get("pending_control_command")
@@ -328,6 +354,18 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
         pending_sleep_poll_interval_s = _int_with_default(pending_raw, "sleep_poll_interval_s", 7 * 24 * 3600)
         if pending_sleep_poll_interval_s <= 0:
             raise ValueError("'pending_control_command.sleep_poll_interval_s' must be > 0")
+        pending_runtime_power_mode = _string_with_default(
+            pending_raw, "runtime_power_mode", "continuous"
+        ).lower()
+        if pending_runtime_power_mode not in {"continuous", "eco", "deep_sleep"}:
+            raise ValueError(
+                "'pending_control_command.runtime_power_mode' must be one of: continuous, eco, deep_sleep"
+            )
+        pending_deep_sleep_backend = _string_with_default(pending_raw, "deep_sleep_backend", "auto").lower()
+        if pending_deep_sleep_backend not in {"auto", "pi5_rtc", "external_supervisor", "none"}:
+            raise ValueError(
+                "'pending_control_command.deep_sleep_backend' must be one of: auto, pi5_rtc, external_supervisor, none"
+            )
         pending_shutdown_requested = _bool_with_default(pending_raw, "shutdown_requested", False)
         pending_shutdown_grace_s = _int_with_default(pending_raw, "shutdown_grace_s", 30)
         if pending_shutdown_grace_s <= 0:
@@ -355,10 +393,66 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
             expires_at=expires_at,
             operation_mode=pending_operation_mode,
             sleep_poll_interval_s=pending_sleep_poll_interval_s,
+            runtime_power_mode=pending_runtime_power_mode,
+            deep_sleep_backend=pending_deep_sleep_backend,
             shutdown_requested=pending_shutdown_requested,
             shutdown_grace_s=pending_shutdown_grace_s,
             alerts_muted_until=alerts_muted_until,
             alerts_muted_reason=alerts_muted_reason,
+        )
+
+    pending_update_raw = payload.get("pending_update_command")
+    pending_update_command: PendingUpdateCommand | None = None
+    if pending_update_raw is not None:
+        if not isinstance(pending_update_raw, Mapping):
+            raise ValueError("'pending_update_command' must be a mapping")
+        deployment_id = _string_with_default(pending_update_raw, "deployment_id", "")
+        if not deployment_id:
+            raise ValueError("'pending_update_command.deployment_id' must be a non-empty string")
+        manifest_id = _string_with_default(pending_update_raw, "manifest_id", "")
+        if not manifest_id:
+            raise ValueError("'pending_update_command.manifest_id' must be a non-empty string")
+        git_tag = _string_with_default(pending_update_raw, "git_tag", "")
+        if not git_tag:
+            raise ValueError("'pending_update_command.git_tag' must be a non-empty string")
+        commit_sha = _string_with_default(pending_update_raw, "commit_sha", "")
+        if not commit_sha:
+            raise ValueError("'pending_update_command.commit_sha' must be a non-empty string")
+        issued_at = _string_with_default(pending_update_raw, "issued_at", "")
+        if not issued_at:
+            raise ValueError("'pending_update_command.issued_at' must be a non-empty string")
+        expires_at = _string_with_default(pending_update_raw, "expires_at", "")
+        if not expires_at:
+            raise ValueError("'pending_update_command.expires_at' must be a non-empty string")
+        signature = _string_with_default(pending_update_raw, "signature", "")
+        if not signature:
+            raise ValueError("'pending_update_command.signature' must be a non-empty string")
+        signature_key_id = _string_with_default(pending_update_raw, "signature_key_id", "")
+        if not signature_key_id:
+            raise ValueError("'pending_update_command.signature_key_id' must be a non-empty string")
+        rollback_to_tag_raw = pending_update_raw.get("rollback_to_tag")
+        if rollback_to_tag_raw is None:
+            rollback_to_tag = None
+        elif isinstance(rollback_to_tag_raw, str):
+            rollback_to_tag = rollback_to_tag_raw.strip() or None
+        else:
+            raise ValueError("'pending_update_command.rollback_to_tag' must be a string or null")
+        health_timeout_s = _int_with_default(pending_update_raw, "health_timeout_s", 300)
+        if health_timeout_s <= 0:
+            raise ValueError("'pending_update_command.health_timeout_s' must be > 0")
+        power_guard_required = _bool_with_default(pending_update_raw, "power_guard_required", True)
+        pending_update_command = PendingUpdateCommand(
+            deployment_id=deployment_id,
+            manifest_id=manifest_id,
+            git_tag=git_tag,
+            commit_sha=commit_sha,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            signature=signature,
+            signature_key_id=signature_key_id,
+            rollback_to_tag=rollback_to_tag,
+            health_timeout_s=health_timeout_s,
+            power_guard_required=power_guard_required,
         )
 
     return DevicePolicy(
@@ -370,6 +464,8 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
         offline_after_s=_require_int(payload, "offline_after_s"),
         operation_mode=operation_mode,
         sleep_poll_interval_s=sleep_poll_interval_s,
+        runtime_power_mode=runtime_power_mode,
+        deep_sleep_backend=deep_sleep_backend,
         disable_requires_manual_restart=disable_requires_manual_restart,
         reporting=reporting,
         delta_thresholds=delta,
@@ -377,6 +473,7 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
         cost_caps=cost_caps,
         power_management=power_management,
         pending_control_command=pending_control_command,
+        pending_update_command=pending_update_command,
     )
 
 
@@ -430,6 +527,8 @@ def save_cached_policy(policy: DevicePolicy, etag: str, *, path: Optional[Path] 
             "offline_after_s": policy.offline_after_s,
             "operation_mode": policy.operation_mode,
             "sleep_poll_interval_s": policy.sleep_poll_interval_s,
+            "runtime_power_mode": policy.runtime_power_mode,
+            "deep_sleep_backend": policy.deep_sleep_backend,
             "disable_requires_manual_restart": policy.disable_requires_manual_restart,
             "reporting": {
                 "sample_interval_s": policy.reporting.sample_interval_s,
@@ -493,12 +592,31 @@ def save_cached_policy(policy: DevicePolicy, etag: str, *, path: Optional[Path] 
                     "expires_at": policy.pending_control_command.expires_at,
                     "operation_mode": policy.pending_control_command.operation_mode,
                     "sleep_poll_interval_s": policy.pending_control_command.sleep_poll_interval_s,
+                    "runtime_power_mode": policy.pending_control_command.runtime_power_mode,
+                    "deep_sleep_backend": policy.pending_control_command.deep_sleep_backend,
                     "shutdown_requested": policy.pending_control_command.shutdown_requested,
                     "shutdown_grace_s": policy.pending_control_command.shutdown_grace_s,
                     "alerts_muted_until": policy.pending_control_command.alerts_muted_until,
                     "alerts_muted_reason": policy.pending_control_command.alerts_muted_reason,
                 }
                 if policy.pending_control_command is not None
+                else None
+            ),
+            "pending_update_command": (
+                {
+                    "deployment_id": policy.pending_update_command.deployment_id,
+                    "manifest_id": policy.pending_update_command.manifest_id,
+                    "git_tag": policy.pending_update_command.git_tag,
+                    "commit_sha": policy.pending_update_command.commit_sha,
+                    "issued_at": policy.pending_update_command.issued_at,
+                    "expires_at": policy.pending_update_command.expires_at,
+                    "signature": policy.pending_update_command.signature,
+                    "signature_key_id": policy.pending_update_command.signature_key_id,
+                    "rollback_to_tag": policy.pending_update_command.rollback_to_tag,
+                    "health_timeout_s": policy.pending_update_command.health_timeout_s,
+                    "power_guard_required": policy.pending_update_command.power_guard_required,
+                }
+                if policy.pending_update_command is not None
                 else None
             ),
         },

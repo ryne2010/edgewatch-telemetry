@@ -79,6 +79,8 @@ def test_parse_device_policy_defaults_power_management_when_missing() -> None:
 
     assert policy.operation_mode == "active"
     assert policy.sleep_poll_interval_s == 7 * 24 * 3600
+    assert policy.runtime_power_mode == "continuous"
+    assert policy.deep_sleep_backend == "auto"
     assert policy.disable_requires_manual_restart is True
     assert policy.pending_control_command is None
     assert policy.power_management.enabled is True
@@ -133,11 +135,15 @@ def test_parse_device_policy_reads_operation_controls() -> None:
     payload = _base_policy_payload()
     payload["operation_mode"] = "sleep"
     payload["sleep_poll_interval_s"] = 3600
+    payload["runtime_power_mode"] = "eco"
+    payload["deep_sleep_backend"] = "none"
     payload["disable_requires_manual_restart"] = False
 
     policy = parse_device_policy(payload)
     assert policy.operation_mode == "sleep"
     assert policy.sleep_poll_interval_s == 3600
+    assert policy.runtime_power_mode == "eco"
+    assert policy.deep_sleep_backend == "none"
     assert policy.disable_requires_manual_restart is False
 
 
@@ -149,6 +155,8 @@ def test_parse_device_policy_reads_pending_control_command() -> None:
         "expires_at": "2026-08-26T00:00:00Z",
         "operation_mode": "sleep",
         "sleep_poll_interval_s": 7200,
+        "runtime_power_mode": "deep_sleep",
+        "deep_sleep_backend": "external_supervisor",
         "shutdown_requested": True,
         "shutdown_grace_s": 45,
         "alerts_muted_until": "2026-03-10T00:00:00Z",
@@ -160,8 +168,35 @@ def test_parse_device_policy_reads_pending_control_command() -> None:
     assert policy.pending_control_command.id == "cmd-123"
     assert policy.pending_control_command.operation_mode == "sleep"
     assert policy.pending_control_command.sleep_poll_interval_s == 7200
+    assert policy.pending_control_command.runtime_power_mode == "deep_sleep"
+    assert policy.pending_control_command.deep_sleep_backend == "external_supervisor"
     assert policy.pending_control_command.shutdown_requested is True
     assert policy.pending_control_command.shutdown_grace_s == 45
+
+
+def test_parse_device_policy_reads_pending_update_command() -> None:
+    payload = _base_policy_payload()
+    payload["pending_update_command"] = {
+        "deployment_id": "dep-1",
+        "manifest_id": "man-1",
+        "git_tag": "v1.2.3",
+        "commit_sha": "abc1234",
+        "issued_at": "2026-02-27T00:00:00Z",
+        "expires_at": "2026-08-26T00:00:00Z",
+        "signature": "sig",
+        "signature_key_id": "key-1",
+        "rollback_to_tag": "v1.2.2",
+        "health_timeout_s": 600,
+        "power_guard_required": True,
+    }
+
+    policy = parse_device_policy(payload)
+    assert policy.pending_update_command is not None
+    assert policy.pending_update_command.deployment_id == "dep-1"
+    assert policy.pending_update_command.git_tag == "v1.2.3"
+    assert policy.pending_update_command.rollback_to_tag == "v1.2.2"
+    assert policy.pending_update_command.health_timeout_s == 600
+    assert policy.pending_update_command.power_guard_required is True
 
 
 def test_cached_policy_roundtrip_includes_power_management(tmp_path: Path) -> None:
@@ -189,3 +224,33 @@ def test_cached_policy_roundtrip_includes_power_management(tmp_path: Path) -> No
     assert cached is not None
     assert cached.policy.power_management.mode == "hardware"
     assert cached.policy.power_management.sustainable_input_w == 14.0
+
+
+def test_cached_policy_roundtrip_includes_pending_update_command(tmp_path: Path) -> None:
+    payload = _base_policy_payload()
+    payload["pending_update_command"] = {
+        "deployment_id": "dep-2",
+        "manifest_id": "man-2",
+        "git_tag": "v2.0.0",
+        "commit_sha": "def5678",
+        "issued_at": "2026-02-27T00:00:00Z",
+        "expires_at": "2026-08-26T00:00:00Z",
+        "signature": "sig",
+        "signature_key_id": "key-2",
+        "rollback_to_tag": None,
+        "health_timeout_s": 300,
+        "power_guard_required": False,
+    }
+    payload["cost_caps"] = {
+        "max_bytes_per_day": 25_000_000,
+        "max_snapshots_per_day": 24,
+        "max_media_uploads_per_day": 24,
+    }
+    policy = parse_device_policy(payload)
+    cache_path = tmp_path / "policy_cache_pending_update.json"
+    save_cached_policy(policy, "etag-2", path=cache_path)
+    cached = load_cached_policy(path=cache_path)
+    assert cached is not None
+    assert cached.policy.pending_update_command is not None
+    assert cached.policy.pending_update_command.deployment_id == "dep-2"
+    assert cached.policy.pending_update_command.power_guard_required is False

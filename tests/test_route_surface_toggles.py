@@ -91,6 +91,30 @@ def test_disable_ingest_routes_removes_ingest_endpoints(monkeypatch) -> None:
     assert "/api/v1/internal/pubsub/push" not in paths
 
 
+def test_enable_ota_updates_adds_device_update_report_route(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///./test_toggle.db")
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
+    monkeypatch.setenv("ENABLE_OTA_UPDATES", "1")
+
+    settings = load_settings()
+    app = create_app(settings)
+    paths = _paths(app)
+    assert "/api/v1/device-updates/{deployment_id}/report" in paths
+
+
+def test_disable_ota_updates_hides_device_update_report_route(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///./test_toggle.db")
+    monkeypatch.setenv("ADMIN_API_KEY", "test-admin")
+    monkeypatch.setenv("ENABLE_OTA_UPDATES", "0")
+
+    settings = load_settings()
+    app = create_app(settings)
+    paths = _paths(app)
+    assert "/api/v1/device-updates/{deployment_id}/report" not in paths
+
+
 def test_disable_admin_routes_removes_admin_endpoints(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "dev")
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///./test_toggle.db")

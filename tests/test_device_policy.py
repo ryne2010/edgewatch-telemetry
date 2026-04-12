@@ -11,7 +11,7 @@ from starlette.requests import Request
 
 from api.app.db import Base
 from api.app.edge_policy import load_edge_policy, load_edge_policy_source, save_edge_policy_source
-from api.app.models import Device, DeviceControlCommand
+from api.app.models import Deployment, DeploymentTarget, Device, DeviceControlCommand, ReleaseManifest
 from api.app.routes import device_policy as device_policy_routes
 from api.app.routes.device_policy import get_device_policy
 from api.app.schemas import DevicePolicyOut
@@ -30,6 +30,8 @@ def _device(*, heartbeat_interval_s: int = 300, offline_after_s: int = 900) -> D
         offline_after_s=offline_after_s,
         operation_mode="active",
         sleep_poll_interval_s=7 * 24 * 3600,
+        runtime_power_mode="continuous",
+        deep_sleep_backend="auto",
         last_seen_at=None,
         enabled=True,
     )
@@ -61,6 +63,8 @@ def test_load_edge_policy_v1_has_expected_fields() -> None:
     assert p.cost_caps.max_bytes_per_day > 0
     assert p.power_management.enabled is True
     assert p.power_management.mode == "dual"
+    assert p.operation_defaults.default_runtime_power_mode == "continuous"
+    assert p.operation_defaults.default_deep_sleep_backend == "auto"
     assert p.operation_defaults.admin_remote_shutdown_enabled is True
     assert p.operation_defaults.shutdown_grace_s_default == 30
 
@@ -84,6 +88,8 @@ def test_device_policy_sets_etag_and_supports_304() -> None:
     assert out1.power_management.mode == "dual"
     assert out1.operation_mode == "active"
     assert out1.sleep_poll_interval_s == 7 * 24 * 3600
+    assert out1.runtime_power_mode == "continuous"
+    assert out1.deep_sleep_backend == "auto"
     assert out1.disable_requires_manual_restart is True
 
     etag = resp1.headers.get("etag") or resp1.headers.get("ETag")
@@ -131,6 +137,8 @@ def test_device_policy_etag_changes_when_pending_command_changes(
                 offline_after_s=900,
                 operation_mode="active",
                 sleep_poll_interval_s=7 * 24 * 3600,
+                runtime_power_mode="continuous",
+                deep_sleep_backend="auto",
                 enabled=True,
             )
         )
@@ -154,6 +162,8 @@ def test_device_policy_etag_changes_when_pending_command_changes(
                 command_payload={
                     "operation_mode": "sleep",
                     "sleep_poll_interval_s": 7200,
+                    "runtime_power_mode": "eco",
+                    "deep_sleep_backend": "auto",
                     "shutdown_requested": True,
                     "shutdown_grace_s": 45,
                     "alerts_muted_until": None,
@@ -174,8 +184,110 @@ def test_device_policy_etag_changes_when_pending_command_changes(
     assert etag2 != etag1
     assert out2.pending_control_command is not None
     assert out2.pending_control_command.operation_mode == "sleep"
+    assert out2.pending_control_command.runtime_power_mode == "eco"
+    assert out2.pending_control_command.deep_sleep_backend == "auto"
     assert out2.pending_control_command.shutdown_requested is True
     assert out2.pending_control_command.shutdown_grace_s == 45
+
+
+def test_device_policy_includes_pending_update_command_and_etag_fragment_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "device_policy_pending_update.db"
+    engine = create_engine(f"sqlite+pysqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    @contextmanager
+    def _db_session_override():
+        session = session_local()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    monkeypatch.setattr(device_policy_routes, "db_session", _db_session_override)
+
+    with session_local() as session:
+        session.add(
+            Device(
+                device_id="demo-003",
+                display_name="Demo 3",
+                token_hash="x",
+                token_fingerprint="y3",
+                heartbeat_interval_s=300,
+                offline_after_s=900,
+                operation_mode="active",
+                sleep_poll_interval_s=7 * 24 * 3600,
+                runtime_power_mode="continuous",
+                deep_sleep_backend="auto",
+                enabled=True,
+            )
+        )
+        session.commit()
+
+    device = _device()
+    device.device_id = "demo-003"
+
+    req1 = _request()
+    resp1 = Response()
+    out1 = get_device_policy(req1, resp1, device)
+    assert isinstance(out1, DevicePolicyOut)
+    etag1 = resp1.headers.get("etag")
+    assert etag1
+    assert out1.pending_update_command is None
+
+    with session_local() as session:
+        manifest = ReleaseManifest(
+            git_tag="v1.2.3",
+            commit_sha="f" * 40,
+            signature="sig",
+            signature_key_id="test-key",
+            constraints={},
+            created_by="admin@example.com",
+            status="active",
+        )
+        session.add(manifest)
+        session.flush()
+        deployment = Deployment(
+            manifest_id=manifest.id,
+            strategy={"rollout_stages_pct": [1, 10, 50, 100]},
+            stage=0,
+            status="active",
+            created_by="admin@example.com",
+            failure_rate_threshold=0.2,
+            no_quorum_timeout_s=1800,
+            command_expires_at=datetime.now(timezone.utc) + timedelta(days=10),
+            power_guard_required=True,
+            health_timeout_s=300,
+            target_selector={"mode": "all"},
+        )
+        session.add(deployment)
+        session.flush()
+        session.add(
+            DeploymentTarget(
+                deployment_id=deployment.id,
+                device_id="demo-003",
+                stage_assigned=0,
+                status="queued",
+            )
+        )
+        session.commit()
+
+    req2 = _request()
+    resp2 = Response()
+    out2 = get_device_policy(req2, resp2, device)
+    assert isinstance(out2, DevicePolicyOut)
+    etag2 = resp2.headers.get("etag")
+    assert etag2
+    assert etag2 != etag1
+    assert out2.pending_update_command is not None
+    assert out2.pending_update_command.git_tag == "v1.2.3"
+    assert out2.pending_update_command.commit_sha == ("f" * 40)
 
 
 def test_save_edge_policy_source_reloads_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

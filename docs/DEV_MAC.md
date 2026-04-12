@@ -107,7 +107,7 @@ Create a demo device:
 make demo-device
 ```
 
-Simulate a 3-device fleet:
+Simulate the full 11-device sample fleet:
 
 ```bash
 make simulate
