@@ -2,28 +2,34 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timezone
+from typing import cast
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import Response as StarletteResponse
+from sqlalchemy.orm import joinedload
 
 from ..config import settings
 from ..edge_policy import load_edge_policy
 from ..db import db_session
-from ..models import Device
+from ..models import Device, DeviceProcedureInvocation
 from ..schemas import (
+    ArtifactSignatureScheme,
     DeepSleepBackend,
     DevicePolicyOut,
     EdgePolicyAlertThresholdsOut,
     EdgePolicyCostCapsOut,
     OperationMode,
     EdgePolicyPowerManagementOut,
+    PendingProcedureInvocationOut,
     PendingUpdateCommandOut,
     PendingControlCommandOut,
     EdgePolicyReportingOut,
     RuntimePowerMode,
+    UpdateType,
 )
 from ..security import require_device_auth
 from ..services.device_commands import control_command_etag_fragment, get_pending_device_command
+from ..services.device_procedures import get_pending_invocation, pending_invocation_etag_fragment
 from ..services.device_updates import get_pending_update_command, update_command_etag_fragment
 
 
@@ -201,11 +207,26 @@ def _pending_update_command_out(command: dict[str, object] | None) -> PendingUpd
         return None
     rollback_raw = command.get("rollback_to_tag")
     rollback_to_tag = rollback_raw.strip() if isinstance(rollback_raw, str) and rollback_raw.strip() else None
+    artifact_size_raw = command.get("artifact_size")
+    artifact_size = int(artifact_size_raw) if isinstance(artifact_size_raw, (int, float, str)) else 1
     return PendingUpdateCommandOut(
         deployment_id=str(command.get("deployment_id") or ""),
         manifest_id=str(command.get("manifest_id") or ""),
         git_tag=str(command.get("git_tag") or ""),
         commit_sha=str(command.get("commit_sha") or ""),
+        update_type=cast(UpdateType, str(command.get("update_type") or "application_bundle")),
+        artifact_uri=str(command.get("artifact_uri") or ""),
+        artifact_size=max(1, artifact_size),
+        artifact_sha256=str(command.get("artifact_sha256") or ""),
+        artifact_signature=str(command.get("artifact_signature") or ""),
+        artifact_signature_scheme=cast(
+            ArtifactSignatureScheme, str(command.get("artifact_signature_scheme") or "none")
+        ),
+        compatibility=(
+            dict(cast(dict[str, object], command.get("compatibility")))
+            if isinstance(command.get("compatibility"), dict)
+            else {}
+        ),
         issued_at=issued_at,
         expires_at=expires_at,
         signature=str(command.get("signature") or ""),
@@ -213,6 +234,23 @@ def _pending_update_command_out(command: dict[str, object] | None) -> PendingUpd
         rollback_to_tag=rollback_to_tag,
         health_timeout_s=_safe_health_timeout_s(command.get("health_timeout_s")),
         power_guard_required=bool(command.get("power_guard_required", True)),
+    )
+
+
+def _pending_procedure_invocation_out(command) -> PendingProcedureInvocationOut | None:
+    if command is None:
+        return None
+    definition = getattr(command, "definition", None)
+    if definition is None:
+        return None
+    return PendingProcedureInvocationOut(
+        id=command.id,
+        definition_id=command.definition_id,
+        definition_name=definition.name,
+        request_payload=dict(command.request_payload or {}),
+        issued_at=command.issued_at,
+        expires_at=command.expires_at,
+        timeout_s=int(definition.timeout_s),
     )
 
 
@@ -274,13 +312,24 @@ def get_device_policy(
     try:
         with db_session() as session:
             command_fragment = control_command_etag_fragment(session, device_id=device.device_id)
+            procedure_fragment = pending_invocation_etag_fragment(session, device_id=device.device_id)
             update_fragment = update_command_etag_fragment(session, device_id=device.device_id)
             pending_command = get_pending_device_command(session, device_id=device.device_id)
+            pending_procedure = get_pending_invocation(session, device_id=device.device_id)
+            if pending_procedure is not None:
+                pending_procedure = (
+                    session.query(DeviceProcedureInvocation)
+                    .options(joinedload(DeviceProcedureInvocation.definition))
+                    .filter(DeviceProcedureInvocation.id == pending_procedure.id)
+                    .one_or_none()
+                )
             pending_update_command = get_pending_update_command(session, device_id=device.device_id)
     except Exception:
         command_fragment = "none"
+        procedure_fragment = "none"
         update_fragment = "none"
         pending_command = None
+        pending_procedure = None
         pending_update_command = None
 
     etag = _make_etag(
@@ -295,6 +344,7 @@ def get_device_policy(
         f"batt_low={batt_low}",
         f"sig_low={sig_low}",
         f"control_command={command_fragment}",
+        f"procedure={procedure_fragment}",
         f"update_command={update_fragment}",
     )
 
@@ -324,6 +374,9 @@ def get_device_policy(
         runtime_power_mode=runtime_power_mode,
         deep_sleep_backend=deep_sleep_backend,
         disable_requires_manual_restart=policy.operation_defaults.disable_requires_manual_restart,
+        updates_enabled=bool(getattr(device, "ota_updates_enabled", True)),
+        updates_pending=pending_update_command is not None,
+        busy_reason=getattr(device, "ota_busy_reason", None),
         reporting=EdgePolicyReportingOut(
             sample_interval_s=policy.reporting.sample_interval_s,
             alert_sample_interval_s=policy.reporting.alert_sample_interval_s,
@@ -380,5 +433,6 @@ def get_device_policy(
             media_disabled_in_saver=policy.power_management.media_disabled_in_saver,
         ),
         pending_control_command=_pending_command_out(pending_command),
+        pending_procedure_invocation=_pending_procedure_invocation_out(pending_procedure),
         pending_update_command=_pending_update_command_out(pending_update_command),
     )

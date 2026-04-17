@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from api.app.db import Base
 from api.app.models import Alert, AlertPolicy, Device, NotificationDestination, NotificationEvent
-from api.app.services.notifications import process_alert_notification
+from api.app.services.notifications import PlatformEvent, process_alert_notification, process_platform_event
 
 
 TEST_NOW_UTC = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
@@ -113,6 +113,8 @@ def test_process_alert_notification_delivers_to_all_enabled_destinations(monkeyp
                 channel="webhook",
                 kind="generic",
                 webhook_url="https://hooks.example.com/primary",
+                source_types=["alert"],
+                event_types=[],
                 enabled=True,
             )
         )
@@ -122,6 +124,8 @@ def test_process_alert_notification_delivers_to_all_enabled_destinations(monkeyp
                 channel="webhook",
                 kind="discord",
                 webhook_url="https://hooks.example.com/secondary",
+                source_types=["alert"],
+                event_types=[],
                 enabled=True,
             )
         )
@@ -131,6 +135,8 @@ def test_process_alert_notification_delivers_to_all_enabled_destinations(monkeyp
                 channel="webhook",
                 kind="telegram",
                 webhook_url="https://api.telegram.org/botTOKEN/sendMessage?chat_id=12345",
+                source_types=["alert"],
+                event_types=[],
                 enabled=True,
             )
         )
@@ -173,6 +179,8 @@ def test_process_alert_notification_telegram_requires_chat_id(monkeypatch) -> No
                 channel="webhook",
                 kind="telegram",
                 webhook_url="https://api.telegram.org/botTOKEN/sendMessage",
+                source_types=["alert"],
+                event_types=[],
                 enabled=True,
             )
         )
@@ -214,3 +222,68 @@ def test_process_alert_notification_uses_env_fallback_when_db_destinations_missi
         assert len(rows) == 1
         assert rows[0].decision == "delivered"
         assert rows[0].delivered is True
+
+
+def test_process_platform_event_respects_source_and_event_filters(monkeypatch) -> None:
+    fake_settings = _settings(alert_webhook_url="")
+    monkeypatch.setattr("api.app.services.notifications.settings", fake_settings)
+    monkeypatch.setattr("api.app.services.routing.settings", fake_settings)
+
+    calls: list[str] = []
+
+    def _fake_post(url: str, json: dict[str, Any], timeout: float) -> SimpleNamespace:  # noqa: ARG001
+        calls.append(url)
+        return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr("api.app.services.notifications.requests.post", _fake_post)
+
+    with _create_session() as session:
+        session.add(
+            NotificationDestination(
+                name="device-events-only",
+                channel="webhook",
+                kind="generic",
+                webhook_url="https://hooks.example.com/device-events",
+                source_types=["device_event"],
+                event_types=["procedure.capture_snapshot.requested"],
+                enabled=True,
+            )
+        )
+        session.flush()
+
+        process_platform_event(
+            session,
+            PlatformEvent(
+                source_kind="device_event",
+                source_id="evt-1",
+                device_id="demo-well-001",
+                event_type="procedure.capture_snapshot.requested",
+                severity="info",
+                message="capture requested",
+                payload={"camera_id": "cam1"},
+                created_at=TEST_NOW_UTC,
+            ),
+        )
+        process_platform_event(
+            session,
+            PlatformEvent(
+                source_kind="procedure_invocation",
+                source_id="inv-1",
+                device_id="demo-well-001",
+                event_type="capture_snapshot",
+                severity="info",
+                message="should be filtered out",
+                payload={},
+                created_at=TEST_NOW_UTC,
+            ),
+        )
+        session.commit()
+
+        assert calls == ["https://hooks.example.com/device-events"]
+        rows = session.query(NotificationEvent).order_by(NotificationEvent.created_at.asc()).all()
+        assert len(rows) == 2
+        assert rows[0].source_kind == "device_event"
+        assert rows[0].alert_type == "procedure.capture_snapshot.requested"
+        assert rows[0].payload == {"camera_id": "cam1"}
+        assert rows[1].source_kind == "procedure_invocation"
+        assert rows[1].decision == "suppressed_no_matching_destination"

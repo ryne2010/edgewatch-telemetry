@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
 import React from 'react'
 import {
@@ -12,12 +12,19 @@ import {
 import { FleetMap } from '../components/FleetMap'
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, DataTable, Page } from '../ui-kit'
 import type { Point } from '../ui/LineChart'
+import {
+  buildAlertsSearch,
+  buildDashboardSearch,
+  buildDevicesSearch,
+  buildHref,
+  normalizeSearchString,
+  parseDashboardSearch,
+  type SeverityFilter,
+  type TimelineWindowHours,
+} from '../utils/filterUrlState'
 import { Sparkline } from '../ui/Sparkline'
 import { fmtAlertType, fmtDateTime, timeAgo } from '../utils/format'
-
-type SeverityFilter = 'all' | 'critical' | 'warning' | 'info'
 type SeverityKind = Exclude<SeverityFilter, 'all'>
-type TimelineWindowHours = 24 | 72 | 168 | 336
 
 type TimelineGroup = {
   dayKey: string
@@ -185,11 +192,14 @@ function TopDeviceLinks(props: { deviceIds: string[] }) {
 
 export function DashboardPage() {
   const navigate = useNavigate()
-  const [timelineWindowHours, setTimelineWindowHours] = React.useState<TimelineWindowHours>(168)
-  const [timelineOpenOnly, setTimelineOpenOnly] = React.useState(true)
-  const [timelineSeverity, setTimelineSeverity] = React.useState<SeverityFilter>('all')
-  const [timelineSelectedDayKey, setTimelineSelectedDayKey] = React.useState<'all' | string>('all')
-  const [timelineExpanded, setTimelineExpanded] = React.useState(false)
+  const pathname = useLocation({ select: (s) => s.pathname })
+  const searchStr = useLocation({ select: (s) => s.searchStr })
+  const initialDashboardSearch = React.useMemo(() => parseDashboardSearch(searchStr), [searchStr])
+  const [timelineWindowHours, setTimelineWindowHours] = React.useState<TimelineWindowHours>(initialDashboardSearch.timelineWindowHours)
+  const [timelineOpenOnly, setTimelineOpenOnly] = React.useState(initialDashboardSearch.timelineOpenOnly)
+  const [timelineSeverity, setTimelineSeverity] = React.useState<SeverityFilter>(initialDashboardSearch.timelineSeverity)
+  const [timelineSelectedDayKey, setTimelineSelectedDayKey] = React.useState<'all' | string>(initialDashboardSearch.timelineSelectedDayKey)
+  const [timelineExpanded, setTimelineExpanded] = React.useState(initialDashboardSearch.timelineExpanded)
 
   const tileCardProps = React.useCallback(
     (href: string) => ({
@@ -216,6 +226,15 @@ export function DashboardPage() {
     }),
     [navigate],
   )
+
+  React.useEffect(() => {
+    const parsed = parseDashboardSearch(searchStr)
+    setTimelineWindowHours(parsed.timelineWindowHours)
+    setTimelineOpenOnly(parsed.timelineOpenOnly)
+    setTimelineSeverity(parsed.timelineSeverity)
+    setTimelineSelectedDayKey(parsed.timelineSelectedDayKey)
+    setTimelineExpanded(parsed.timelineExpanded)
+  }, [searchStr])
 
   const edgePolicyQ = useQuery({ queryKey: ['edgePolicyContract'], queryFn: api.edgePolicyContract, staleTime: 5 * 60_000 })
 
@@ -362,6 +381,27 @@ export function DashboardPage() {
     }
   }, [timelineGroups, timelineSelectedDayKey])
 
+  React.useEffect(() => {
+    const nextSearch = buildDashboardSearch({
+      timelineWindowHours,
+      timelineOpenOnly,
+      timelineSeverity,
+      timelineSelectedDayKey,
+      timelineExpanded,
+    })
+    if (nextSearch === normalizeSearchString(searchStr)) return
+    navigate({ href: buildHref(pathname, nextSearch), replace: true })
+  }, [
+    timelineWindowHours,
+    timelineOpenOnly,
+    timelineSeverity,
+    timelineSelectedDayKey,
+    timelineExpanded,
+    searchStr,
+    pathname,
+    navigate,
+  ])
+
   const timelineVisibleGroups = React.useMemo(() => {
     if (timelineSelectedDayKey === 'all') return timelineGroups
     const selected = timelineGroups.find((g) => g.dayKey === timelineSelectedDayKey)
@@ -414,11 +454,23 @@ export function DashboardPage() {
   }, [timelineVolume.series.total])
 
   const timelineAlertsHref = React.useMemo(() => {
-    const params = new URLSearchParams()
-    params.set('resolution', timelineOpenOnly ? 'open' : 'all')
-    if (timelineSeverity !== 'all') params.set('severity', timelineSeverity)
-    return `/alerts?${params.toString()}`
+    return buildHref(
+      '/alerts',
+      buildAlertsSearch({
+        resolutionFilter: timelineOpenOnly ? 'open' : 'all',
+        severityFilter: timelineSeverity,
+        typeFilter: 'all',
+        deviceFilter: '',
+        search: '',
+        limit: 200,
+      }),
+    )
   }, [timelineOpenOnly, timelineSeverity])
+
+  const devicesHref = React.useCallback(
+    (state: Parameters<typeof buildDevicesSearch>[0]) => buildHref('/devices', buildDevicesSearch(state)),
+    [],
+  )
 
   const alertCols = React.useMemo<ColumnDef<AlertOut>[]>(() => {
     return [
@@ -496,6 +548,7 @@ export function DashboardPage() {
     <Page
       title="Dashboard"
       description="Fleet-level view: heartbeat status, vitals, and open alerts."
+      contentClassName="max-w-6xl"
       actions={
         <div className="flex items-center gap-2">
           {devicesQ.isFetching ? <Badge variant="secondary">refreshing…</Badge> : null}
@@ -503,7 +556,7 @@ export function DashboardPage() {
       }
     >
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card {...tileCardProps('/devices')}>
+        <Card {...tileCardProps(devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'all' }))}>
           <CardHeader>
             <CardTitle>Total devices</CardTitle>
             <CardDescription>Fleet size (enabled + disabled)</CardDescription>
@@ -513,7 +566,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices?status=online')}>
+        <Card {...tileCardProps(devicesHref({ filterText: '', statusFilter: 'online', openAlertsOnly: false, healthFilter: 'all' }))}>
           <CardHeader>
             <CardTitle>Online</CardTitle>
             <CardDescription>Within offline window</CardDescription>
@@ -526,7 +579,7 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices?status=offline')}>
+        <Card {...tileCardProps(devicesHref({ filterText: '', statusFilter: 'offline', openAlertsOnly: false, healthFilter: 'all' }))}>
           <CardHeader>
             <CardTitle>Offline</CardTitle>
             <CardDescription>Exceeded offline window</CardDescription>
@@ -539,7 +592,21 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/alerts?openOnly=true')}>
+        <Card
+          {...tileCardProps(
+            buildHref(
+              '/alerts',
+              buildAlertsSearch({
+                resolutionFilter: 'open',
+                severityFilter: 'all',
+                typeFilter: 'all',
+                deviceFilter: '',
+                search: '',
+                limit: 200,
+              }),
+            ),
+          )}
+        >
           <CardHeader>
             <CardTitle>Open alerts</CardTitle>
             <CardDescription>Actionable unresolved alerts (recovery events excluded)</CardDescription>
@@ -551,7 +618,11 @@ export function DashboardPage() {
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'water_pressure_low' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>Low water pressure</CardTitle>
             <CardDescription>
@@ -565,7 +636,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'battery_low' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>Low battery</CardTitle>
             <CardDescription>Below threshold ({battLow.toFixed(2)} V)</CardDescription>
@@ -576,7 +651,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'weak_signal' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>Weak signal</CardTitle>
             <CardDescription>Below threshold ({sigLow} dBm)</CardDescription>
@@ -587,7 +666,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'oil_pressure_low' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>Low oil pressure</CardTitle>
             <CardDescription>Below threshold ({oilPressureLow.toFixed(1)} psi)</CardDescription>
@@ -598,7 +681,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'oil_level_low' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>Low oil level</CardTitle>
             <CardDescription>Below threshold ({oilLevelLow.toFixed(1)}%)</CardDescription>
@@ -609,7 +696,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'drip_oil_low' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>Low drip oil</CardTitle>
             <CardDescription>Below threshold ({dripOilLevelLow.toFixed(1)}%)</CardDescription>
@@ -620,7 +711,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'oil_life_low' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>Oil life low</CardTitle>
             <CardDescription>Below threshold ({oilLifeLow.toFixed(0)}%)</CardDescription>
@@ -631,7 +726,11 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card {...tileCardProps('/devices')}>
+        <Card
+          {...tileCardProps(
+            devicesHref({ filterText: '', statusFilter: 'all', openAlertsOnly: false, healthFilter: 'no_telemetry' }),
+          )}
+        >
           <CardHeader>
             <CardTitle>No telemetry yet</CardTitle>
             <CardDescription>Devices without a point ingested</CardDescription>

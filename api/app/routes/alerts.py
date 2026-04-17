@@ -21,6 +21,14 @@ def list_alerts(
     open_only: bool = False,
     severity: str | None = None,
     alert_type: str | None = None,
+    q: str | None = Query(
+        None,
+        description="Case-insensitive partial match across device_id, alert_type, and message.",
+    ),
+    search: str | None = Query(
+        None,
+        description="Legacy alias for q.",
+    ),
     before: datetime | None = Query(
         None,
         description=(
@@ -45,8 +53,10 @@ def list_alerts(
     if before_id is not None and before is None:
         raise HTTPException(status_code=400, detail="before_id requires before")
 
+    search_text = (q or search or "").strip()
+
     with db_session() as session:
-        q = session.query(Alert)
+        query = session.query(Alert)
 
         if device_id:
             ensure_device_access(session, principal=principal, device_id=device_id, min_access_role="viewer")
@@ -54,31 +64,40 @@ def list_alerts(
             session, principal=principal, min_access_role="viewer"
         )
         if accessible_ids is not None:
-            q = q.filter(Alert.device_id.in_(accessible_ids))
+            query = query.filter(Alert.device_id.in_(accessible_ids))
 
         if device_id:
-            q = q.filter(Alert.device_id == device_id)
+            query = query.filter(Alert.device_id == device_id)
         if open_only:
-            q = q.filter(Alert.resolved_at.is_(None))
+            query = query.filter(Alert.resolved_at.is_(None))
         if severity:
-            q = q.filter(Alert.severity == severity)
+            query = query.filter(Alert.severity == severity)
         if alert_type:
-            q = q.filter(Alert.alert_type == alert_type)
+            query = query.filter(Alert.alert_type == alert_type)
+        if search_text:
+            pattern = f"%{search_text}%"
+            query = query.filter(
+                or_(
+                    Alert.device_id.ilike(pattern),
+                    Alert.alert_type.ilike(pattern),
+                    Alert.message.ilike(pattern),
+                )
+            )
 
         if before is not None:
             if before_id is not None:
-                q = q.filter(
+                query = query.filter(
                     or_(
                         Alert.created_at < before,
                         and_(Alert.created_at == before, Alert.id < before_id),
                     )
                 )
             else:
-                q = q.filter(Alert.created_at < before)
+                query = query.filter(Alert.created_at < before)
 
-        q = q.order_by(Alert.created_at.desc(), Alert.id.desc()).limit(limit)
+        query = query.order_by(Alert.created_at.desc(), Alert.id.desc()).limit(limit)
 
-        rows = q.all()
+        rows = query.all()
 
         return [
             AlertOut(

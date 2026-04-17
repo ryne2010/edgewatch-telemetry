@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
 import json
+import hashlib
 import os
 import random
 import shlex
 import shutil
 import subprocess
+import sys
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -29,6 +33,9 @@ from device_policy import (
 from media import MediaConfigError, MediaUploadError, build_media_runtime_from_env
 from power_management import PowerManagementError, PowerManager
 from sensors import SensorConfigError, build_sensor_backend, load_sensor_config_from_env
+
+
+PROCESS_SESSION_ID = uuid.uuid4().hex
 
 
 def utcnow_iso() -> str:
@@ -373,6 +380,201 @@ def _apply_git_tag_release(
     return True, "ok"
 
 
+def _artifact_cache_root() -> Path:
+    raw = (os.getenv("EDGEWATCH_OTA_CACHE_DIR") or "/opt/edgewatch/update-cache").strip()
+    return Path(raw or "/opt/edgewatch/update-cache")
+
+
+def _artifact_cache_path(*, manifest_id: str, sha256_hex: str, artifact_uri: str) -> Path:
+    root = _artifact_cache_root()
+    suffix = Path(artifact_uri).suffix or ".bin"
+    safe_name = f"{manifest_id}-{sha256_hex[:16]}{suffix}"
+    return root / safe_name
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _download_artifact_with_resume(
+    *,
+    session: requests.Session,
+    artifact_uri: str,
+    token: str,
+    dest_path: Path,
+    expected_size: int,
+) -> tuple[bool, str]:
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    partial_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    if artifact_uri.startswith("file://"):
+        source_path = Path(artifact_uri.removeprefix("file://"))
+        if not source_path.exists():
+            return False, f"download_failed: missing local artifact {source_path}"
+        shutil.copyfile(source_path, dest_path)
+        size = dest_path.stat().st_size if dest_path.exists() else 0
+        if size != max(1, int(expected_size)):
+            return False, f"download_size_mismatch expected={expected_size} actual={size}"
+        return True, "ok"
+    existing = partial_path.stat().st_size if partial_path.exists() else 0
+    headers: dict[str, str] = {}
+    if artifact_uri.startswith("http://") or artifact_uri.startswith("https://"):
+        headers["Authorization"] = f"Bearer {token}"
+    if existing > 0:
+        headers["Range"] = f"bytes={existing}-"
+    try:
+        with session.get(artifact_uri, headers=headers, stream=True, timeout=30.0) as resp:
+            if resp.status_code not in {200, 206}:
+                return False, f"download_failed status={resp.status_code}"
+            if existing > 0 and resp.status_code == 200:
+                existing = 0
+                partial_path.unlink(missing_ok=True)
+            mode = "ab" if existing > 0 else "wb"
+            with partial_path.open(mode) as fh:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    fh.write(chunk)
+    except Exception as exc:
+        return False, f"download_failed: {exc!r}"
+    size = partial_path.stat().st_size if partial_path.exists() else 0
+    if size != max(1, int(expected_size)):
+        return False, f"download_size_mismatch expected={expected_size} actual={size}"
+    partial_path.replace(dest_path)
+    return True, "ok"
+
+
+def _verify_artifact_signature(
+    *,
+    artifact_path: Path,
+    signature: str,
+    signature_scheme: str,
+    signature_key_id: str,
+) -> tuple[bool, str]:
+    scheme = (signature_scheme or "none").strip().lower()
+    if scheme == "none":
+        return True, "skipped"
+    if scheme != "openssl_rsa_sha256":
+        return False, f"unsupported_signature_scheme={scheme}"
+    keyring_dir = Path((os.getenv("EDGEWATCH_OTA_KEYRING_DIR") or "/opt/edgewatch/keys").strip())
+    pubkey = keyring_dir / f"{signature_key_id}.pem"
+    if not pubkey.exists():
+        return False, f"missing_signature_key={pubkey}"
+    try:
+        sig_bytes = base64.b64decode(signature)
+    except Exception as exc:
+        return False, f"invalid_signature_encoding: {exc!r}"
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(sig_bytes)
+        tmp_path = Path(tmp.name)
+    try:
+        rc, out = _run_cmd(
+            [
+                "openssl",
+                "dgst",
+                "-sha256",
+                "-verify",
+                str(pubkey),
+                "-signature",
+                str(tmp_path),
+                str(artifact_path),
+            ]
+        )
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    if rc != 0:
+        return False, f"artifact_signature_verification_failed: {out[:240]}"
+    return True, "ok"
+
+
+def _apply_application_bundle_release(
+    *,
+    artifact_path: Path,
+    releases_root: str,
+    current_symlink: str,
+    manifest_id: str,
+) -> tuple[bool, str]:
+    release_dir = Path(releases_root) / manifest_id
+    current_link = Path(current_symlink)
+    if release_dir.exists():
+        shutil.rmtree(release_dir, ignore_errors=True)
+    release_dir.mkdir(parents=True, exist_ok=True)
+    rc_extract, out_extract = _run_cmd(["tar", "-xf", str(artifact_path), "-C", str(release_dir)])
+    if rc_extract != 0:
+        return False, f"bundle_extract_failed: {out_extract[:240]}"
+    tmp_link = current_link.with_suffix(".tmp")
+    try:
+        if tmp_link.exists() or tmp_link.is_symlink():
+            tmp_link.unlink()
+        tmp_link.symlink_to(release_dir)
+        tmp_link.replace(current_link)
+    except Exception as exc:
+        return False, f"symlink_swap_failed: {exc!r}"
+    return True, "ok"
+
+
+def _apply_asset_bundle_release(
+    *,
+    artifact_path: Path,
+    manifest_id: str,
+) -> tuple[bool, str]:
+    apply_cmd_raw = (os.getenv("EDGEWATCH_ASSET_BUNDLE_APPLY_CMD") or "").strip()
+    if apply_cmd_raw:
+        cmd = shlex.split(apply_cmd_raw)
+        env = os.environ.copy()
+        env["EDGEWATCH_OTA_ARTIFACT_PATH"] = str(artifact_path)
+        env["EDGEWATCH_OTA_MANIFEST_ID"] = manifest_id
+        try:
+            proc = subprocess.run(cmd, check=False, capture_output=True, text=True, env=env)
+        except Exception as exc:
+            return False, f"asset_apply_cmd_failed: {exc!r}"
+        if proc.returncode != 0:
+            return False, f"asset_apply_cmd_failed: {(proc.stdout or proc.stderr or '')[:240]}"
+        return True, "ok"
+    assets_root = Path((os.getenv("EDGEWATCH_ASSETS_ROOT") or "/opt/edgewatch/assets").strip())
+    target_dir = assets_root / manifest_id
+    if target_dir.exists():
+        shutil.rmtree(target_dir, ignore_errors=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    rc_extract, out_extract = _run_cmd(["tar", "-xf", str(artifact_path), "-C", str(target_dir)])
+    if rc_extract != 0:
+        return False, f"asset_extract_failed: {out_extract[:240]}"
+    return True, "ok"
+
+
+def _invoke_system_image_updater(
+    *,
+    artifact_path: Path,
+    manifest_id: str,
+    artifact_sha256: str,
+) -> tuple[bool, str]:
+    updater_cmd_raw = (os.getenv("EDGEWATCH_SYSTEM_IMAGE_APPLY_CMD") or "").strip()
+    if updater_cmd_raw:
+        cmd = shlex.split(updater_cmd_raw)
+    else:
+        default_script = Path(__file__).resolve().parents[1] / "scripts" / "ota" / "system_image_updater.py"
+        if not default_script.exists():
+            return False, "missing EDGEWATCH_SYSTEM_IMAGE_APPLY_CMD"
+        cmd = [sys.executable, str(default_script)]
+    env = os.environ.copy()
+    env["EDGEWATCH_OTA_ARTIFACT_PATH"] = str(artifact_path)
+    env["EDGEWATCH_OTA_MANIFEST_ID"] = manifest_id
+    env["EDGEWATCH_OTA_ARTIFACT_SHA256"] = artifact_sha256
+    try:
+        proc = subprocess.run(cmd, check=False, capture_output=True, text=True, env=env)
+    except Exception as exc:
+        return False, f"system_updater_failed: {exc!r}"
+    if proc.returncode != 0:
+        return False, f"system_updater_failed: {(proc.stdout or proc.stderr or '')[:240]}"
+    return True, "ok"
+
+
 def build_buffer_from_env(path: str) -> SqliteBuffer:
     return SqliteBuffer(
         path,
@@ -440,6 +642,33 @@ def report_update_state(
     )
 
 
+def report_procedure_result(
+    session: requests.Session,
+    *,
+    api_url: str,
+    token: str,
+    invocation_id: str,
+    status: str,
+    result_payload: Mapping[str, Any] | None = None,
+    reason_code: str | None = None,
+    reason_detail: str | None = None,
+    timeout_s: float = 5.0,
+) -> requests.Response:
+    payload: dict[str, Any] = {"status": status}
+    if result_payload is not None:
+        payload["result_payload"] = dict(result_payload)
+    if reason_code:
+        payload["reason_code"] = reason_code
+    if reason_detail:
+        payload["reason_detail"] = reason_detail
+    return session.post(
+        f"{api_url.rstrip('/')}/api/v1/device-procedure-invocations/{invocation_id}/result",
+        headers={"Authorization": f"Bearer {token}"},
+        json=payload,
+        timeout=timeout_s,
+    )
+
+
 def _command_state_path(device_id: str) -> Path:
     default = f"./edgewatch_command_state_{device_id}.json"
     raw = (os.getenv("EDGEWATCH_COMMAND_STATE_PATH") or default).strip()
@@ -499,6 +728,29 @@ def _load_update_state(path: Path) -> dict[str, Any]:
 
 
 def _save_update_state(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(dict(payload), sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def _procedure_state_path(device_id: str) -> Path:
+    default = f"./edgewatch_procedure_state_{device_id}.json"
+    raw = (os.getenv("EDGEWATCH_PROCEDURE_STATE_PATH") or default).strip()
+    return Path(raw or default)
+
+
+def _load_procedure_state(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_procedure_state(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(dict(payload), sort_keys=True), encoding="utf-8")
@@ -1090,6 +1342,194 @@ def _report_update_state_best_effort(
         )
 
 
+def _maybe_complete_pending_boot_health(
+    *,
+    session: requests.Session,
+    api_url: str,
+    token: str,
+    update_state_path: Path,
+    now_s: float,
+) -> None:
+    state_data = _load_update_state(update_state_path)
+    pending = state_data.get("pending_boot_health")
+    if not isinstance(pending, dict):
+        return
+    deployment_id = str(pending.get("deployment_id") or "").strip()
+    origin_session_id = str(pending.get("origin_session_id") or "").strip()
+    deadline_s = float(pending.get("deadline_s") or 0.0)
+    rollback_manifest_id = str(pending.get("rollback_manifest_id") or "").strip() or None
+    if not deployment_id:
+        return
+    if now_s > deadline_s > 0.0:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="failed",
+            reason_code="boot_health_timeout",
+            reason_detail="device did not confirm healthy boot before deadline",
+        )
+        rollback_cmd_raw = (os.getenv("EDGEWATCH_SYSTEM_IMAGE_ROLLBACK_CMD") or "").strip()
+        rollback_cmd: list[str] | None = None
+        if rollback_cmd_raw:
+            rollback_cmd = shlex.split(rollback_cmd_raw)
+        else:
+            default_script = (
+                Path(__file__).resolve().parents[1] / "scripts" / "ota" / "system_image_rollback.py"
+            )
+            if default_script.exists():
+                rollback_cmd = [sys.executable, str(default_script)]
+        if rollback_cmd:
+            try:
+                proc = subprocess.run(
+                    rollback_cmd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=os.environ.copy(),
+                )
+                if proc.returncode == 0:
+                    _report_update_state_best_effort(
+                        session=session,
+                        api_url=api_url,
+                        token=token,
+                        deployment_id=deployment_id,
+                        state="rolled_back",
+                        reason_code="boot_health_timeout",
+                        reason_detail=f"rollback_manifest_id={rollback_manifest_id or ''}",
+                    )
+            except Exception:
+                pass
+        state_data.pop("pending_boot_health", None)
+        _save_update_state(update_state_path, state_data)
+        return
+    if origin_session_id and origin_session_id != PROCESS_SESSION_ID:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="healthy",
+            reason_code="boot_health_confirmed",
+        )
+        state_data["last_applied_deployment_id"] = deployment_id
+        state_data["last_healthy_tag"] = str(pending.get("git_tag") or "")
+        state_data["last_applied_artifact_sha256"] = str(pending.get("artifact_sha256") or "")
+        state_data["last_failed_deployment_id"] = None
+        state_data["last_failed_at"] = 0.0
+        state_data.pop("pending_boot_health", None)
+        _save_update_state(update_state_path, state_data)
+
+
+def _maybe_run_pending_procedure_invocation(
+    *,
+    session: requests.Session,
+    api_url: str,
+    token: str,
+    policy: DevicePolicy,
+    procedure_state_path: Path,
+) -> None:
+    pending = getattr(policy, "pending_procedure_invocation", None)
+    if pending is None:
+        return
+    expires_at = _parse_iso_utc(pending.expires_at)
+    if expires_at is not None and datetime.now(timezone.utc) >= expires_at:
+        return
+    state = _load_procedure_state(procedure_state_path)
+    last_completed = str(state.get("last_completed_invocation_id") or "").strip() or None
+    if last_completed == pending.id:
+        return
+    runner_raw = (os.getenv("EDGEWATCH_PROCEDURE_RUNNER_CMD") or "").strip()
+    if not runner_raw:
+        try:
+            resp = report_procedure_result(
+                session=session,
+                api_url=api_url,
+                token=token,
+                invocation_id=pending.id,
+                status="failed",
+                reason_code="runner_unconfigured",
+                reason_detail="EDGEWATCH_PROCEDURE_RUNNER_CMD is not configured",
+            )
+            if 200 <= resp.status_code < 300:
+                _save_procedure_state(procedure_state_path, {"last_completed_invocation_id": pending.id})
+        except Exception:
+            pass
+        return
+    env = os.environ.copy()
+    env["EDGEWATCH_PROCEDURE_INVOCATION_ID"] = pending.id
+    env["EDGEWATCH_PROCEDURE_DEFINITION_ID"] = pending.definition_id
+    env["EDGEWATCH_PROCEDURE_DEFINITION_NAME"] = pending.definition_name
+    env["EDGEWATCH_PROCEDURE_REQUEST_PAYLOAD"] = json.dumps(pending.request_payload, sort_keys=True)
+    try:
+        proc = subprocess.run(
+            shlex.split(runner_raw),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=float(max(1, int(pending.timeout_s))),
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        report_procedure_result(
+            session=session,
+            api_url=api_url,
+            token=token,
+            invocation_id=pending.id,
+            status="failed",
+            reason_code="timeout",
+            reason_detail=f"procedure exceeded timeout_s={pending.timeout_s}",
+        )
+        _save_procedure_state(procedure_state_path, {"last_completed_invocation_id": pending.id})
+        return
+    except Exception as exc:
+        report_procedure_result(
+            session=session,
+            api_url=api_url,
+            token=token,
+            invocation_id=pending.id,
+            status="failed",
+            reason_code="runner_failed",
+            reason_detail=repr(exc),
+        )
+        _save_procedure_state(procedure_state_path, {"last_completed_invocation_id": pending.id})
+        return
+
+    if proc.returncode == 0:
+        result_payload: dict[str, Any] | None
+        stdout = (proc.stdout or "").strip()
+        if stdout:
+            try:
+                parsed = json.loads(stdout)
+                result_payload = parsed if isinstance(parsed, dict) else {"value": parsed}
+            except Exception:
+                result_payload = {"stdout": stdout}
+        else:
+            result_payload = {}
+        report_procedure_result(
+            session=session,
+            api_url=api_url,
+            token=token,
+            invocation_id=pending.id,
+            status="succeeded",
+            result_payload=result_payload,
+        )
+    else:
+        report_procedure_result(
+            session=session,
+            api_url=api_url,
+            token=token,
+            invocation_id=pending.id,
+            status="failed",
+            reason_code="runner_failed",
+            reason_detail=(
+                (proc.stderr or proc.stdout or "").strip()[:1000] or f"exit_code={proc.returncode}"
+            ),
+        )
+    _save_procedure_state(procedure_state_path, {"last_completed_invocation_id": pending.id})
+
+
 def _maybe_apply_pending_update_command(
     *,
     session: requests.Session,
@@ -1101,6 +1541,13 @@ def _maybe_apply_pending_update_command(
     power_unsustainable: bool,
     now_s: float,
 ) -> None:
+    _maybe_complete_pending_boot_health(
+        session=session,
+        api_url=api_url,
+        token=token,
+        update_state_path=update_state_path,
+        now_s=now_s,
+    )
     command = policy.pending_update_command
     if command is None:
         return
@@ -1124,6 +1571,29 @@ def _maybe_apply_pending_update_command(
         last_failed_at = 0.0
 
     if last_applied_deployment_id == deployment_id and last_healthy_tag == command.git_tag:
+        return
+
+    if not policy.updates_enabled:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="deferred",
+            reason_code="updates_disabled",
+            reason_detail=policy.busy_reason or "updates_enabled=false",
+        )
+        return
+    if policy.busy_reason:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="deferred",
+            reason_code="busy",
+            reason_detail=policy.busy_reason,
+        )
         return
 
     if command.power_guard_required and (power_input_out_of_range or power_unsustainable):
@@ -1163,10 +1633,42 @@ def _maybe_apply_pending_update_command(
         state="downloading",
     )
 
-    repo_dir = (os.getenv("EDGEWATCH_REPO_DIR") or str(Path(__file__).resolve().parents[1])).strip()
+    artifact_path = _artifact_cache_path(
+        manifest_id=command.manifest_id,
+        sha256_hex=command.artifact_sha256,
+        artifact_uri=command.artifact_uri,
+    )
     releases_root = (os.getenv("EDGEWATCH_RELEASES_ROOT") or "/opt/edgewatch/releases").strip()
     current_symlink = (os.getenv("EDGEWATCH_CURRENT_SYMLINK") or "/opt/edgewatch/current").strip()
     allow_apply = _parse_bool_env("EDGEWATCH_ENABLE_OTA_APPLY", default=False)
+    downloaded_ok, downloaded_reason = _download_artifact_with_resume(
+        session=session,
+        artifact_uri=command.artifact_uri,
+        token=token,
+        dest_path=artifact_path,
+        expected_size=command.artifact_size,
+    )
+    if not downloaded_ok:
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="failed",
+            reason_code="download_failed",
+            reason_detail=downloaded_reason,
+        )
+        state_data["last_failed_deployment_id"] = deployment_id
+        state_data["last_failed_at"] = now_s
+        _save_update_state(update_state_path, state_data)
+        return
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
+        state="downloaded",
+    )
 
     _report_update_state_best_effort(
         session=session,
@@ -1175,11 +1677,19 @@ def _maybe_apply_pending_update_command(
         deployment_id=deployment_id,
         state="verifying",
     )
-    verify_ok, verify_reason = _verify_tag_commit(
-        repo_dir=repo_dir,
-        git_tag=command.git_tag,
-        commit_sha=command.commit_sha,
-    )
+    computed_sha = _sha256_file(artifact_path)
+    if computed_sha.lower() != command.artifact_sha256.strip().lower():
+        verify_ok, verify_reason = (
+            False,
+            (f"artifact_sha256_mismatch expected={command.artifact_sha256} actual={computed_sha}"),
+        )
+    else:
+        verify_ok, verify_reason = _verify_artifact_signature(
+            artifact_path=artifact_path,
+            signature=command.artifact_signature,
+            signature_scheme=command.artifact_signature_scheme,
+            signature_key_id=command.signature_key_id,
+        )
     if not verify_ok:
         _report_update_state_best_effort(
             session=session,
@@ -1209,7 +1719,16 @@ def _maybe_apply_pending_update_command(
             api_url=api_url,
             token=token,
             deployment_id=deployment_id,
-            state="restarting",
+            state="staged",
+            reason_code="dry_run",
+            reason_detail="EDGEWATCH_ENABLE_OTA_APPLY=0",
+        )
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="switching",
             reason_code="dry_run",
             reason_detail="EDGEWATCH_ENABLE_OTA_APPLY=0",
         )
@@ -1224,17 +1743,30 @@ def _maybe_apply_pending_update_command(
         )
         state_data["last_applied_deployment_id"] = deployment_id
         state_data["last_healthy_tag"] = command.git_tag
+        state_data["last_applied_artifact_sha256"] = command.artifact_sha256
         state_data["last_failed_deployment_id"] = None
         state_data["last_failed_at"] = 0.0
         _save_update_state(update_state_path, state_data)
         return
 
-    apply_ok, apply_reason = _apply_git_tag_release(
-        repo_dir=repo_dir,
-        releases_root=releases_root,
-        current_symlink=current_symlink,
-        git_tag=command.git_tag,
-    )
+    if command.update_type == "application_bundle":
+        apply_ok, apply_reason = _apply_application_bundle_release(
+            artifact_path=artifact_path,
+            releases_root=releases_root,
+            current_symlink=current_symlink,
+            manifest_id=command.manifest_id,
+        )
+    elif command.update_type == "asset_bundle":
+        apply_ok, apply_reason = _apply_asset_bundle_release(
+            artifact_path=artifact_path,
+            manifest_id=command.manifest_id,
+        )
+    else:
+        apply_ok, apply_reason = _invoke_system_image_updater(
+            artifact_path=artifact_path,
+            manifest_id=command.manifest_id,
+            artifact_sha256=command.artifact_sha256,
+        )
     if not apply_ok:
         _report_update_state_best_effort(
             session=session,
@@ -1247,12 +1779,15 @@ def _maybe_apply_pending_update_command(
         )
         rolled_back = False
         if command.rollback_to_tag:
-            rb_ok, rb_reason = _apply_git_tag_release(
-                repo_dir=repo_dir,
-                releases_root=releases_root,
-                current_symlink=current_symlink,
-                git_tag=command.rollback_to_tag,
-            )
+            if command.update_type == "application_bundle":
+                rollback_hint = state_data.get("rollback_artifact_path")
+                rb_ok, rb_reason = (
+                    (True, "manual rollback path retained")
+                    if rollback_hint
+                    else (False, "no rollback artifact recorded")
+                )
+            else:
+                rb_ok, rb_reason = (False, "rollback requires external updater integration")
             if rb_ok:
                 rolled_back = True
                 _report_update_state_best_effort(
@@ -1286,6 +1821,38 @@ def _maybe_apply_pending_update_command(
         api_url=api_url,
         token=token,
         deployment_id=deployment_id,
+        state="staged",
+    )
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
+        state="switching",
+    )
+    if command.update_type == "system_image":
+        _report_update_state_best_effort(
+            session=session,
+            api_url=api_url,
+            token=token,
+            deployment_id=deployment_id,
+            state="restarting",
+        )
+        state_data["pending_boot_health"] = {
+            "deployment_id": deployment_id,
+            "git_tag": command.git_tag,
+            "artifact_sha256": command.artifact_sha256,
+            "origin_session_id": PROCESS_SESSION_ID,
+            "deadline_s": now_s + float(max(30, int(command.health_timeout_s))),
+            "rollback_manifest_id": command.rollback_to_tag,
+        }
+        _save_update_state(update_state_path, state_data)
+        return
+    _report_update_state_best_effort(
+        session=session,
+        api_url=api_url,
+        token=token,
+        deployment_id=deployment_id,
         state="restarting",
     )
     _report_update_state_best_effort(
@@ -1297,6 +1864,7 @@ def _maybe_apply_pending_update_command(
     )
     state_data["last_applied_deployment_id"] = deployment_id
     state_data["last_healthy_tag"] = command.git_tag
+    state_data["last_applied_artifact_sha256"] = command.artifact_sha256
     state_data["last_failed_deployment_id"] = None
     state_data["last_failed_at"] = 0.0
     _save_update_state(update_state_path, state_data)
@@ -1466,6 +2034,9 @@ def _default_policy(device_id: str) -> DevicePolicy:
         runtime_power_mode=_normalized_runtime_power_mode(os.getenv("RUNTIME_POWER_MODE", "continuous")),
         deep_sleep_backend=_normalized_deep_sleep_backend(os.getenv("DEEP_SLEEP_BACKEND", "auto")),
         disable_requires_manual_restart=_parse_bool_env("DISABLE_REQUIRES_MANUAL_RESTART", default=True),
+        updates_enabled=_parse_bool_env("OTA_UPDATES_ENABLED", default=True),
+        updates_pending=False,
+        busy_reason=None,
         reporting=reporting,
         delta_thresholds={
             "microphone_level_db": float(os.getenv("DELTA_MICROPHONE_LEVEL_DB", "1.0")),
@@ -1487,6 +2058,7 @@ def _default_policy(device_id: str) -> DevicePolicy:
         cost_caps=cost_caps,
         power_management=power_management,
         pending_control_command=None,
+        pending_procedure_invocation=None,
         pending_update_command=None,
     )
 
@@ -1586,13 +2158,14 @@ def main() -> None:
     allow_remote_shutdown = _parse_bool_env("EDGEWATCH_ALLOW_REMOTE_SHUTDOWN", default=False)
     command_state_path = _command_state_path(device_id)
     update_state_path = _update_state_path(device_id)
+    procedure_state_path = _procedure_state_path(device_id)
     low_power_state_path = _low_power_state_path(device_id)
     last_applied_command_id, pending_ack_command_id = _load_command_state(command_state_path)
     wake_reason = _load_wake_reason(low_power_state_path)
 
     print(
         "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s cellular=%s "
-        "cost_caps=%s power_state=%s command_state=%s update_state=%s low_power_state=%s wake_reason=%s remote_shutdown=%s"
+        "cost_caps=%s power_state=%s command_state=%s update_state=%s procedure_state=%s low_power_state=%s wake_reason=%s remote_shutdown=%s"
         % (
             device_id,
             api_url,
@@ -1605,6 +2178,7 @@ def main() -> None:
             power_manager.path,
             command_state_path,
             update_state_path,
+            procedure_state_path,
             low_power_state_path,
             wake_reason,
             "enabled" if allow_remote_shutdown else "disabled",
@@ -1715,6 +2289,14 @@ def main() -> None:
             # avoid continuing business logic in this loop.
             _sleep(5.0)
             continue
+
+        _maybe_run_pending_procedure_invocation(
+            session=session,
+            api_url=api_url,
+            token=token,
+            policy=policy,
+            procedure_state_path=procedure_state_path,
+        )
 
         if state.disabled_latched:
             if now - state.last_disabled_log_at >= 300.0:

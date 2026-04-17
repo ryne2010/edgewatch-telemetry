@@ -1,9 +1,13 @@
 import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Link, useParams } from '@tanstack/react-router'
+import { Link, useLocation, useParams } from '@tanstack/react-router'
 import {
   api,
+  type DeviceEventOut,
+  type DeviceProcedureDefinitionOut,
+  type DeviceProcedureInvocationOut,
+  type DeviceReportedStateItemOut,
   type DriftEventOut,
   type IngestionBatchOut,
   type MediaObjectOut,
@@ -22,6 +26,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Checkbox,
   DataTable,
   Input,
   Label,
@@ -35,7 +40,7 @@ import { fmtDateTime, fmtNumber } from '../utils/format'
 import { adminAccessHint } from '../utils/adminAuth'
 
 type Bucket = 'minute' | 'hour'
-type TabKey = 'overview' | 'telemetry' | 'ingestions' | 'drift' | 'notifications' | 'media'
+type TabKey = 'overview' | 'telemetry' | 'state' | 'procedures' | 'events' | 'ingestions' | 'drift' | 'notifications' | 'media'
 type CameraFilter = 'all' | 'cam1' | 'cam2' | 'cam3' | 'cam4'
 
 const MEDIA_TOKEN_STORAGE_KEY = 'edgewatch_media_tokens_v1'
@@ -322,6 +327,7 @@ function MediaThumbnail(props: { media: MediaObjectOut; token: string }) {
 
 export function DeviceDetailPage() {
   const { deviceId } = useParams({ from: '/devices/$deviceId' })
+  const searchStr = useLocation({ select: (state) => state.searchStr })
   const { adminKey } = useAppSettings()
   const { toast } = useToast()
   const qc = useQueryClient()
@@ -366,6 +372,13 @@ export function DeviceDetailPage() {
   const [alertsMuteReason, setAlertsMuteReason] = React.useState<string>('')
   const [shutdownReasonInput, setShutdownReasonInput] = React.useState<string>('seasonal intermission')
   const [shutdownGraceInput, setShutdownGraceInput] = React.useState<string>('30')
+  const [procedureNameInput, setProcedureNameInput] = React.useState<string>('')
+  const [procedurePayloadInput, setProcedurePayloadInput] = React.useState<string>('{}')
+  const [otaChannelInput, setOtaChannelInput] = React.useState<string>('stable')
+  const [otaUpdatesEnabledInput, setOtaUpdatesEnabledInput] = React.useState<boolean>(true)
+  const [otaBusyReasonInput, setOtaBusyReasonInput] = React.useState<string>('')
+  const [otaIsDevelopmentInput, setOtaIsDevelopmentInput] = React.useState<boolean>(false)
+  const [otaLockedManifestInput, setOtaLockedManifestInput] = React.useState<string>('')
   const mediaErrorToastRef = React.useRef<string>('')
 
   const deviceQ = useQuery({ queryKey: ['device', deviceId], queryFn: () => api.device(deviceId), refetchInterval: 10_000 })
@@ -376,6 +389,36 @@ export function DeviceDetailPage() {
   })
   const contractQ = useQuery({ queryKey: ['telemetryContract'], queryFn: api.telemetryContract, staleTime: 5 * 60_000 })
   const latestQ = useQuery({ queryKey: ['latestTelemetry', deviceId], queryFn: () => api.latestTelemetry(deviceId), refetchInterval: 10_000 })
+  const stateQ = useQuery({
+    queryKey: ['deviceState', deviceId],
+    queryFn: () => api.deviceState(deviceId),
+    enabled: tab === 'state',
+    refetchInterval: 15_000,
+  })
+  const deviceEventsQ = useQuery({
+    queryKey: ['deviceEvents', deviceId],
+    queryFn: () => api.deviceEvents({ device_id: deviceId, limit: 200 }),
+    enabled: tab === 'events',
+    refetchInterval: 15_000,
+  })
+  const procedureInvocationsQ = useQuery({
+    queryKey: ['deviceProcedureInvocations', deviceId],
+    queryFn: () => api.deviceProcedureInvocations(deviceId, { limit: 100 }),
+    enabled: tab === 'procedures',
+    refetchInterval: 15_000,
+  })
+  const procedureDefinitionsQ = useQuery({
+    queryKey: ['admin', 'procedureDefinitions', adminCred],
+    queryFn: () => api.admin.procedureDefinitions(adminCred),
+    enabled: tab === 'procedures' && adminAccess,
+    staleTime: 30_000,
+  })
+  const releaseManifestsQ = useQuery({
+    queryKey: ['admin', 'releaseManifests', adminCred],
+    queryFn: () => api.admin.releaseManifests(adminCred, { limit: 200 }),
+    enabled: adminAccess,
+    staleTime: 30_000,
+  })
 
   const contract = contractQ.data
   const metricKeys = React.useMemo(() => {
@@ -392,6 +435,15 @@ export function DeviceDetailPage() {
       setMetric(fallback)
     }
   }, [metricKeys, metric])
+
+  React.useEffect(() => {
+    if (!deviceQ.data) return
+    setOtaChannelInput(deviceQ.data.ota_channel || 'stable')
+    setOtaUpdatesEnabledInput(deviceQ.data.ota_updates_enabled)
+    setOtaBusyReasonInput(deviceQ.data.ota_busy_reason ?? '')
+    setOtaIsDevelopmentInput(deviceQ.data.ota_is_development)
+    setOtaLockedManifestInput(deviceQ.data.ota_locked_manifest_id ?? '')
+  }, [deviceQ.data?.device_id])
 
   const sparkMetrics = React.useMemo(() => {
     const base = [
@@ -610,6 +662,73 @@ export function DeviceDetailPage() {
     },
   })
 
+  const updateOtaGovernanceMutation = useMutation({
+    mutationFn: async () => {
+      if (!adminAccess) throw new Error('Admin access is required for OTA governance changes.')
+      const ota_channel = otaChannelInput.trim()
+      if (!ota_channel) throw new Error('OTA channel is required.')
+      return api.admin.updateDevice(adminCred, deviceId, {
+        ota_channel,
+        ota_updates_enabled: otaUpdatesEnabledInput,
+        ota_busy_reason: otaBusyReasonInput.trim() || null,
+        ota_is_development: otaIsDevelopmentInput,
+        ota_locked_manifest_id: otaLockedManifestInput.trim() || null,
+      })
+    },
+    onSuccess: (out) => {
+      setOtaChannelInput(out.ota_channel)
+      setOtaUpdatesEnabledInput(out.ota_updates_enabled)
+      setOtaBusyReasonInput(out.ota_busy_reason ?? '')
+      setOtaIsDevelopmentInput(out.ota_is_development)
+      setOtaLockedManifestInput(out.ota_locked_manifest_id ?? '')
+      qc.invalidateQueries({ queryKey: ['device', deviceId] })
+      qc.invalidateQueries({ queryKey: ['devices'] })
+      qc.invalidateQueries({ queryKey: ['devicesSummary'] })
+      qc.invalidateQueries({ queryKey: ['fleetDevices'] })
+      toast({
+        title: 'OTA governance updated',
+        description: `${out.ota_channel} / ${out.ota_updates_enabled ? 'updates enabled' : 'updates disabled'}`,
+        variant: 'success',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to update OTA governance',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
+  const invokeProcedureMutation = useMutation({
+    mutationFn: async () => {
+      const definitionName = procedureNameInput.trim()
+      if (!definitionName) throw new Error('Procedure name is required.')
+      let request_payload: Record<string, unknown> = {}
+      try {
+        request_payload = JSON.parse(procedurePayloadInput.trim() || '{}')
+      } catch {
+        throw new Error('Procedure payload must be valid JSON.')
+      }
+      return api.invokeDeviceProcedure(deviceId, definitionName, { request_payload, ttl_s: 300 })
+    },
+    onSuccess: (out) => {
+      qc.invalidateQueries({ queryKey: ['deviceProcedureInvocations', deviceId] })
+      toast({
+        title: 'Procedure queued',
+        description: `${out.definition_name} (${out.status})`,
+        variant: 'success',
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: 'Unable to invoke procedure',
+        description: (error as Error).message,
+        variant: 'error',
+      })
+    },
+  })
+
   const mediaQ = useQuery({
     queryKey: ['media', deviceId, mediaToken],
     queryFn: () => api.media.list(deviceId, { token: mediaToken, limit: 200 }),
@@ -810,6 +929,9 @@ export function DeviceDetailPage() {
   const tabs: Array<{ key: TabKey; label: string; requiresAdminRoutes?: boolean }> = [
     { key: 'overview', label: 'Overview' },
     { key: 'telemetry', label: 'Telemetry' },
+    { key: 'state', label: 'State' },
+    { key: 'procedures', label: 'Procedures' },
+    { key: 'events', label: 'Events' },
     { key: 'ingestions', label: 'Ingestions', requiresAdminRoutes: true },
     { key: 'drift', label: 'Drift', requiresAdminRoutes: true },
     { key: 'notifications', label: 'Notifications', requiresAdminRoutes: true },
@@ -817,6 +939,24 @@ export function DeviceDetailPage() {
   ]
 
   const visibleTabs = tabs.filter((t) => !t.requiresAdminRoutes || adminEnabled)
+
+  React.useEffect(() => {
+    const params = new URLSearchParams(searchStr.startsWith('?') ? searchStr.slice(1) : searchStr)
+    const requestedTab = params.get('tab')
+    if (
+      requestedTab === 'overview' ||
+      requestedTab === 'telemetry' ||
+      requestedTab === 'state' ||
+      requestedTab === 'procedures' ||
+      requestedTab === 'events' ||
+      requestedTab === 'ingestions' ||
+      requestedTab === 'drift' ||
+      requestedTab === 'notifications' ||
+      requestedTab === 'media'
+    ) {
+      setTab(requestedTab)
+    }
+  }, [searchStr])
 
   React.useEffect(() => {
     // Avoid clobbering deep links until we know whether the backend enabled admin routes.
@@ -902,11 +1042,74 @@ export function DeviceDetailPage() {
   const notificationCols = React.useMemo<ColumnDef<NotificationEventOut>[]>(() => {
     return [
       { header: 'Created', accessorKey: 'created_at', cell: (i) => <span className="text-muted-foreground">{fmtDateTime(i.getValue() as any)}</span> },
+      { header: 'Source', accessorKey: 'source_kind', cell: (i) => <Badge variant="outline">{String(i.getValue())}</Badge> },
       { header: 'Type', accessorKey: 'alert_type' },
       { header: 'Channel', accessorKey: 'channel', cell: (i) => <Badge variant="secondary">{String(i.getValue())}</Badge> },
       { header: 'Decision', accessorKey: 'decision' },
       { header: 'Delivered', accessorKey: 'delivered', cell: (i) => (i.getValue() ? <Badge variant="success">yes</Badge> : <Badge variant="destructive">no</Badge>) },
       { header: 'Reason', accessorKey: 'reason', cell: (i) => <span className="text-muted-foreground">{String(i.getValue())}</span> },
+      {
+        header: 'Payload',
+        cell: (i) => (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">view</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words">{JSON.stringify(i.row.original.payload, null, 2)}</pre>
+          </details>
+        ),
+      },
+    ]
+  }, [])
+
+  const stateCols = React.useMemo<ColumnDef<DeviceReportedStateItemOut>[]>(() => {
+    return [
+      { header: 'Key', accessorKey: 'key', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      { header: 'Type', accessorKey: 'schema_type', cell: (i) => <Badge variant="secondary">{String(i.getValue() ?? '—')}</Badge> },
+      { header: 'Updated', accessorKey: 'updated_at', cell: (i) => <span className="text-muted-foreground">{fmtDateTime(i.getValue() as any)}</span> },
+      {
+        header: 'Value',
+        cell: (i) => (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">view</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words">{JSON.stringify(i.row.original.value_json, null, 2)}</pre>
+          </details>
+        ),
+      },
+    ]
+  }, [])
+
+  const procedureCols = React.useMemo<ColumnDef<DeviceProcedureInvocationOut>[]>(() => {
+    return [
+      { header: 'Issued', accessorKey: 'issued_at', cell: (i) => <span className="text-muted-foreground">{fmtDateTime(i.getValue() as any)}</span> },
+      { header: 'Procedure', accessorKey: 'definition_name' },
+      { header: 'Status', accessorKey: 'status', cell: (i) => <Badge variant="secondary">{String(i.getValue())}</Badge> },
+      { header: 'Requester', accessorKey: 'requester_email', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      {
+        header: 'Payloads',
+        cell: (i) => (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">view</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words">{JSON.stringify({ request: i.row.original.request_payload, result: i.row.original.result_payload, reason_code: i.row.original.reason_code, reason_detail: i.row.original.reason_detail }, null, 2)}</pre>
+          </details>
+        ),
+      },
+    ]
+  }, [])
+
+  const deviceEventCols = React.useMemo<ColumnDef<DeviceEventOut>[]>(() => {
+    return [
+      { header: 'Created', accessorKey: 'created_at', cell: (i) => <span className="text-muted-foreground">{fmtDateTime(i.getValue() as any)}</span> },
+      { header: 'Type', accessorKey: 'event_type' },
+      { header: 'Severity', accessorKey: 'severity', cell: (i) => <Badge variant={String(i.getValue()) === 'error' ? 'destructive' : String(i.getValue()) === 'warning' ? 'warning' : 'secondary'}>{String(i.getValue())}</Badge> },
+      { header: 'Source', accessorKey: 'source', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      {
+        header: 'Body',
+        cell: (i) => (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">view</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words">{JSON.stringify(i.row.original.body, null, 2)}</pre>
+          </details>
+        ),
+      },
     ]
   }, [])
 
@@ -1197,6 +1400,85 @@ export function DeviceDetailPage() {
 
                   {adminAccess ? (
                     <div className="grid gap-3 border-t pt-3">
+                      <div className="text-sm font-medium">OTA governance</div>
+                      <div className="text-xs text-muted-foreground">
+                        Control rollout channel, readiness, break-glass busy state, development-device posture, and optional manifest pinning.
+                      </div>
+                      <div className="space-y-2">
+                        <Label>OTA channel</Label>
+                        <Input
+                          value={otaChannelInput}
+                          onChange={(e) => setOtaChannelInput(e.target.value)}
+                          placeholder="stable"
+                          disabled={updateOtaGovernanceMutation.isPending}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Manifest lock</Label>
+                        <SmallSelect
+                          value={otaLockedManifestInput}
+                          onChange={setOtaLockedManifestInput}
+                          disabled={updateOtaGovernanceMutation.isPending || releaseManifestsQ.isLoading}
+                          options={[
+                            { value: '', label: 'none (follow channel deployment)' },
+                            ...(releaseManifestsQ.data ?? []).map((manifest) => ({
+                              value: manifest.id,
+                              label: `${manifest.git_tag} · ${manifest.update_type} · ${manifest.status}`,
+                            })),
+                          ]}
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          Lock only for exceptions or recovery. Clearing the lock returns the device to normal channel-based targeting.
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Busy reason</Label>
+                        <Input
+                          value={otaBusyReasonInput}
+                          onChange={(e) => setOtaBusyReasonInput(e.target.value)}
+                          placeholder="maintenance / operator freeze"
+                          disabled={updateOtaGovernanceMutation.isPending}
+                        />
+                      </div>
+                      <label className="flex items-center gap-3 rounded-md border p-3">
+                        <Checkbox
+                          checked={otaUpdatesEnabledInput}
+                          onChange={(e) => setOtaUpdatesEnabledInput(e.target.checked)}
+                          disabled={updateOtaGovernanceMutation.isPending}
+                        />
+                        <div className="space-y-1">
+                          <div className="text-sm font-medium">Updates enabled</div>
+                          <div className="text-xs text-muted-foreground">
+                            Disable this when the device should be excluded from rollout pickup until explicitly re-enabled.
+                          </div>
+                        </div>
+                      </label>
+                      <label className="flex items-center gap-3 rounded-md border p-3">
+                        <Checkbox
+                          checked={otaIsDevelopmentInput}
+                          onChange={(e) => setOtaIsDevelopmentInput(e.target.checked)}
+                          disabled={updateOtaGovernanceMutation.isPending}
+                        />
+                        <div className="space-y-1">
+                          <div className="text-sm font-medium">Development device</div>
+                          <div className="text-xs text-muted-foreground">
+                            Marks the device as a pilot or dev lane member instead of standard production rollout posture.
+                          </div>
+                        </div>
+                      </label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => updateOtaGovernanceMutation.mutate()}
+                        disabled={updateOtaGovernanceMutation.isPending}
+                      >
+                        {updateOtaGovernanceMutation.isPending ? 'Saving OTA governance…' : 'Save OTA governance'}
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {adminAccess ? (
+                    <div className="grid gap-3 border-t pt-3">
                       <div className="text-sm font-medium">Admin-only shutdown command</div>
                       <div className="text-xs text-muted-foreground">
                         Queues a one-shot <span className="font-mono">disabled + shutdown</span> command. Actual shutdown runs only when the agent has{' '}
@@ -1467,6 +1749,107 @@ export function DeviceDetailPage() {
         </div>
       ) : null}
 
+      {tab === 'state' ? (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Reported state</CardTitle>
+              <CardDescription>Latest device-reported variables and state snapshots.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {stateQ.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
+              {stateQ.isError ? <div className="text-sm text-destructive">Error: {(stateQ.error as Error).message}</div> : null}
+              <DataTable<DeviceReportedStateItemOut>
+                data={stateQ.data ?? []}
+                columns={stateCols}
+                height={420}
+                enableSorting
+                initialSorting={[{ id: 'updated_at', desc: true }]}
+                emptyState="No reported state values yet."
+              />
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {tab === 'procedures' ? (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Procedures</CardTitle>
+              <CardDescription>Queue typed device procedures and inspect invocation history.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Procedure name</Label>
+                  <Input
+                    value={procedureNameInput}
+                    onChange={(e) => setProcedureNameInput(e.target.value)}
+                    placeholder="capture_snapshot"
+                    list={procedureDefinitionsQ.data?.length ? 'device-procedure-definitions' : undefined}
+                  />
+                  {procedureDefinitionsQ.data?.length ? (
+                    <datalist id="device-procedure-definitions">
+                      {procedureDefinitionsQ.data.map((row) => (
+                        <option key={row.id} value={row.name} />
+                      ))}
+                    </datalist>
+                  ) : null}
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Request payload JSON</Label>
+                  <textarea
+                    className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
+                    value={procedurePayloadInput}
+                    onChange={(e) => setProcedurePayloadInput(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => invokeProcedureMutation.mutate()} disabled={invokeProcedureMutation.isPending}>
+                  {invokeProcedureMutation.isPending ? 'Queueing procedure…' : 'Invoke procedure'}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ['deviceProcedureInvocations', deviceId] })}>
+                  Refresh history
+                </Button>
+              </div>
+              <DataTable<DeviceProcedureInvocationOut>
+                data={procedureInvocationsQ.data ?? []}
+                columns={procedureCols}
+                height={460}
+                enableSorting
+                initialSorting={[{ id: 'issued_at', desc: true }]}
+                emptyState="No procedure invocations yet."
+              />
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {tab === 'events' ? (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Device events</CardTitle>
+              <CardDescription>Append-only operational events published by the device.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {deviceEventsQ.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
+              {deviceEventsQ.isError ? <div className="text-sm text-destructive">Error: {(deviceEventsQ.error as Error).message}</div> : null}
+              <DataTable<DeviceEventOut>
+                data={deviceEventsQ.data ?? []}
+                columns={deviceEventCols}
+                height={460}
+                enableSorting
+                initialSorting={[{ id: 'created_at', desc: true }]}
+                emptyState="No device events yet."
+              />
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
       {tab === 'ingestions' ? (
         <div className="space-y-6">
           {adminAuthMode === 'key' && !adminAccess ? (
@@ -1476,7 +1859,7 @@ export function DeviceDetailPage() {
               ) : (
                 <>
                   To view ingestion audit trails, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
-                  <Link to="/settings" className="underline">Settings</Link>.
+                  <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
                 </>
               )}
             </Callout>
@@ -1515,7 +1898,7 @@ export function DeviceDetailPage() {
               ) : (
                 <>
                   To view drift events, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
-                  <Link to="/settings" className="underline">Settings</Link>.
+                  <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
                 </>
               )}
             </Callout>
@@ -1554,7 +1937,7 @@ export function DeviceDetailPage() {
               ) : (
                 <>
                   To view notification audit trails, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
-                  <Link to="/settings" className="underline">Settings</Link>.
+                  <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
                 </>
               )}
             </Callout>

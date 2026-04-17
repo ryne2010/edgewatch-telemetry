@@ -49,6 +49,13 @@ class Device(Base):
     alerts_muted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     alerts_muted_reason: Mapped[str | None] = mapped_column(String(512), nullable=True)
     cohort: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    ota_channel: Mapped[str] = mapped_column(String(64), nullable=False, default="stable")
+    ota_updates_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    ota_busy_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    ota_is_development: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ota_locked_manifest_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("release_manifests.id"), nullable=True
+    )
     labels: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
 
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -67,7 +74,11 @@ class Device(Base):
     quarantined_telemetry: Mapped[list["QuarantinedTelemetry"]] = relationship(back_populates="device")
     media_objects: Mapped[list["MediaObject"]] = relationship(back_populates="device")
     access_grants: Mapped[list["DeviceAccessGrant"]] = relationship(back_populates="device")
+    fleet_memberships: Mapped[list["FleetDeviceMembership"]] = relationship(back_populates="device")
     control_commands: Mapped[list["DeviceControlCommand"]] = relationship(back_populates="device")
+    procedure_invocations: Mapped[list["DeviceProcedureInvocation"]] = relationship(back_populates="device")
+    reported_state_rows: Mapped[list["DeviceReportedState"]] = relationship(back_populates="device")
+    device_events: Mapped[list["DeviceEvent"]] = relationship(back_populates="device")
     release_state: Mapped["DeviceReleaseState | None"] = relationship(back_populates="device", uselist=False)
 
     __table_args__ = (Index("ix_devices_token_fingerprint", "token_fingerprint", unique=True),)
@@ -89,6 +100,61 @@ class DeviceAccessGrant(Base):
         UniqueConstraint("device_id", "principal_email", name="uq_device_access_grants_device_principal"),
         Index("ix_device_access_grants_principal_role", "principal_email", "access_role"),
         Index("ix_device_access_grants_device_role", "device_id", "access_role"),
+    )
+
+
+class Fleet(Base):
+    __tablename__ = "fleets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    default_ota_channel: Mapped[str] = mapped_column(String(64), nullable=False, default="stable")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    devices: Mapped[list["FleetDeviceMembership"]] = relationship(back_populates="fleet")
+    access_grants: Mapped[list["FleetAccessGrant"]] = relationship(back_populates="fleet")
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_fleets_name"),
+        Index("ix_fleets_name", "name"),
+    )
+
+
+class FleetDeviceMembership(Base):
+    __tablename__ = "fleet_device_memberships"
+
+    fleet_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("fleets.id"), primary_key=True, nullable=False
+    )
+    device_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("devices.device_id"), primary_key=True, nullable=False
+    )
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    fleet: Mapped["Fleet"] = relationship(back_populates="devices")
+    device: Mapped["Device"] = relationship(back_populates="fleet_memberships")
+
+    __table_args__ = (Index("ix_fleet_device_memberships_device", "device_id"),)
+
+
+class FleetAccessGrant(Base):
+    __tablename__ = "fleet_access_grants"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    fleet_id: Mapped[str] = mapped_column(String(36), ForeignKey("fleets.id"), nullable=False)
+    principal_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    access_role: Mapped[str] = mapped_column(String(16), nullable=False, default="viewer")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    fleet: Mapped["Fleet"] = relationship(back_populates="access_grants")
+
+    __table_args__ = (
+        UniqueConstraint("fleet_id", "principal_email", name="uq_fleet_access_grants_fleet_principal"),
+        Index("ix_fleet_access_grants_principal_role", "principal_email", "access_role"),
+        Index("ix_fleet_access_grants_fleet_role", "fleet_id", "access_role"),
     )
 
 
@@ -118,12 +184,111 @@ class DeviceControlCommand(Base):
     )
 
 
+class DeviceProcedureDefinition(Base):
+    __tablename__ = "device_procedure_definitions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    request_schema: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    response_schema: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by: Mapped[str] = mapped_column(String(320), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    invocations: Mapped[list["DeviceProcedureInvocation"]] = relationship(back_populates="definition")
+
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_device_procedure_definitions_name"),
+        Index("ix_device_procedure_definitions_enabled_name", "enabled", "name"),
+    )
+
+
+class DeviceProcedureInvocation(Base):
+    __tablename__ = "device_procedure_invocations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String(128), ForeignKey("devices.device_id"), nullable=False)
+    definition_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("device_procedure_definitions.id"), nullable=False
+    )
+    request_payload: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    result_payload: Mapped[dict | None] = mapped_column(json_type(), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    reason_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reason_detail: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    requester_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    device: Mapped["Device"] = relationship(back_populates="procedure_invocations")
+    definition: Mapped["DeviceProcedureDefinition"] = relationship(back_populates="invocations")
+
+    __table_args__ = (
+        Index(
+            "ix_device_procedure_invocations_device_status_expires_issued",
+            "device_id",
+            "status",
+            "expires_at",
+            "issued_at",
+        ),
+        Index("ix_device_procedure_invocations_definition_created", "definition_id", "issued_at"),
+    )
+
+
+class DeviceReportedState(Base):
+    __tablename__ = "device_reported_state"
+
+    device_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("devices.device_id"), primary_key=True, nullable=False
+    )
+    key: Mapped[str] = mapped_column(String(128), primary_key=True, nullable=False)
+    value_json: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    schema_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device: Mapped["Device"] = relationship(back_populates="reported_state_rows")
+
+    __table_args__ = (Index("ix_device_reported_state_updated_at", "updated_at"),)
+
+
+class DeviceEvent(Base):
+    __tablename__ = "device_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String(128), ForeignKey("devices.device_id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="device")
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    body: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    device: Mapped["Device"] = relationship(back_populates="device_events")
+
+    __table_args__ = (
+        Index("ix_device_events_device_created", "device_id", "created_at"),
+        Index("ix_device_events_type_created", "event_type", "created_at"),
+    )
+
+
 class ReleaseManifest(Base):
     __tablename__ = "release_manifests"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     git_tag: Mapped[str] = mapped_column(String(128), nullable=False)
     commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    update_type: Mapped[str] = mapped_column(String(32), nullable=False, default="application_bundle")
+    artifact_uri: Mapped[str] = mapped_column(String(2048), nullable=False)
+    artifact_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    artifact_signature: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    artifact_signature_scheme: Mapped[str] = mapped_column(String(64), nullable=False, default="none")
+    compatibility: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
     signature: Mapped[str] = mapped_column(Text, nullable=False)
     signature_key_id: Mapped[str] = mapped_column(String(64), nullable=False)
     constraints: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
@@ -154,6 +319,8 @@ class Deployment(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     failure_rate_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.2)
     no_quorum_timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=1800)
+    stage_timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=1800)
+    defer_rate_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
     command_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     power_guard_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     health_timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
@@ -200,9 +367,14 @@ class DeviceReleaseState(Base):
     )
     current_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
     current_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_manifest_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    current_artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_healthy_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_failed_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_failed_manifest_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     rollback_tag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    pending_manifest_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    pending_artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_deployment_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
@@ -388,6 +560,8 @@ class NotificationEvent(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     alert_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("alerts.id"), nullable=True)
     device_id: Mapped[str] = mapped_column(String(128), ForeignKey("devices.device_id"), nullable=False)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="alert")
+    source_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     alert_type: Mapped[str] = mapped_column(String(64), nullable=False)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     decision: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -395,6 +569,7 @@ class NotificationEvent(Base):
     reason: Mapped[str] = mapped_column(String(1024), nullable=False)
     destination_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_class: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    payload: Mapped[dict] = mapped_column(json_type(), nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     alert: Mapped["Alert | None"] = relationship(back_populates="notification_events")
@@ -414,6 +589,8 @@ class NotificationDestination(Base):
     channel: Mapped[str] = mapped_column(String(32), nullable=False, default="webhook")
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="generic")
     webhook_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    source_types: Mapped[list[str]] = mapped_column(json_type(), nullable=False, default=list)
+    event_types: Mapped[list[str]] = mapped_column(json_type(), nullable=False, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

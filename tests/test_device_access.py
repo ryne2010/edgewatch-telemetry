@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from api.app.auth.principal import Principal
 from api.app.db import Base
-from api.app.models import Device, DeviceAccessGrant
+from api.app.models import Device, DeviceAccessGrant, Fleet, FleetAccessGrant, FleetDeviceMembership
 from api.app.services.device_access import (
     accessible_device_ids_subquery,
     ensure_device_access,
@@ -48,6 +48,21 @@ def _seed_grant(session: Session, *, device_id: str, email: str, role: str) -> N
             access_role=role,
         )
     )
+    session.commit()
+
+
+def _seed_fleet(session: Session, *, fleet_id: str, name: str) -> None:
+    session.add(Fleet(id=fleet_id, name=name, default_ota_channel="stable"))
+    session.commit()
+
+
+def _seed_fleet_membership(session: Session, *, fleet_id: str, device_id: str) -> None:
+    session.add(FleetDeviceMembership(fleet_id=fleet_id, device_id=device_id))
+    session.commit()
+
+
+def _seed_fleet_grant(session: Session, *, fleet_id: str, email: str, role: str) -> None:
+    session.add(FleetAccessGrant(fleet_id=fleet_id, principal_email=email, access_role=role))
     session.commit()
 
 
@@ -129,5 +144,29 @@ def test_accessible_device_ids_subquery_filters_by_grant_role(
             .all()
         )
         assert [row[0] for row in rows_operator] == ["well-002"]
+    finally:
+        session.close()
+
+
+def test_fleet_grants_expand_accessible_device_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("api.app.services.device_access.settings", SimpleNamespace(authz_enabled=True))
+    principal = Principal(email="viewer@example.com", role="viewer", source="test")
+    session = _session(tmp_path)
+    try:
+        _seed_device(session, device_id="well-010")
+        _seed_fleet(session, fleet_id="fleet-1", name="Pilot")
+        _seed_fleet_membership(session, fleet_id="fleet-1", device_id="well-010")
+        _seed_fleet_grant(session, fleet_id="fleet-1", email="viewer@example.com", role="viewer")
+
+        viewer_ids = accessible_device_ids_subquery(session, principal=principal, min_access_role="viewer")
+        assert viewer_ids is not None
+        rows = (
+            session.query(Device.device_id)
+            .filter(Device.device_id.in_(viewer_ids))
+            .order_by(Device.device_id.asc())
+            .all()
+        )
+        assert [row[0] for row in rows] == ["well-010"]
+        ensure_device_access(session, principal=principal, device_id="well-010", min_access_role="viewer")
     finally:
         session.close()

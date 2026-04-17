@@ -33,6 +33,12 @@ from .routes.device_updates import router as device_updates_router
 from .routes.device_controls import router as device_controls_router
 from .routes.media import router as media_router
 from .routes.pubsub_worker import router as pubsub_worker_router
+from .routes.device_cloud import admin_router as device_cloud_admin_router
+from .routes.device_cloud import device_router as device_cloud_device_router
+from .routes.device_cloud import operator_router as device_cloud_operator_router
+from .routes.fleets import admin_router as fleets_admin_router
+from .routes.fleets import read_router as fleets_read_router
+from .routes.operator_tools import router as operator_tools_router
 from .observability import (
     RequestContextMiddleware,
     configure_logging,
@@ -296,6 +302,7 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
         app.include_router(device_commands_router)
         if settings.enable_ota_updates:
             app.include_router(device_updates_router)
+        app.include_router(device_cloud_device_router)
         app.include_router(media_router)
         app.include_router(pubsub_worker_router)
     else:
@@ -307,12 +314,17 @@ def create_app(_settings: Settings | None = None) -> FastAPI:
         app.include_router(alerts_router, dependencies=[Depends(require_viewer_role)])
         app.include_router(contracts_router, dependencies=[Depends(require_viewer_role)])
         app.include_router(device_controls_router, dependencies=[Depends(require_viewer_role)])
+        app.include_router(device_cloud_operator_router, dependencies=[Depends(require_viewer_role)])
+        app.include_router(fleets_read_router, dependencies=[Depends(require_viewer_role)])
+        app.include_router(operator_tools_router, dependencies=[Depends(require_viewer_role)])
     else:
         logger.info("Read routes disabled (ENABLE_READ_ROUTES=false)")
 
     # Admin surface (provisioning/debug)
     if settings.enable_admin_routes:
         app.include_router(admin_router)
+        app.include_router(device_cloud_admin_router)
+        app.include_router(fleets_admin_router)
 
     # --- Optional React UI ---
     # The backend can serve a built UI from /web/dist when present.

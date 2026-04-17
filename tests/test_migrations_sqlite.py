@@ -36,6 +36,13 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     assert "deployment_targets" in tables
     assert "device_release_state" in tables
     assert "deployment_events" in tables
+    assert "device_procedure_definitions" in tables
+    assert "device_procedure_invocations" in tables
+    assert "device_reported_state" in tables
+    assert "device_events" in tables
+    assert "fleets" in tables
+    assert "fleet_device_memberships" in tables
+    assert "fleet_access_grants" in tables
 
     admin_columns = {col["name"] for col in inspector.get_columns("admin_events")}
     assert "actor_subject" in admin_columns
@@ -49,6 +56,11 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     assert "alerts_muted_reason" in device_columns
     assert "cohort" in device_columns
     assert "labels" in device_columns
+    assert "ota_channel" in device_columns
+    assert "ota_updates_enabled" in device_columns
+    assert "ota_busy_reason" in device_columns
+    assert "ota_is_development" in device_columns
+    assert "ota_locked_manifest_id" in device_columns
 
     command_columns = {col["name"] for col in inspector.get_columns("device_control_commands")}
     assert "device_id" in command_columns

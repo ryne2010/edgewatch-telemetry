@@ -79,3 +79,36 @@ export function IconInfo(props: IconProps) {
     </svg>
   )
 }
+
+export function IconLayers(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={cn('h-5 w-5', props.className)} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 2 2 7l10 5 10-5-10-5Zm0 8.24L4.48 7 12 3.24 19.52 7 12 10.24Zm8.78 3.2L12 18l-8.78-4.56L2 14.86l10 5.14 10-5.14-1.22-1.42Zm0 4L12 22l-8.78-4.56L2 18.86 12 24l10-5.14-1.22-1.42Z"
+      />
+    </svg>
+  )
+}
+
+export function IconPulse(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={cn('h-5 w-5', props.className)} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M3 12h4l2-4 4 8 2-4h6v2h-7l-1 2a1 1 0 0 1-1.9 0l-4-8-1 2a1 1 0 0 1-.9.58H3v-2Z"
+      />
+    </svg>
+  )
+}
+
+export function IconSignal(props: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={cn('h-5 w-5', props.className)} aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M3 18h2v3H3v-3Zm4-4h2v7H7v-7Zm4-4h2v11h-2V10Zm4-4h2v15h-2V6Zm4-4h2v19h-2V2Z"
+      />
+    </svg>
+  )
+}

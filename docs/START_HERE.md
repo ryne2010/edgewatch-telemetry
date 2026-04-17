@@ -136,7 +136,13 @@ Docs:
 - Owner controls + durable delivery tutorial: `docs/TUTORIALS/OWNER_CONTROLS_AND_COMMAND_DELIVERY.md`
 - BYO cellular provider checklist: `docs/TUTORIALS/BYO_CELLULAR_PROVIDER_CHECKLIST.md`
 - OTA updates runbook: `docs/RUNBOOKS/OTA_UPDATES.md`
+- System-image hardware validation gate: `docs/RUNBOOKS/SYSTEM_IMAGE_HARDWARE_VALIDATION.md`
+  - evidence helper: `python scripts/ota/collect_system_image_validation_evidence.py --help`
+  - evaluator: `python scripts/ota/evaluate_system_image_validation.py --help`
+- Tailscale operator overlay: `docs/RUNBOOKS/TAILSCALE_OPERATOR.md`
+- Operator CLI: `python scripts/operator_cli.py --help`
 - Fleet deployment + rollback tutorial: `docs/TUTORIALS/FLEET_DEPLOYMENTS_AND_ROLLBACK.md`
+- Particle parity matrix: `docs/PARTICLE_PARITY_MATRIX.md`
 - Runtime low-power tiers:
   - `continuous`: current always-on default
   - `eco`: software-only duty cycling

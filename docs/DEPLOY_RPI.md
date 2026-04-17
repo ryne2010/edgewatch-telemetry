@@ -119,6 +119,53 @@ sudo apt-get install -y git python3 python3-venv python3-pip alsa-utils i2c-tool
 
 (Optional) If you use I2C sensors, enable I2C (`raspi-config`) and reboot.
 
+## 2b) Optional: Tailscale operator overlay
+
+Use this when you want private operator access from your MacBook to edge devices without changing EdgeWatch's normal hosted posture.
+
+- Keep `EDGEWATCH_API_URL` pointed at the existing public ingest URL. Tailscale is for private operator access, not telemetry transport.
+- On the MacBook, keep the current `Tailscale.app` install or switch to the standalone macOS variant only if you need the CLI-specific features documented by Tailscale.
+- In the Tailscale admin console:
+  - enable MagicDNS if your tailnet does not already have it
+  - generate a **one-off**, **pre-approved**, **tagged** auth key for edge nodes
+  - use `tag:edgewatch-device` as the baseline tag and add a site tag only when you need location-scoped policy
+
+Install Tailscale on the Raspberry Pi:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --auth-key="$TAILSCALE_AUTH_KEY" --hostname="$DEVICE_ID"
+```
+
+Optional: enable Tailscale SSH on the device when you want identity-based SSH instead of plain SSH over the tailnet:
+
+```bash
+sudo tailscale set --ssh
+```
+
+Recommended policy intent:
+
+- Use Tailscale grants, not legacy ACL-first policy design.
+- Allow only your operator identity to reach `tag:edgewatch-device` on SSH and any explicitly approved device-local ports.
+- Do not grant broad all-port access to edge nodes by default.
+
+Verification from the MacBook:
+
+```bash
+ping <device-magicdns-name>
+ssh <device-magicdns-name>
+```
+
+Reference docs:
+
+- [Install Tailscale on macOS](https://tailscale.com/docs/install/mac)
+- [MagicDNS](https://tailscale.com/kb/1081/magicdns)
+- [Auth keys](https://tailscale.com/kb/1085/auth-keys)
+- [Access control](https://tailscale.com/kb/1393/access-control)
+- [Install Tailscale on Linux](https://tailscale.com/docs/install/linux)
+- [Tailscale SSH](https://tailscale.com/kb/1193/tailscale-ssh)
+- Repo runbook: `docs/RUNBOOKS/TAILSCALE_OPERATOR.md`
+
 ## 3) Install the agent
 
 Clone the repo:

@@ -175,7 +175,7 @@ export function FleetMap(props: FleetMapProps) {
     const map = L.map(mapContainerRef.current, {
       center: MAP_DEFAULT_CENTER,
       zoom: MAP_DEFAULT_ZOOM,
-      scrollWheelZoom: true,
+      scrollWheelZoom: false,
       zoomControl: true,
     })
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

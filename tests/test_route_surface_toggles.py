@@ -31,17 +31,31 @@ def test_default_route_surface_includes_ui_read_ingest(monkeypatch) -> None:
     assert "/api/v1/ingest" in paths
     assert "/api/v1/device-policy" in paths
     assert "/api/v1/device-commands/{command_id}/ack" in paths
+    assert "/api/v1/device-state/report" in paths
+    assert "/api/v1/device-events" in paths
+    assert "/api/v1/device-procedure-invocations/{invocation_id}/result" in paths
 
     # Read surface
     assert "/api/v1/devices" in paths
     assert "/api/v1/alerts" in paths
     assert "/api/v1/contracts/telemetry" in paths
     assert "/api/v1/devices/{device_id}/controls" in paths
+    assert "/api/v1/devices/{device_id}/state" in paths
+    assert "/api/v1/devices/{device_id}/procedures/{definition_name}/invoke" in paths
+    assert "/api/v1/devices/{device_id}/procedure-invocations" in paths
+    assert "/api/v1/fleets" in paths
+    assert "/api/v1/fleets/{fleet_id}/devices" in paths
+    assert "/api/v1/search" in paths
+    assert "/api/v1/event-stream" in paths
 
     # Admin surface
     assert "/api/v1/admin/contracts/edge-policy" in paths
     assert "/api/v1/admin/devices/{device_id}/access" in paths
     assert "/api/v1/admin/devices/{device_id}/controls/shutdown" in paths
+    assert "/api/v1/admin/procedures/definitions" in paths
+    assert "/api/v1/admin/fleets" in paths
+    assert "/api/v1/admin/fleets/{fleet_id}/devices/{device_id}" in paths
+    assert "/api/v1/admin/fleets/{fleet_id}/access/{principal_email}" in paths
 
 
 def test_disable_ui_removes_ui_routes(monkeypatch) -> None:
@@ -72,6 +86,13 @@ def test_disable_read_routes_removes_dashboard_endpoints(monkeypatch) -> None:
     assert "/api/v1/alerts" not in paths
     assert "/api/v1/contracts/telemetry" not in paths
     assert "/api/v1/devices/{device_id}/controls" not in paths
+    assert "/api/v1/devices/{device_id}/state" not in paths
+    assert "/api/v1/devices/{device_id}/procedures/{definition_name}/invoke" not in paths
+    assert "/api/v1/devices/{device_id}/procedure-invocations" not in paths
+    assert "/api/v1/fleets" not in paths
+    assert "/api/v1/fleets/{fleet_id}/devices" not in paths
+    assert "/api/v1/search" not in paths
+    assert "/api/v1/event-stream" not in paths
 
 
 def test_disable_ingest_routes_removes_ingest_endpoints(monkeypatch) -> None:
@@ -88,6 +109,8 @@ def test_disable_ingest_routes_removes_ingest_endpoints(monkeypatch) -> None:
     assert "/api/v1/ingest" not in paths
     assert "/api/v1/device-policy" not in paths
     assert "/api/v1/device-commands/{command_id}/ack" not in paths
+    assert "/api/v1/device-state/report" not in paths
+    assert "/api/v1/device-procedure-invocations/{invocation_id}/result" not in paths
     assert "/api/v1/internal/pubsub/push" not in paths
 
 
@@ -128,6 +151,8 @@ def test_disable_admin_routes_removes_admin_endpoints(monkeypatch) -> None:
 
     assert "/api/v1/admin/contracts/edge-policy" not in paths
     assert "/api/v1/admin/devices/{device_id}/controls/shutdown" not in paths
+    assert "/api/v1/admin/procedures/definitions" not in paths
+    assert "/api/v1/admin/fleets" not in paths
 
 
 def test_admin_api_key_is_trimmed(monkeypatch) -> None:

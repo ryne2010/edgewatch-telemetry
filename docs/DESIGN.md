@@ -121,6 +121,8 @@ Durability:
 
 Runtime/API path:
 - Admin assigns per-device grants in `device_access_grants`.
+- Admin may also assign fleet-scoped grants in `fleet_access_grants`.
+- Fleets are first-class governance entities with explicit device membership.
 - Read routes (`/devices`, `/alerts`, telemetry endpoints) scope non-admin results to granted devices.
 - Owner/operator control routes manage:
   - alert mute windows (`alerts_muted_until`, notifications-only suppression)
@@ -134,6 +136,16 @@ Runtime/API path:
   - latest pending control command snapshot (if any)
   - policy ETag includes pending-command state to trigger device refresh
 - Devices ack applied commands via `/api/v1/device-commands/{command_id}/ack`.
+- Admin manages pre-declared device procedure definitions.
+- Operators enqueue typed procedure invocations against devices.
+- Device policy may include:
+  - latest pending control command
+  - latest pending procedure invocation
+  - latest pending OTA update command
+- Devices report:
+  - procedure results
+  - latest reported state snapshots
+  - append-only device events
 
 Agent behavior:
 - `sleep`: telemetry polling remains active at `sleep_poll_interval_s`; media capture/upload disabled.
@@ -144,15 +156,32 @@ Agent behavior:
   - always applies logical disable
   - executes OS shutdown only when `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1`
   - otherwise logs guarded non-execution and remains disabled
+- pending procedure invocation:
+  - is delivered through the same cached device policy loop
+  - can be executed by a device-local typed runner hook
+  - reports success/failure with optional structured result payload
 - Offline monitor suppresses `DEVICE_OFFLINE` lifecycle while in `sleep` or `disabled`.
+
+Canonical device-cloud separation:
+- telemetry points: time-series measurements
+- reported state: latest device snapshot/variables
+- device events: append-only operational facts
+- durable commands/procedures: operator-initiated work with ack/result lifecycle
+- fleets: governance and release scope, not tenant/customer abstraction
+- operator tools: read-only search and live event stream surfaces over the canonical models above
+- event delivery: a single destination/filter/audit pipeline for alerts and non-alert platform events
 
 ## OTA deployment flow (RPi fleet)
 
 Runtime/API path:
 - Admin publishes signed release metadata in `release_manifests`.
+- Release manifests are artifact-aware and carry:
+  - `update_type` (`application_bundle|asset_bundle|system_image`)
+  - artifact location/hash/signature metadata
+  - compatibility hints (hardware/channel/updater expectations)
 - Admin starts a deployment in `deployments` with:
   - staged rollout percentages (`1/10/50/100` default)
-  - target selector (`all|cohort|labels|explicit_ids`)
+  - target selector (`all|cohort|labels|explicit_ids|channel`)
   - halt thresholds + command TTL
 - Per-device rows in `deployment_targets` track rollout stage assignment and state transitions.
 - Deployment lifecycle/audit events are recorded in `deployment_events`.
@@ -163,17 +192,25 @@ Runtime/API path:
 
 Agent behavior:
 - Reports update transitions through `POST /api/v1/device-updates/{deployment_id}/report`.
+- Downloads release artifacts from the manifest URI into a persistent OTA cache.
+- Verifies artifact hash before apply and optionally verifies artifact signatures on-device.
 - Applies power guard before update execution:
   - defer when `power_input_out_of_range` or `power_unsustainable` is active and command requires guard
-- Verifies `git_tag -> commit_sha` mapping before apply.
 - Applies update path with safe default:
+  - `application_bundle`: native bundle extract + symlink swap
+  - `asset_bundle`: extract to managed assets path or hand off to an asset apply hook
+  - `system_image`: hand off to an external updater command for staged system/image apply
   - default is dry-run report mode (`EDGEWATCH_ENABLE_OTA_APPLY=0`)
-  - file/symlink switch only when explicitly enabled
 - Auto rollback report path is attempted when apply fails and `rollback_to_tag` is provided.
+- `system_image` updates use a hybrid model:
+  - EdgeWatch remains the rollout/orchestration control plane
+  - an external updater owns image install / reboot / rollback semantics
+  - boot-health confirmation is persisted in agent update state and reported on the next process start
 
 Deployment controller behavior:
 - Advances rollout stage when all currently-enabled stage targets reach terminal states.
 - Halts deployment when observed failure rate breaches threshold.
+- Can also halt on excessive defer rate, no-quorum timeout, or stage timeout.
 - Pause/resume/abort are explicit operator actions via admin APIs.
 
 ## Simulation environment guard

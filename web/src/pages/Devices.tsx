@@ -1,12 +1,18 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Link, useLocation } from '@tanstack/react-router'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
 import { api, FLEET_VITALS_SUMMARY_METRICS, type DeviceSummaryOut } from '../api'
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, DataTable, Input, Label, Page } from '../ui-kit'
+import {
+  buildDevicesSearch,
+  buildHref,
+  type DeviceHealthFilter,
+  type DeviceStatusFilter,
+  normalizeSearchString,
+  parseDevicesSearch,
+} from '../utils/filterUrlState'
 import { fmtDateTime, fmtNumber, timeAgo } from '../utils/format'
-
-type DeviceStatusFilter = DeviceSummaryOut['status'] | 'all'
 
 type ThresholdSnapshot = {
   wpLow: number
@@ -42,30 +48,6 @@ function fmtDuration(seconds: number): string {
 
 function asNumber(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
-}
-
-function parseDevicesSearch(searchStr: string): {
-  filterText: string
-  statusFilter: DeviceStatusFilter
-  openAlertsOnly: boolean
-} {
-  const params = new URLSearchParams(searchStr.startsWith('?') ? searchStr.slice(1) : searchStr)
-
-  const rawStatus = String(params.get('status') ?? params.get('deviceStatus') ?? 'all').toLowerCase()
-  const statusFilter: DeviceStatusFilter =
-    rawStatus === 'online' ||
-    rawStatus === 'offline' ||
-    rawStatus === 'unknown' ||
-    rawStatus === 'sleep' ||
-    rawStatus === 'disabled'
-      ? rawStatus
-      : 'all'
-
-  const filterText = String(params.get('q') ?? params.get('search') ?? '').trim()
-  const rawOpen = String(params.get('openAlertsOnly') ?? params.get('open_alerts_only') ?? '').toLowerCase()
-  const openAlertsOnly = rawOpen === '1' || rawOpen === 'true' || rawOpen === 'yes' || rawOpen === 'on'
-
-  return { filterText, statusFilter, openAlertsOnly }
 }
 
 function computeFleetHealth(
@@ -170,6 +152,8 @@ function MetricChip(props: { label: string; value: unknown; unit?: string; varia
 }
 
 export function DevicesPage() {
+  const navigate = useNavigate()
+  const pathname = useLocation({ select: (s) => s.pathname })
   const searchStr = useLocation({ select: (s) => s.searchStr })
 
   const edgePolicyQ = useQuery({ queryKey: ['edgePolicyContract'], queryFn: api.edgePolicyContract, staleTime: 5 * 60_000 })
@@ -192,12 +176,15 @@ export function DevicesPage() {
   const [filterText, setFilterText] = React.useState(initialSearchFilters.filterText)
   const [statusFilter, setStatusFilter] = React.useState<DeviceStatusFilter>(initialSearchFilters.statusFilter)
   const [openAlertsOnly, setOpenAlertsOnly] = React.useState(initialSearchFilters.openAlertsOnly)
+  const [healthFilter, setHealthFilter] = React.useState<DeviceHealthFilter>(initialSearchFilters.healthFilter)
+  const deferredFilterText = React.useDeferredValue(filterText)
 
   React.useEffect(() => {
     const parsed = parseDevicesSearch(searchStr)
     setFilterText(parsed.filterText)
     setStatusFilter(parsed.statusFilter)
     setOpenAlertsOnly(parsed.openAlertsOnly)
+    setHealthFilter(parsed.healthFilter)
   }, [searchStr])
 
   const devices = devicesQ.data ?? []
@@ -205,6 +192,7 @@ export function DevicesPage() {
     return new Set((openAlertsQ.data ?? []).map((a) => a.device_id))
   }, [openAlertsQ.data])
   const openAlertsReady = openAlertsQ.isSuccess
+  const openAlertsUnavailable = !openAlertsReady
 
   const thresholds = edgePolicyQ.data?.alert_thresholds
   const wpLow = thresholds?.water_pressure_low_psi ?? 20
@@ -223,10 +211,71 @@ export function DevicesPage() {
     return devices.filter((d) => {
       if (statusFilter !== 'all' && d.status !== statusFilter) return false
       if (openAlertsOnly && openAlertsReady && !openAlertDeviceIds.has(d.device_id)) return false
+      if (healthFilter !== 'all') {
+        if (healthFilter === 'open_alerts') {
+          if (!openAlertsReady) return true
+          if (!openAlertDeviceIds.has(d.device_id)) return false
+        }
+        if (healthFilter === 'water_pressure_low') {
+          const v = asNumber(d.metrics?.water_pressure_psi)
+          if (!(v != null && v < wpLow)) return false
+        }
+        if (healthFilter === 'battery_low') {
+          const v = asNumber(d.metrics?.battery_v)
+          if (!(v != null && v < battLow)) return false
+        }
+        if (healthFilter === 'weak_signal') {
+          const v = asNumber(d.metrics?.signal_rssi_dbm)
+          if (!(v != null && v < sigLow)) return false
+        }
+        if (healthFilter === 'oil_pressure_low') {
+          const v = asNumber(d.metrics?.oil_pressure_psi)
+          if (!(v != null && v < oilPressureLow)) return false
+        }
+        if (healthFilter === 'oil_level_low') {
+          const v = asNumber(d.metrics?.oil_level_pct)
+          if (!(v != null && v < oilLevelLow)) return false
+        }
+        if (healthFilter === 'drip_oil_low') {
+          const v = asNumber(d.metrics?.drip_oil_level_pct)
+          if (!(v != null && v < dripOilLevelLow)) return false
+        }
+        if (healthFilter === 'oil_life_low') {
+          const v = asNumber(d.metrics?.oil_life_pct)
+          if (!(v != null && v < oilLifeLow)) return false
+        }
+        if (healthFilter === 'no_telemetry' && d.latest_telemetry_at) return false
+      }
       if (!q) return true
       return d.device_id.toLowerCase().includes(q) || d.display_name.toLowerCase().includes(q)
     })
-  }, [devices, filterText, statusFilter, openAlertsOnly, openAlertsReady, openAlertDeviceIds])
+  }, [
+    devices,
+    filterText,
+    statusFilter,
+    openAlertsOnly,
+    openAlertsReady,
+    openAlertDeviceIds,
+    healthFilter,
+    wpLow,
+    battLow,
+    sigLow,
+    oilPressureLow,
+    oilLevelLow,
+    dripOilLevelLow,
+    oilLifeLow,
+  ])
+
+  React.useEffect(() => {
+    const nextSearch = buildDevicesSearch({
+      filterText: deferredFilterText,
+      statusFilter,
+      openAlertsOnly,
+      healthFilter,
+    })
+    if (nextSearch === normalizeSearchString(searchStr)) return
+    navigate({ href: buildHref(pathname, nextSearch), replace: true })
+  }, [deferredFilterText, statusFilter, openAlertsOnly, healthFilter, searchStr, pathname, navigate])
 
   const cols = React.useMemo<ColumnDef<DeviceSummaryOut>[]>(() => {
     return [
@@ -339,6 +388,7 @@ export function DevicesPage() {
     setFilterText('')
     setStatusFilter('all')
     setOpenAlertsOnly(false)
+    setHealthFilter('all')
   }, [])
 
   const emptyState = React.useMemo(() => {
@@ -357,7 +407,20 @@ export function DevicesPage() {
     if (openAlertsOnly && openAlertsReady) {
       return 'No devices currently have open alerts. Disable "open alerts only" to see the full fleet.'
     }
-    if (filterText.trim() || statusFilter !== 'all') {
+    if (healthFilter === 'open_alerts' && openAlertsQ.isLoading) {
+      return 'Loading open-alert state for the fleet…'
+    }
+    if (healthFilter === 'open_alerts' && openAlertsQ.isError) {
+      return (
+        <div className="space-y-2">
+          <div>Open-alert health focus is temporarily unavailable because the alert feed could not be loaded.</div>
+          <Button variant="outline" size="sm" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        </div>
+      )
+    }
+    if (filterText.trim() || statusFilter !== 'all' || healthFilter !== 'all') {
       return (
         <div className="space-y-2">
           <div>No devices match the current filters.</div>
@@ -368,11 +431,10 @@ export function DevicesPage() {
       )
     }
     return 'No devices.'
-  }, [devicesQ.isLoading, devices.length, openAlertsOnly, openAlertsReady, filterText, statusFilter, clearFilters])
+  }, [devicesQ.isLoading, devices.length, openAlertsOnly, openAlertsReady, filterText, statusFilter, healthFilter, clearFilters, openAlertsQ.isLoading, openAlertsQ.isError])
 
   return (
     <Page
-      className="flex min-h-0 flex-1 flex-col overflow-hidden"
       title="Devices"
       description="Searchable fleet table with quick filters, health reasons, and latest vitals."
       actions={
@@ -389,11 +451,11 @@ export function DevicesPage() {
         </div>
       }
     >
-      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <Card>
         <CardHeader>
           <CardTitle>Fleet</CardTitle>
         </CardHeader>
-        <CardContent className="grid min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)] gap-4 overflow-hidden">
+        <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="search">Search</Label>
@@ -443,7 +505,45 @@ export function DevicesPage() {
                 {edgePolicyQ.isLoading ? ' (loading policy...)' : ''}
               </div>
             </div>
+          </div>
 
+          <div className="space-y-2">
+            <Label>Health focus</Label>
+            <div className="flex flex-wrap gap-2">
+              {([
+                ['all', 'All'],
+                ['open_alerts', 'Open alerts'],
+                ['water_pressure_low', 'Low water'],
+                ['battery_low', 'Low battery'],
+                ['weak_signal', 'Weak signal'],
+                ['oil_pressure_low', 'Low oil pressure'],
+                ['oil_level_low', 'Low oil level'],
+                ['drip_oil_low', 'Low drip oil'],
+                ['oil_life_low', 'Low oil life'],
+                ['no_telemetry', 'No telemetry'],
+              ] as const).map(([value, label]) => (
+                <Button
+                  key={value}
+                  variant={healthFilter === value ? 'default' : 'outline'}
+                  size="sm"
+                  disabled={value === 'open_alerts' && openAlertsQ.isError && healthFilter !== 'open_alerts'}
+                  onClick={() => setHealthFilter(value)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+            {healthFilter === 'open_alerts' && openAlertsQ.isLoading ? (
+              <div className="text-xs text-muted-foreground">Loading open-alert state before narrowing the fleet…</div>
+            ) : null}
+            {healthFilter === 'open_alerts' && openAlertsQ.isError ? (
+              <div className="text-xs text-destructive">
+                Open-alert health focus is unavailable because the alert feed failed to load.
+              </div>
+            ) : null}
+            {openAlertsUnavailable && healthFilter !== 'open_alerts' ? (
+              <div className="text-xs text-muted-foreground">Open-alert badges and filters will populate once the alert feed finishes loading.</div>
+            ) : null}
           </div>
 
           {devicesQ.isLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : null}
@@ -457,8 +557,6 @@ export function DevicesPage() {
           <DataTable<DeviceSummaryOut>
             data={filtered}
             columns={cols}
-            height="100%"
-            className="min-h-0 flex-1"
             enableSorting
             emptyState={emptyState}
           />

@@ -4,6 +4,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -93,18 +94,36 @@ class PendingControlCommand:
 
 
 @dataclass(frozen=True)
+class PendingProcedureInvocation:
+    id: str
+    definition_id: str
+    definition_name: str
+    request_payload: Dict[str, Any]
+    issued_at: str
+    expires_at: str
+    timeout_s: int
+
+
+@dataclass(frozen=True)
 class PendingUpdateCommand:
     deployment_id: str
     manifest_id: str
     git_tag: str
     commit_sha: str
-    issued_at: str
-    expires_at: str
-    signature: str
-    signature_key_id: str
-    rollback_to_tag: str | None
-    health_timeout_s: int
-    power_guard_required: bool
+    update_type: str = "application_bundle"
+    artifact_uri: str = ""
+    artifact_size: int = 1
+    artifact_sha256: str = "0000000000000000000000000000000000000000000000000000000000000000"
+    artifact_signature: str = ""
+    artifact_signature_scheme: str = "none"
+    compatibility: Dict[str, Any] = field(default_factory=dict)
+    issued_at: str = ""
+    expires_at: str = ""
+    signature: str = ""
+    signature_key_id: str = ""
+    rollback_to_tag: str | None = None
+    health_timeout_s: int = 300
+    power_guard_required: bool = True
 
 
 @dataclass(frozen=True)
@@ -121,6 +140,9 @@ class DevicePolicy:
     runtime_power_mode: str
     deep_sleep_backend: str
     disable_requires_manual_restart: bool
+    updates_enabled: bool
+    updates_pending: bool
+    busy_reason: str | None
 
     reporting: ReportingPolicy
     delta_thresholds: Dict[str, float]
@@ -128,6 +150,7 @@ class DevicePolicy:
     cost_caps: CostCaps
     power_management: PowerManagement
     pending_control_command: PendingControlCommand | None
+    pending_procedure_invocation: PendingProcedureInvocation | None
     pending_update_command: PendingUpdateCommand | None
 
 
@@ -403,6 +426,35 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
 
     pending_update_raw = payload.get("pending_update_command")
     pending_update_command: PendingUpdateCommand | None = None
+    pending_procedure_raw = payload.get("pending_procedure_invocation")
+    pending_procedure_invocation: PendingProcedureInvocation | None = None
+    if pending_procedure_raw is not None:
+        if not isinstance(pending_procedure_raw, Mapping):
+            raise ValueError("'pending_procedure_invocation' must be a mapping")
+        invocation_id = _string_with_default(pending_procedure_raw, "id", "")
+        definition_id = _string_with_default(pending_procedure_raw, "definition_id", "")
+        definition_name = _string_with_default(pending_procedure_raw, "definition_name", "")
+        issued_at = _string_with_default(pending_procedure_raw, "issued_at", "")
+        expires_at = _string_with_default(pending_procedure_raw, "expires_at", "")
+        timeout_s = _int_with_default(pending_procedure_raw, "timeout_s", 300)
+        if timeout_s <= 0:
+            raise ValueError("'pending_procedure_invocation.timeout_s' must be > 0")
+        request_payload_raw = pending_procedure_raw.get("request_payload")
+        if request_payload_raw is None:
+            request_payload: Dict[str, Any] = {}
+        elif isinstance(request_payload_raw, Mapping):
+            request_payload = dict(request_payload_raw)
+        else:
+            raise ValueError("'pending_procedure_invocation.request_payload' must be a mapping")
+        pending_procedure_invocation = PendingProcedureInvocation(
+            id=invocation_id,
+            definition_id=definition_id,
+            definition_name=definition_name,
+            request_payload=request_payload,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            timeout_s=timeout_s,
+        )
     if pending_update_raw is not None:
         if not isinstance(pending_update_raw, Mapping):
             raise ValueError("'pending_update_command' must be a mapping")
@@ -418,6 +470,39 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
         commit_sha = _string_with_default(pending_update_raw, "commit_sha", "")
         if not commit_sha:
             raise ValueError("'pending_update_command.commit_sha' must be a non-empty string")
+        update_type = _string_with_default(pending_update_raw, "update_type", "application_bundle").lower()
+        if update_type not in {"application_bundle", "asset_bundle", "system_image"}:
+            raise ValueError(
+                "'pending_update_command.update_type' must be one of: application_bundle, asset_bundle, system_image"
+            )
+        artifact_uri = str(pending_update_raw.get("artifact_uri") or "").strip() or f"memory://{manifest_id}"
+        artifact_size = _int_with_default(pending_update_raw, "artifact_size", 1)
+        if artifact_size <= 0:
+            raise ValueError("'pending_update_command.artifact_size' must be > 0")
+        artifact_sha256 = str(pending_update_raw.get("artifact_sha256") or "").strip().lower() or ("0" * 64)
+        if len(artifact_sha256) != 64:
+            raise ValueError("'pending_update_command.artifact_sha256' must be a 64-char hex string")
+        artifact_signature_raw = pending_update_raw.get("artifact_signature")
+        if artifact_signature_raw is None:
+            artifact_signature = ""
+        elif isinstance(artifact_signature_raw, str):
+            artifact_signature = artifact_signature_raw.strip()
+        else:
+            raise ValueError("'pending_update_command.artifact_signature' must be a string")
+        artifact_signature_scheme = _string_with_default(
+            pending_update_raw, "artifact_signature_scheme", "none"
+        ).lower()
+        if artifact_signature_scheme not in {"none", "openssl_rsa_sha256"}:
+            raise ValueError(
+                "'pending_update_command.artifact_signature_scheme' must be one of: none, openssl_rsa_sha256"
+            )
+        compatibility_raw = pending_update_raw.get("compatibility")
+        if compatibility_raw is None:
+            compatibility: Dict[str, Any] = {}
+        elif isinstance(compatibility_raw, Mapping):
+            compatibility = dict(compatibility_raw)
+        else:
+            raise ValueError("'pending_update_command.compatibility' must be a mapping")
         issued_at = _string_with_default(pending_update_raw, "issued_at", "")
         if not issued_at:
             raise ValueError("'pending_update_command.issued_at' must be a non-empty string")
@@ -446,6 +531,13 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
             manifest_id=manifest_id,
             git_tag=git_tag,
             commit_sha=commit_sha,
+            update_type=update_type,
+            artifact_uri=artifact_uri,
+            artifact_size=artifact_size,
+            artifact_sha256=artifact_sha256,
+            artifact_signature=artifact_signature,
+            artifact_signature_scheme=artifact_signature_scheme,
+            compatibility=compatibility,
             issued_at=issued_at,
             expires_at=expires_at,
             signature=signature,
@@ -467,12 +559,20 @@ def parse_device_policy(payload: Mapping[str, Any]) -> DevicePolicy:
         runtime_power_mode=runtime_power_mode,
         deep_sleep_backend=deep_sleep_backend,
         disable_requires_manual_restart=disable_requires_manual_restart,
+        updates_enabled=_bool_with_default(payload, "updates_enabled", True),
+        updates_pending=_bool_with_default(payload, "updates_pending", False),
+        busy_reason=(
+            str(payload.get("busy_reason")).strip()
+            if isinstance(payload.get("busy_reason"), str) and str(payload.get("busy_reason")).strip()
+            else None
+        ),
         reporting=reporting,
         delta_thresholds=delta,
         alert_thresholds=alerts,
         cost_caps=cost_caps,
         power_management=power_management,
         pending_control_command=pending_control_command,
+        pending_procedure_invocation=pending_procedure_invocation,
         pending_update_command=pending_update_command,
     )
 
@@ -530,6 +630,9 @@ def save_cached_policy(policy: DevicePolicy, etag: str, *, path: Optional[Path] 
             "runtime_power_mode": policy.runtime_power_mode,
             "deep_sleep_backend": policy.deep_sleep_backend,
             "disable_requires_manual_restart": policy.disable_requires_manual_restart,
+            "updates_enabled": policy.updates_enabled,
+            "updates_pending": policy.updates_pending,
+            "busy_reason": policy.busy_reason,
             "reporting": {
                 "sample_interval_s": policy.reporting.sample_interval_s,
                 "alert_sample_interval_s": policy.reporting.alert_sample_interval_s,
@@ -602,12 +705,32 @@ def save_cached_policy(policy: DevicePolicy, etag: str, *, path: Optional[Path] 
                 if policy.pending_control_command is not None
                 else None
             ),
+            "pending_procedure_invocation": (
+                {
+                    "id": policy.pending_procedure_invocation.id,
+                    "definition_id": policy.pending_procedure_invocation.definition_id,
+                    "definition_name": policy.pending_procedure_invocation.definition_name,
+                    "request_payload": policy.pending_procedure_invocation.request_payload,
+                    "issued_at": policy.pending_procedure_invocation.issued_at,
+                    "expires_at": policy.pending_procedure_invocation.expires_at,
+                    "timeout_s": policy.pending_procedure_invocation.timeout_s,
+                }
+                if policy.pending_procedure_invocation is not None
+                else None
+            ),
             "pending_update_command": (
                 {
                     "deployment_id": policy.pending_update_command.deployment_id,
                     "manifest_id": policy.pending_update_command.manifest_id,
                     "git_tag": policy.pending_update_command.git_tag,
                     "commit_sha": policy.pending_update_command.commit_sha,
+                    "update_type": policy.pending_update_command.update_type,
+                    "artifact_uri": policy.pending_update_command.artifact_uri,
+                    "artifact_size": policy.pending_update_command.artifact_size,
+                    "artifact_sha256": policy.pending_update_command.artifact_sha256,
+                    "artifact_signature": policy.pending_update_command.artifact_signature,
+                    "artifact_signature_scheme": policy.pending_update_command.artifact_signature_scheme,
+                    "compatibility": policy.pending_update_command.compatibility,
                     "issued_at": policy.pending_update_command.issued_at,
                     "expires_at": policy.pending_update_command.expires_at,
                     "signature": policy.pending_update_command.signature,

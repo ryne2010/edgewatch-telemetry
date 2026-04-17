@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+UpdateType = Literal["application_bundle", "asset_bundle", "system_image"]
+ArtifactSignatureScheme = Literal["none", "openssl_rsa_sha256"]
+
 
 class AdminDeviceCreate(BaseModel):
     device_id: str = Field(..., min_length=3, max_length=128)
@@ -16,6 +19,11 @@ class AdminDeviceCreate(BaseModel):
     heartbeat_interval_s: int = Field(300, ge=5, le=3600)
     offline_after_s: int = Field(900, ge=10, le=24 * 3600)
     owner_emails: Optional[List[str]] = None
+    ota_channel: str = Field("stable", min_length=1, max_length=64)
+    ota_updates_enabled: bool = True
+    ota_busy_reason: Optional[str] = Field(None, min_length=1, max_length=256)
+    ota_is_development: bool = False
+    ota_locked_manifest_id: Optional[str] = Field(None, min_length=1, max_length=36)
 
 
 class AdminDeviceUpdate(BaseModel):
@@ -25,6 +33,11 @@ class AdminDeviceUpdate(BaseModel):
     heartbeat_interval_s: Optional[int] = Field(None, ge=5, le=3600)
     offline_after_s: Optional[int] = Field(None, ge=10, le=24 * 3600)
     enabled: Optional[bool] = None
+    ota_channel: Optional[str] = Field(None, min_length=1, max_length=64)
+    ota_updates_enabled: Optional[bool] = None
+    ota_busy_reason: Optional[str] = Field(None, min_length=1, max_length=256)
+    ota_is_development: Optional[bool] = None
+    ota_locked_manifest_id: Optional[str] = Field(None, min_length=1, max_length=36)
 
 
 OperationMode = Literal["active", "sleep", "disabled"]
@@ -47,6 +60,11 @@ class DeviceOut(BaseModel):
     deep_sleep_backend: DeepSleepBackend = "auto"
     alerts_muted_until: Optional[datetime] = None
     alerts_muted_reason: Optional[str] = None
+    ota_channel: str = "stable"
+    ota_updates_enabled: bool = True
+    ota_busy_reason: Optional[str] = None
+    ota_is_development: bool = False
+    ota_locked_manifest_id: Optional[str] = None
 
     status: DeviceStatus
     seconds_since_last_seen: Optional[int]
@@ -70,6 +88,11 @@ class DeviceSummaryOut(BaseModel):
     deep_sleep_backend: DeepSleepBackend = "auto"
     alerts_muted_until: Optional[datetime] = None
     alerts_muted_reason: Optional[str] = None
+    ota_channel: str = "stable"
+    ota_updates_enabled: bool = True
+    ota_busy_reason: Optional[str] = None
+    ota_is_development: bool = False
+    ota_locked_manifest_id: Optional[str] = None
 
     status: DeviceStatus
     seconds_since_last_seen: Optional[int]
@@ -168,6 +191,13 @@ class IngestionBatchOut(BaseModel):
     processing_status: str
 
 
+class IngestionBatchPageOut(BaseModel):
+    items: List[IngestionBatchOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
 class DriftEventOut(BaseModel):
     id: str
     batch_id: str
@@ -178,16 +208,33 @@ class DriftEventOut(BaseModel):
     created_at: datetime
 
 
+class DriftEventPageOut(BaseModel):
+    items: List[DriftEventOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
 class NotificationEventOut(BaseModel):
     id: str
     alert_id: Optional[str]
     device_id: str
+    source_kind: str
+    source_id: Optional[str] = None
     alert_type: str
     channel: str
     decision: str
     delivered: bool
     reason: str
+    payload: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+class NotificationEventPageOut(BaseModel):
+    items: List[NotificationEventOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
 
 
 class DeviceAccessGrantPutIn(BaseModel):
@@ -196,6 +243,45 @@ class DeviceAccessGrantPutIn(BaseModel):
 
 class DeviceAccessGrantOut(BaseModel):
     device_id: str
+    principal_email: str
+    access_role: DeviceAccessRole
+    created_at: datetime
+    updated_at: datetime
+
+
+class FleetCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    description: Optional[str] = Field(None, max_length=1024)
+    default_ota_channel: str = Field("stable", min_length=1, max_length=64)
+
+
+class FleetUpdateIn(BaseModel):
+    description: Optional[str] = Field(None, max_length=1024)
+    default_ota_channel: Optional[str] = Field(None, min_length=1, max_length=64)
+
+
+class FleetOut(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    default_ota_channel: str
+    created_at: datetime
+    updated_at: datetime
+    device_count: int = 0
+
+
+class FleetMembershipOut(BaseModel):
+    fleet_id: str
+    device_id: str
+    added_at: datetime
+
+
+class FleetAccessGrantPutIn(BaseModel):
+    access_role: DeviceAccessRole = "viewer"
+
+
+class FleetAccessGrantOut(BaseModel):
+    fleet_id: str
     principal_email: str
     access_role: DeviceAccessRole
     created_at: datetime
@@ -216,6 +302,170 @@ class DeviceControlsOut(BaseModel):
     latest_pending_operation_mode: Optional[OperationMode] = None
     latest_pending_shutdown_requested: bool = False
     latest_pending_shutdown_grace_s: Optional[int] = None
+
+
+ProcedureInvocationStatus = Literal["queued", "in_progress", "succeeded", "failed", "expired", "superseded"]
+EventSeverity = Literal["info", "warning", "error"]
+
+
+class DeviceProcedureDefinitionCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    description: Optional[str] = Field(None, max_length=1024)
+    request_schema: Dict[str, Any] = Field(default_factory=dict)
+    response_schema: Dict[str, Any] = Field(default_factory=dict)
+    timeout_s: int = Field(300, ge=1, le=24 * 3600)
+    enabled: bool = True
+
+
+class DeviceProcedureDefinitionUpdateIn(BaseModel):
+    description: Optional[str] = Field(None, max_length=1024)
+    request_schema: Optional[Dict[str, Any]] = None
+    response_schema: Optional[Dict[str, Any]] = None
+    timeout_s: Optional[int] = Field(None, ge=1, le=24 * 3600)
+    enabled: Optional[bool] = None
+
+
+class DeviceProcedureDefinitionOut(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    request_schema: Dict[str, Any] = Field(default_factory=dict)
+    response_schema: Dict[str, Any] = Field(default_factory=dict)
+    timeout_s: int
+    enabled: bool
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class DeviceProcedureInvokeIn(BaseModel):
+    request_payload: Dict[str, Any] = Field(default_factory=dict)
+    ttl_s: int = Field(300, ge=1, le=24 * 3600)
+
+
+class DeviceProcedureResultIn(BaseModel):
+    status: Literal["succeeded", "failed"]
+    result_payload: Optional[Dict[str, Any]] = None
+    reason_code: Optional[str] = Field(None, min_length=1, max_length=128)
+    reason_detail: Optional[str] = Field(None, min_length=1, max_length=1024)
+
+
+class DeviceProcedureInvocationOut(BaseModel):
+    id: str
+    device_id: str
+    definition_id: str
+    definition_name: str
+    request_payload: Dict[str, Any] = Field(default_factory=dict)
+    result_payload: Optional[Dict[str, Any]] = None
+    status: ProcedureInvocationStatus
+    reason_code: Optional[str] = None
+    reason_detail: Optional[str] = None
+    requester_email: str
+    issued_at: datetime
+    expires_at: datetime
+    acknowledged_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    superseded_at: Optional[datetime] = None
+
+
+class PendingProcedureInvocationOut(BaseModel):
+    id: str
+    definition_id: str
+    definition_name: str
+    request_payload: Dict[str, Any] = Field(default_factory=dict)
+    issued_at: datetime
+    expires_at: datetime
+    timeout_s: int
+
+
+class DeviceReportedStateIn(BaseModel):
+    state: Dict[str, Any] = Field(default_factory=dict)
+    schema_types: Dict[str, str] = Field(default_factory=dict)
+
+
+class DeviceReportedStateItemOut(BaseModel):
+    key: str
+    value_json: Any
+    schema_type: Optional[str] = None
+    updated_at: datetime
+
+
+class DeviceEventIn(BaseModel):
+    event_type: str = Field(..., min_length=1, max_length=128)
+    severity: EventSeverity = "info"
+    body: Dict[str, Any] = Field(default_factory=dict)
+    source: str = Field("device", min_length=1, max_length=32)
+
+
+class DeviceEventOut(BaseModel):
+    id: str
+    device_id: str
+    event_type: str
+    severity: str
+    source: str
+    body: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+OperatorSearchEntity = Literal[
+    "device",
+    "fleet",
+    "alert",
+    "ingestion_batch",
+    "drift_event",
+    "device_event",
+    "procedure_definition",
+    "procedure_invocation",
+    "deployment",
+    "release_manifest",
+    "admin_event",
+    "notification_event",
+    "notification_destination",
+    "export_batch",
+]
+OperatorEventSource = Literal[
+    "alert",
+    "notification_event",
+    "device_event",
+    "procedure_invocation",
+    "deployment_event",
+    "release_manifest_event",
+    "admin_event",
+]
+
+
+class OperatorSearchResultOut(BaseModel):
+    entity_type: OperatorSearchEntity
+    entity_id: str
+    title: str
+    subtitle: Optional[str] = None
+    device_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OperatorSearchPageOut(BaseModel):
+    items: List[OperatorSearchResultOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class OperatorEventOut(BaseModel):
+    source_kind: OperatorEventSource
+    entity_id: str
+    device_id: Optional[str] = None
+    event_name: str
+    severity: str
+    created_at: datetime
+    payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class OperatorEventPageOut(BaseModel):
+    items: List[OperatorEventOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
 
 
 class DeviceOperationControlUpdateIn(BaseModel):
@@ -240,6 +490,8 @@ class NotificationDestinationCreate(BaseModel):
     channel: Literal["webhook"] = "webhook"
     kind: Literal["generic", "slack", "discord", "telegram"] = "generic"
     webhook_url: str = Field(..., min_length=8, max_length=2048)
+    source_types: List[str] = Field(default_factory=lambda: ["alert"])
+    event_types: List[str] = Field(default_factory=list)
     enabled: bool = True
 
 
@@ -248,6 +500,8 @@ class NotificationDestinationUpdate(BaseModel):
     channel: Optional[Literal["webhook"]] = None
     kind: Optional[Literal["generic", "slack", "discord", "telegram"]] = None
     webhook_url: Optional[str] = Field(None, min_length=8, max_length=2048)
+    source_types: Optional[List[str]] = None
+    event_types: Optional[List[str]] = None
     enabled: Optional[bool] = None
 
 
@@ -256,6 +510,8 @@ class NotificationDestinationOut(BaseModel):
     name: str
     channel: str
     kind: str
+    source_types: List[str] = Field(default_factory=list)
+    event_types: List[str] = Field(default_factory=list)
     enabled: bool
     webhook_url_masked: str
     destination_fingerprint: str
@@ -275,6 +531,13 @@ class AdminEventOut(BaseModel):
     created_at: datetime
 
 
+class AdminEventPageOut(BaseModel):
+    items: List[AdminEventOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
 class ExportBatchOut(BaseModel):
     id: str
     started_at: datetime
@@ -287,6 +550,13 @@ class ExportBatchOut(BaseModel):
     row_count: int
     status: str
     error_message: Optional[str]
+
+
+class ExportBatchPageOut(BaseModel):
+    items: List[ExportBatchOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
 
 
 class AlertOut(BaseModel):
@@ -436,6 +706,13 @@ class PendingUpdateCommandOut(BaseModel):
     manifest_id: str
     git_tag: str
     commit_sha: str
+    update_type: UpdateType
+    artifact_uri: str
+    artifact_size: int
+    artifact_sha256: str
+    artifact_signature: str
+    artifact_signature_scheme: ArtifactSignatureScheme
+    compatibility: Dict[str, Any] = Field(default_factory=dict)
     issued_at: datetime
     expires_at: datetime
     signature: str
@@ -466,6 +743,9 @@ class DevicePolicyOut(BaseModel):
     runtime_power_mode: RuntimePowerMode = "continuous"
     deep_sleep_backend: DeepSleepBackend = "auto"
     disable_requires_manual_restart: bool = True
+    updates_enabled: bool = True
+    updates_pending: bool = False
+    busy_reason: Optional[str] = None
 
     reporting: EdgePolicyReportingOut
     delta_thresholds: Dict[str, float]
@@ -473,22 +753,41 @@ class DevicePolicyOut(BaseModel):
     cost_caps: EdgePolicyCostCapsOut
     power_management: EdgePolicyPowerManagementOut
     pending_control_command: Optional[PendingControlCommandOut] = None
+    pending_procedure_invocation: Optional[PendingProcedureInvocationOut] = None
     pending_update_command: Optional[PendingUpdateCommandOut] = None
 
 
 class ReleaseManifestCreateIn(BaseModel):
     git_tag: str = Field(..., min_length=1, max_length=128)
     commit_sha: str = Field(..., min_length=7, max_length=64)
+    update_type: UpdateType = "application_bundle"
+    artifact_uri: str = Field(..., min_length=1, max_length=2048)
+    artifact_size: int = Field(..., gt=0)
+    artifact_sha256: str = Field(..., min_length=64, max_length=64)
+    artifact_signature: str = Field("", max_length=8192)
+    artifact_signature_scheme: ArtifactSignatureScheme = "none"
+    compatibility: Dict[str, Any] = Field(default_factory=dict)
     signature: str = Field(..., min_length=1, max_length=8192)
     signature_key_id: str = Field(..., min_length=1, max_length=64)
     constraints: Dict[str, Any] = Field(default_factory=dict)
     status: str = Field("active", min_length=1, max_length=32)
 
 
+class ReleaseManifestUpdateIn(BaseModel):
+    status: Optional[str] = Field(None, min_length=1, max_length=32)
+
+
 class ReleaseManifestOut(BaseModel):
     id: str
     git_tag: str
     commit_sha: str
+    update_type: UpdateType
+    artifact_uri: str
+    artifact_size: int
+    artifact_sha256: str
+    artifact_signature: str
+    artifact_signature_scheme: ArtifactSignatureScheme
+    compatibility: Dict[str, Any] = Field(default_factory=dict)
     signature: str
     signature_key_id: str
     constraints: Dict[str, Any] = Field(default_factory=dict)
@@ -498,8 +797,9 @@ class ReleaseManifestOut(BaseModel):
 
 
 class DeploymentTargetSelectorIn(BaseModel):
-    mode: Literal["all", "cohort", "labels", "explicit_ids"] = "all"
+    mode: Literal["all", "cohort", "labels", "explicit_ids", "channel"] = "all"
     cohort: Optional[str] = Field(None, min_length=1, max_length=128)
+    channel: Optional[str] = Field(None, min_length=1, max_length=64)
     labels: Dict[str, str] = Field(default_factory=dict)
     device_ids: List[str] = Field(default_factory=list, max_length=5000)
 
@@ -512,6 +812,8 @@ class DeploymentCreateIn(BaseModel):
     )
     failure_rate_threshold: float = Field(0.2, ge=0.0, le=1.0)
     no_quorum_timeout_s: int = Field(1800, ge=60, le=7 * 24 * 3600)
+    stage_timeout_s: int = Field(1800, ge=60, le=7 * 24 * 3600)
+    defer_rate_threshold: float = Field(0.5, ge=0.0, le=1.0)
     health_timeout_s: int = Field(300, ge=10, le=24 * 3600)
     command_ttl_s: int = Field(180 * 24 * 3600, ge=60, le=400 * 24 * 3600)
     power_guard_required: bool = True
@@ -548,6 +850,8 @@ class DeploymentOut(BaseModel):
     updated_at: datetime
     failure_rate_threshold: float
     no_quorum_timeout_s: int
+    stage_timeout_s: int
+    defer_rate_threshold: float
     command_expires_at: datetime
     power_guard_required: bool
     health_timeout_s: int
@@ -568,6 +872,13 @@ class DeploymentDetailOut(DeploymentOut):
     events: List[DeploymentEventOut] = Field(default_factory=list)
 
 
+class DeploymentTargetPageOut(BaseModel):
+    items: List[DeploymentTargetOut] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
 class DeploymentActionOut(BaseModel):
     id: str
     status: str
@@ -579,8 +890,11 @@ class DeploymentActionOut(BaseModel):
 class DeviceUpdateReportIn(BaseModel):
     state: Literal[
         "downloading",
+        "downloaded",
         "verifying",
         "applying",
+        "staged",
+        "switching",
         "restarting",
         "healthy",
         "rolled_back",

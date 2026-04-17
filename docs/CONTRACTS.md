@@ -12,15 +12,26 @@ Base: `/api/v1`
 - `POST /ingest` — device telemetry ingestion (Bearer token)
 - `GET  /devices` — list devices + computed status
 - `GET  /devices/summary` — fleet-friendly list (status + latest selected vitals)
+- `GET  /fleets` — list accessible fleets
+- `GET  /fleets/{fleet_id}/devices` — list accessible devices in a fleet
+- `GET  /search` — unified operator search across devices, fleets, alerts, device events, procedure invocations, and deployments
+- `GET  /event-stream` — server-sent operator event stream for alerts, device events, and procedure invocations
 - `GET  /devices/{device_id}` — device detail + computed status
 - `GET  /devices/{device_id}/telemetry` — raw telemetry points
 - `GET  /devices/{device_id}/timeseries` — bucketed time series
 - `GET  /devices/{device_id}/controls` — device operation + alert mute controls
+- `GET  /devices/{device_id}/state` — latest reported device state/variables
+- `GET  /devices/{device_id}/procedure-invocations` — recent procedure invocation history for a device
+- `POST /devices/{device_id}/procedures/{definition_name}/invoke` — enqueue a typed remote procedure invocation
 - `PATCH /devices/{device_id}/controls/operation` — set `active|sleep|disabled` + sleep interval + runtime power mode
 - `PATCH /devices/{device_id}/controls/alerts` — set/clear alert notification mute window
 - `POST /device-commands/{command_id}/ack` — device ack for durable control command delivery
+- `POST /device-state/report` — device upsert of latest reported state/variables
+- `POST /device-events` — device publish of append-only operational events
+- `GET  /device-events` — list device events (fleet/device filtered)
+- `POST /device-procedure-invocations/{invocation_id}/result` — device result callback for a pending procedure
 - `POST /device-updates/{deployment_id}/report` — device update lifecycle report for OTA deployments
-- `GET  /alerts` — recent alerts
+- `GET  /alerts` — recent alerts (`device_id`, `open_only`, `severity`, `alert_type`, `q` or legacy `search`, cursor, `limit`)
 - `GET  /device-policy` — edge policy/config for devices (Bearer token; ETag cached)
 - `GET  /contracts/telemetry` — active telemetry contract (public)
 - `GET  /contracts/edge_policy` — active edge policy contract (public)
@@ -30,6 +41,17 @@ Base: `/api/v1`
 - `GET  /media/{media_id}` — media metadata detail (device auth)
 - `GET  /media/{media_id}/download` — media bytes download (device auth; proxied or signed URL)
 - `POST /admin/devices` — register device (admin surface; optional)
+- `POST /admin/fleets` — create fleet (admin surface)
+- `GET  /admin/fleets` — list fleets (admin surface)
+- `PATCH /admin/fleets/{fleet_id}` — update fleet metadata/channel defaults (admin surface)
+- `PUT  /admin/fleets/{fleet_id}/devices/{device_id}` — add device to fleet (admin surface)
+- `DELETE /admin/fleets/{fleet_id}/devices/{device_id}` — remove device from fleet (admin surface)
+- `GET  /admin/fleets/{fleet_id}/access` — list fleet access grants (admin surface)
+- `PUT  /admin/fleets/{fleet_id}/access/{principal_email}` — create/update fleet access grant (admin surface)
+- `DELETE /admin/fleets/{fleet_id}/access/{principal_email}` — remove fleet access grant (admin surface)
+- `POST /admin/procedures/definitions` — create a typed device procedure definition (admin)
+- `GET  /admin/procedures/definitions` — list device procedure definitions (admin)
+- `PATCH /admin/procedures/definitions/{definition_id}` — update device procedure definitions (admin)
 - `POST /admin/releases/manifests` — create signed release manifest metadata (admin)
 - `GET  /admin/releases/manifests` — list release manifests (admin)
 - `POST /admin/deployments` — create staged deployment (admin)
@@ -46,10 +68,10 @@ Base: `/api/v1`
 - `GET  /admin/notifications` — notification routing/delivery audit events (admin surface; optional)
 - `GET  /admin/exports` — analytics export batch audit (admin surface; optional)
 - `GET  /admin/events` — admin mutation audit events (actor attribution)
-- `GET  /admin/notification-destinations` — list configured alert webhook destinations (admin surface)
-- `POST /admin/notification-destinations` — create alert webhook destination (admin surface)
-- `PATCH /admin/notification-destinations/{destination_id}` — update alert webhook destination (admin surface)
-- `DELETE /admin/notification-destinations/{destination_id}` — delete alert webhook destination (admin surface)
+- `GET  /admin/notification-destinations` — list configured event delivery destinations (admin surface)
+- `POST /admin/notification-destinations` — create event delivery destination (admin surface)
+- `PATCH /admin/notification-destinations/{destination_id}` — update destination filters/config (admin surface)
+- `DELETE /admin/notification-destinations/{destination_id}` — delete event delivery destination (admin surface)
 - `GET  /admin/contracts/edge-policy/source` — active edge policy YAML source (admin surface)
 - `PATCH /admin/contracts/edge-policy` — validate + persist active edge policy YAML (admin surface)
 
@@ -63,6 +85,7 @@ Admin surface controls:
 
 Ownership controls:
 - When `AUTHZ_ENABLED=1`, non-admin read/control endpoints require explicit per-device grants.
+- Fleet-scoped grants can also authorize access to devices through fleet membership.
 - Admin users bypass per-device grants for break-glass operations.
 
 **Compatibility:**
@@ -221,6 +244,23 @@ A request includes:
 - Devices ack command application with `POST /api/v1/device-commands/{command_id}/ack`.
 - Older pending commands are superseded when a newer control command is enqueued.
 
+6fa) **Typed procedure delivery**
+- Pre-declared procedure definitions are admin-managed and versioned by name/schema.
+- Procedure invocation payloads are queued durably per device and surfaced in device policy as `pending_procedure_invocation`.
+- Devices complete invocations through `POST /api/v1/device-procedure-invocations/{invocation_id}/result`.
+- Procedure invocations are never arbitrary shell requests at the API boundary; they are named, typed, and auditable.
+
+6fb) **Reported state and device events**
+- Devices may upsert latest reported state/variables through `POST /api/v1/device-state/report`.
+- Reported state is snapshot-oriented and queryable through `GET /api/v1/devices/{device_id}/state`.
+- Devices may publish append-only operational events through `POST /api/v1/device-events`.
+- Device events are queryable through `GET /api/v1/device-events` and are distinct from telemetry points and admin audit events.
+
+6fc) **Generalized event delivery**
+- Notification destinations may filter by source kind and event type.
+- Delivery history is recorded for alerts and non-alert platform events such as device events, procedure invocations, and deployment events.
+- Filtered-out events are auditable via `notification_events` with a suppressed decision rather than being silently dropped.
+
 6e) **Ownership and mute semantics**
 - Per-device access grants enforce minimum role (`viewer|operator|owner`) for non-admin users.
 - Alert mute suppresses outbound notifications only; alert open/resolve rows continue to persist.
@@ -234,6 +274,10 @@ A request includes:
 6h) **Device update command delivery**
 - `GET /api/v1/device-policy` may include optional `pending_update_command` with:
   - `deployment_id`, `manifest_id`, `git_tag`, `commit_sha`
+  - `update_type`
+  - `artifact_uri`, `artifact_size`, `artifact_sha256`
+  - `artifact_signature`, `artifact_signature_scheme`
+  - optional `compatibility` metadata
   - `issued_at`, `expires_at`
   - `signature`, `signature_key_id`
   - `rollback_to_tag`, `health_timeout_s`, `power_guard_required`
@@ -242,10 +286,22 @@ A request includes:
   - deployment command TTL has not expired
 - Device update reports are idempotent by `(deployment_id, device_id, state transition)` and update the latest
   target status.
+- Device policy also exposes OTA readiness:
+  - `updates_enabled`
+  - `updates_pending`
+  - optional `busy_reason`
+- `GET /api/v1/device-policy` may also include optional `pending_procedure_invocation` with:
+  - `id`, `definition_id`, `definition_name`
+  - typed request payload
+  - `issued_at`, `expires_at`, `timeout_s`
 
 6i) **Deployment controller behavior**
 - Stage progression uses ordered rollout percentages (default `1/10/50/100`).
 - A deployment halts when observed stage failure rate exceeds configured threshold.
+- A deployment may also halt on:
+  - excessive defer rate
+  - no-quorum timeout
+  - stage timeout
 - `pause`, `resume`, and `abort` mutate deployment status and emit deployment events for audit.
 
 5) **No secret leakage**

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -30,9 +30,11 @@ from ..models import (
 from ..observability import get_request_id
 from ..schemas import (
     AdminEventOut,
+    AdminEventPageOut,
     AdminDeviceCreate,
     AdminDeviceShutdownIn,
     AdminDeviceUpdate,
+    ArtifactSignatureScheme,
     DeepSleepBackend,
     DeviceAccessRole,
     DeviceAccessGrantOut,
@@ -44,8 +46,10 @@ from ..schemas import (
     DeploymentEventOut,
     DeploymentOut,
     DeploymentTargetOut,
+    DeploymentTargetPageOut,
     DeviceOut,
     DriftEventOut,
+    DriftEventPageOut,
     EdgePolicyAlertThresholdsOut,
     EdgePolicyContractOut,
     EdgePolicyContractSourceOut,
@@ -55,15 +59,20 @@ from ..schemas import (
     EdgePolicyPowerManagementOut,
     EdgePolicyReportingOut,
     ExportBatchOut,
+    ExportBatchPageOut,
     IngestionBatchOut,
+    IngestionBatchPageOut,
     OperationMode,
     NotificationDestinationCreate,
     NotificationDestinationOut,
     NotificationDestinationUpdate,
     NotificationEventOut,
+    NotificationEventPageOut,
     ReleaseManifestCreateIn,
+    ReleaseManifestUpdateIn,
     ReleaseManifestOut,
     RuntimePowerMode,
+    UpdateType,
 )
 from ..security import hash_token, token_fingerprint
 from ..services.admin_audit import record_admin_event
@@ -75,6 +84,7 @@ from ..services.device_updates import (
     create_release_manifest,
     deployment_counts,
     get_deployment,
+    list_deployments,
     list_deployment_events,
     list_deployment_targets,
     list_release_manifests,
@@ -122,6 +132,73 @@ def _normalized_deep_sleep_backend(value: object) -> DeepSleepBackend:
     return "auto"
 
 
+def _notification_event_out(row: NotificationEvent) -> NotificationEventOut:
+    return NotificationEventOut(
+        id=row.id,
+        alert_id=row.alert_id,
+        device_id=row.device_id,
+        source_kind=row.source_kind,
+        source_id=row.source_id,
+        alert_type=row.alert_type,
+        channel=row.channel,
+        decision=row.decision,
+        delivered=row.delivered,
+        reason=row.reason,
+        payload=dict(row.payload or {}),
+        created_at=row.created_at,
+    )
+
+
+def _ingestion_batch_out(row: IngestionBatch) -> IngestionBatchOut:
+    return IngestionBatchOut(
+        id=row.id,
+        device_id=row.device_id,
+        received_at=row.received_at,
+        contract_version=row.contract_version,
+        contract_hash=row.contract_hash,
+        points_submitted=row.points_submitted,
+        points_accepted=row.points_accepted,
+        duplicates=row.duplicates,
+        points_quarantined=row.points_quarantined,
+        client_ts_min=row.client_ts_min,
+        client_ts_max=row.client_ts_max,
+        unknown_metric_keys=list(row.unknown_metric_keys or []),
+        type_mismatch_keys=list(row.type_mismatch_keys or []),
+        drift_summary=dict(row.drift_summary or {}),
+        source=row.source,
+        pipeline_mode=row.pipeline_mode,
+        processing_status=row.processing_status,
+    )
+
+
+def _drift_event_out(row: DriftEvent) -> DriftEventOut:
+    return DriftEventOut(
+        id=row.id,
+        batch_id=row.batch_id,
+        device_id=row.device_id,
+        event_type=row.event_type,
+        action=row.action,
+        details=dict(row.details or {}),
+        created_at=row.created_at,
+    )
+
+
+def _export_batch_out(row: ExportBatch) -> ExportBatchOut:
+    return ExportBatchOut(
+        id=row.id,
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        watermark_from=row.watermark_from,
+        watermark_to=row.watermark_to,
+        contract_version=row.contract_version,
+        contract_hash=row.contract_hash,
+        gcs_uri=row.gcs_uri,
+        row_count=row.row_count,
+        status=row.status,
+        error_message=row.error_message,
+    )
+
+
 def _normalize_webhook_url(value: str) -> str:
     candidate = (value or "").strip()
     if not candidate:
@@ -141,6 +218,8 @@ def _notification_destination_out(row: NotificationDestination) -> NotificationD
         name=row.name,
         channel=row.channel,
         kind=row.kind,
+        source_types=[str(v) for v in (row.source_types or [])],
+        event_types=[str(v) for v in (row.event_types or [])],
         enabled=row.enabled,
         webhook_url_masked=mask_webhook_url(row.webhook_url),
         destination_fingerprint=destination_fingerprint(row.webhook_url),
@@ -164,6 +243,11 @@ def _device_out(row: Device, *, now: datetime) -> DeviceOut:
         deep_sleep_backend=_normalized_deep_sleep_backend(getattr(row, "deep_sleep_backend", "auto")),
         alerts_muted_until=getattr(row, "alerts_muted_until", None),
         alerts_muted_reason=getattr(row, "alerts_muted_reason", None),
+        ota_channel=str(getattr(row, "ota_channel", "stable") or "stable"),
+        ota_updates_enabled=bool(getattr(row, "ota_updates_enabled", True)),
+        ota_busy_reason=getattr(row, "ota_busy_reason", None),
+        ota_is_development=bool(getattr(row, "ota_is_development", False)),
+        ota_locked_manifest_id=getattr(row, "ota_locked_manifest_id", None),
         status=status_str,
         seconds_since_last_seen=seconds,
     )
@@ -228,6 +312,13 @@ def _release_manifest_out(row: ReleaseManifest) -> ReleaseManifestOut:
         id=row.id,
         git_tag=row.git_tag,
         commit_sha=row.commit_sha,
+        update_type=cast(UpdateType, row.update_type),
+        artifact_uri=row.artifact_uri,
+        artifact_size=int(row.artifact_size),
+        artifact_sha256=row.artifact_sha256,
+        artifact_signature=row.artifact_signature,
+        artifact_signature_scheme=cast(ArtifactSignatureScheme, row.artifact_signature_scheme),
+        compatibility=dict(row.compatibility or {}),
         signature=row.signature,
         signature_key_id=row.signature_key_id,
         constraints=dict(row.constraints or {}),
@@ -272,6 +363,8 @@ def _deployment_out(row: Deployment, *, counts: dict[str, int]) -> DeploymentOut
         updated_at=row.updated_at,
         failure_rate_threshold=float(row.failure_rate_threshold),
         no_quorum_timeout_s=int(row.no_quorum_timeout_s),
+        stage_timeout_s=int(getattr(row, "stage_timeout_s", row.no_quorum_timeout_s)),
+        defer_rate_threshold=float(getattr(row, "defer_rate_threshold", 0.5)),
         command_expires_at=row.command_expires_at,
         power_guard_required=bool(row.power_guard_required),
         health_timeout_s=int(row.health_timeout_s),
@@ -441,6 +534,11 @@ def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require
             token_fingerprint=token_fingerprint(req.token),
             heartbeat_interval_s=req.heartbeat_interval_s,
             offline_after_s=req.offline_after_s,
+            ota_channel=req.ota_channel,
+            ota_updates_enabled=req.ota_updates_enabled,
+            ota_busy_reason=req.ota_busy_reason,
+            ota_is_development=req.ota_is_development,
+            ota_locked_manifest_id=req.ota_locked_manifest_id,
             enabled=True,
         )
         session.add(d)
@@ -463,6 +561,10 @@ def create_device(req: AdminDeviceCreate, principal: Principal = Depends(require
                 "enabled": True,
                 "heartbeat_interval_s": req.heartbeat_interval_s,
                 "offline_after_s": req.offline_after_s,
+                "ota_channel": req.ota_channel,
+                "ota_updates_enabled": req.ota_updates_enabled,
+                "ota_is_development": req.ota_is_development,
+                "ota_locked_manifest_id": req.ota_locked_manifest_id,
                 "owner_emails": owner_emails,
                 "actor_role": actor.role,
                 "actor_source": actor.source,
@@ -479,6 +581,7 @@ def update_device(
     device_id: str, req: AdminDeviceUpdate, principal: Principal = Depends(require_admin_role)
 ) -> DeviceOut:
     actor = audit_actor_from_principal(principal)
+    fields_set = getattr(req, "model_fields_set", set())
     with db_session() as session:
         d = session.query(Device).filter(Device.device_id == device_id).one_or_none()
         if not d:
@@ -501,6 +604,21 @@ def update_device(
         if req.enabled is not None:
             d.enabled = req.enabled
             changed_fields.append("enabled")
+        if req.ota_channel is not None:
+            d.ota_channel = req.ota_channel
+            changed_fields.append("ota_channel")
+        if req.ota_updates_enabled is not None:
+            d.ota_updates_enabled = req.ota_updates_enabled
+            changed_fields.append("ota_updates_enabled")
+        if "ota_busy_reason" in fields_set:
+            d.ota_busy_reason = req.ota_busy_reason
+            changed_fields.append("ota_busy_reason")
+        if req.ota_is_development is not None:
+            d.ota_is_development = req.ota_is_development
+            changed_fields.append("ota_is_development")
+        if "ota_locked_manifest_id" in fields_set:
+            d.ota_locked_manifest_id = req.ota_locked_manifest_id
+            changed_fields.append("ota_locked_manifest_id")
 
         if changed_fields:
             record_admin_event(
@@ -614,6 +732,13 @@ def create_release_manifest_admin(
             session,
             git_tag=req.git_tag,
             commit_sha=req.commit_sha,
+            update_type=req.update_type,
+            artifact_uri=req.artifact_uri,
+            artifact_size=req.artifact_size,
+            artifact_sha256=req.artifact_sha256,
+            artifact_signature=req.artifact_signature,
+            artifact_signature_scheme=req.artifact_signature_scheme,
+            compatibility=req.compatibility,
             signature=req.signature,
             signature_key_id=req.signature_key_id,
             constraints=req.constraints,
@@ -631,6 +756,9 @@ def create_release_manifest_admin(
                 "manifest_id": row.id,
                 "git_tag": row.git_tag,
                 "commit_sha": row.commit_sha,
+                "update_type": row.update_type,
+                "artifact_uri": row.artifact_uri,
+                "artifact_sha256": row.artifact_sha256,
                 "signature_key_id": row.signature_key_id,
                 "status": row.status,
                 "actor_role": actor.role,
@@ -647,9 +775,50 @@ def list_release_manifests_admin(
     limit: int = Query(default=200, ge=1, le=2000),
 ) -> List[ReleaseManifestOut]:
     _require_ota_enabled()
+    normalized_status = status_filter if isinstance(status_filter, str) else None
+    normalized_limit = limit if isinstance(limit, int) else 200
     with db_session() as session:
-        rows = list_release_manifests(session, limit=limit, status=status_filter)
+        rows = list_release_manifests(session, limit=normalized_limit, status=normalized_status)
         return [_release_manifest_out(row) for row in rows]
+
+
+@router.patch("/releases/manifests/{manifest_id}", response_model=ReleaseManifestOut)
+def update_release_manifest_admin(
+    manifest_id: str,
+    req: ReleaseManifestUpdateIn,
+    principal: Principal = Depends(require_admin_role),
+) -> ReleaseManifestOut:
+    _require_ota_enabled()
+    actor = audit_actor_from_principal(principal)
+    fields_set = getattr(req, "model_fields_set", set())
+    with db_session() as session:
+        row = session.query(ReleaseManifest).filter(ReleaseManifest.id == manifest_id).one_or_none()
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Release manifest not found")
+        changed_fields: list[str] = []
+        if "status" in fields_set and req.status is not None:
+            row.status = req.status.strip().lower() or row.status
+            changed_fields.append("status")
+        if changed_fields:
+            record_admin_event(
+                session,
+                actor_email=actor.email,
+                actor_subject=actor.subject,
+                action="release_manifest.update",
+                target_type="release_manifest",
+                target_device_id=None,
+                details={
+                    "manifest_id": row.id,
+                    "git_tag": row.git_tag,
+                    "changed_fields": changed_fields,
+                    "status": row.status,
+                    "actor_role": actor.role,
+                    "actor_source": actor.source,
+                },
+                request_id=get_request_id(),
+            )
+        session.flush()
+        return _release_manifest_out(row)
 
 
 @router.post(
@@ -679,6 +848,8 @@ def create_deployment_admin(
                 rollout_stages_pct=req.rollout_stages_pct,
                 failure_rate_threshold=req.failure_rate_threshold,
                 no_quorum_timeout_s=req.no_quorum_timeout_s,
+                stage_timeout_s=req.stage_timeout_s,
+                defer_rate_threshold=req.defer_rate_threshold,
                 health_timeout_s=req.health_timeout_s,
                 command_ttl_s=req.command_ttl_s,
                 power_guard_required=req.power_guard_required,
@@ -709,6 +880,29 @@ def create_deployment_admin(
         return _deployment_out(deployment, counts=counts)
 
 
+@router.get("/deployments", response_model=List[DeploymentOut])
+def list_deployments_admin(
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    manifest_id: Optional[str] = Query(default=None),
+    selector_channel: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=2000),
+) -> List[DeploymentOut]:
+    _require_ota_enabled()
+    normalized_status = status_filter if isinstance(status_filter, str) else None
+    normalized_manifest_id = manifest_id if isinstance(manifest_id, str) else None
+    normalized_selector_channel = selector_channel if isinstance(selector_channel, str) else None
+    normalized_limit = limit if isinstance(limit, int) else 200
+    with db_session() as session:
+        rows = list_deployments(
+            session,
+            limit=normalized_limit,
+            status=normalized_status,
+            manifest_id=normalized_manifest_id,
+            selector_channel=normalized_selector_channel,
+        )
+        return [_deployment_out(row, counts=deployment_counts(session, deployment_id=row.id)) for row in rows]
+
+
 @router.get("/deployments/{deployment_id}", response_model=DeploymentDetailOut)
 def get_deployment_admin(deployment_id: str) -> DeploymentDetailOut:
     _require_ota_enabled()
@@ -724,13 +918,46 @@ def get_deployment_admin(deployment_id: str) -> DeploymentDetailOut:
 
         counts = deployment_counts(session, deployment_id=deployment.id)
         summary = _deployment_out(deployment, counts=counts)
-        targets = list_deployment_targets(session, deployment_id=deployment.id)
+        targets, _total = list_deployment_targets(session, deployment_id=deployment.id)
         events = list_deployment_events(session, deployment_id=deployment.id)
         return DeploymentDetailOut(
             **summary.model_dump(),
             manifest=_release_manifest_out(manifest),
             targets=[_deployment_target_out(row) for row in targets],
             events=[_deployment_event_out(row) for row in events],
+        )
+
+
+@router.get("/deployments/{deployment_id}/targets", response_model=DeploymentTargetPageOut)
+def list_deployment_targets_admin(
+    deployment_id: str,
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    q: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
+) -> DeploymentTargetPageOut:
+    _require_ota_enabled()
+    normalized_status = status_filter if isinstance(status_filter, str) else None
+    normalized_q = q if isinstance(q, str) else None
+    normalized_limit = limit if isinstance(limit, int) else 200
+    normalized_offset = offset if isinstance(offset, int) else 0
+    with db_session() as session:
+        deployment = get_deployment(session, deployment_id=deployment_id)
+        if deployment is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment not found")
+        rows, total = list_deployment_targets(
+            session,
+            deployment_id=deployment.id,
+            status=normalized_status,
+            search=normalized_q,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
+        return DeploymentTargetPageOut(
+            items=[_deployment_target_out(row) for row in rows],
+            total=total,
+            limit=normalized_limit,
+            offset=normalized_offset,
         )
 
 
@@ -976,9 +1203,21 @@ def delete_device_access_admin(
 
 
 @router.get("/events", response_model=List[AdminEventOut])
-def list_admin_events(limit: int = Query(default=200, ge=1, le=2000)) -> List[AdminEventOut]:
+def list_admin_events(
+    limit: int = Query(default=200, ge=1, le=2000),
+    action: Optional[str] = Query(default=None),
+    target_type: Optional[str] = Query(default=None),
+    device_id: Optional[str] = Query(default=None),
+) -> List[AdminEventOut]:
     with db_session() as session:
-        rows = session.query(AdminEvent).order_by(desc(AdminEvent.created_at)).limit(limit).all()
+        q = session.query(AdminEvent)
+        if action:
+            q = q.filter(AdminEvent.action == action)
+        if target_type:
+            q = q.filter(AdminEvent.target_type == target_type)
+        if device_id:
+            q = q.filter(AdminEvent.target_device_id == device_id)
+        rows = q.order_by(desc(AdminEvent.created_at)).limit(limit).all()
         return [
             AdminEventOut(
                 id=row.id,
@@ -993,6 +1232,50 @@ def list_admin_events(limit: int = Query(default=200, ge=1, le=2000)) -> List[Ad
             )
             for row in rows
         ]
+
+
+@router.get("/events-page", response_model=AdminEventPageOut)
+def list_admin_events_page(
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=5000),
+    action: Optional[str] = Query(default=None),
+    target_type: Optional[str] = Query(default=None),
+    device_id: Optional[str] = Query(default=None),
+) -> AdminEventPageOut:
+    normalized_limit = limit if isinstance(limit, int) else 200
+    normalized_offset = offset if isinstance(offset, int) else 0
+    normalized_action = action if isinstance(action, str) else None
+    normalized_target_type = target_type if isinstance(target_type, str) else None
+    normalized_device_id = device_id if isinstance(device_id, str) else None
+    with db_session() as session:
+        q = session.query(AdminEvent)
+        if normalized_action:
+            q = q.filter(AdminEvent.action == normalized_action)
+        if normalized_target_type:
+            q = q.filter(AdminEvent.target_type == normalized_target_type)
+        if normalized_device_id:
+            q = q.filter(AdminEvent.target_device_id == normalized_device_id)
+        total = int(q.count())
+        rows = q.order_by(desc(AdminEvent.created_at)).offset(normalized_offset).limit(normalized_limit).all()
+        return AdminEventPageOut(
+            items=[
+                AdminEventOut(
+                    id=row.id,
+                    actor_email=row.actor_email,
+                    actor_subject=row.actor_subject,
+                    action=row.action,
+                    target_type=row.target_type,
+                    target_device_id=row.target_device_id,
+                    details=dict(row.details or {}),
+                    request_id=row.request_id,
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ],
+            total=total,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
 
 
 @router.get("/ingestions", response_model=List[IngestionBatchOut])
@@ -1014,29 +1297,34 @@ def list_ingestions_admin(
             q = q.filter(IngestionBatch.device_id == device_id)
         q = q.order_by(IngestionBatch.received_at.desc()).limit(limit)
         rows = q.all()
+        return [_ingestion_batch_out(row) for row in rows]
 
-        return [
-            IngestionBatchOut(
-                id=r.id,
-                device_id=r.device_id,
-                received_at=r.received_at,
-                contract_version=r.contract_version,
-                contract_hash=r.contract_hash,
-                points_submitted=r.points_submitted,
-                points_accepted=r.points_accepted,
-                duplicates=r.duplicates,
-                points_quarantined=r.points_quarantined,
-                client_ts_min=r.client_ts_min,
-                client_ts_max=r.client_ts_max,
-                unknown_metric_keys=list(r.unknown_metric_keys or []),
-                type_mismatch_keys=list(r.type_mismatch_keys or []),
-                drift_summary=dict(r.drift_summary or {}),
-                source=r.source,
-                pipeline_mode=r.pipeline_mode,
-                processing_status=r.processing_status,
-            )
-            for r in rows
-        ]
+
+@router.get("/ingestions-page", response_model=IngestionBatchPageOut)
+def list_ingestions_page_admin(
+    device_id: Optional[str] = Query(default=None, description="Optional device_id filter"),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=5000),
+) -> IngestionBatchPageOut:
+    normalized_limit = limit if isinstance(limit, int) else 200
+    normalized_offset = offset if isinstance(offset, int) else 0
+    with db_session() as session:
+        q = session.query(IngestionBatch)
+        if device_id:
+            q = q.filter(IngestionBatch.device_id == device_id)
+        total = int(q.count())
+        rows = (
+            q.order_by(IngestionBatch.received_at.desc())
+            .offset(normalized_offset)
+            .limit(normalized_limit)
+            .all()
+        )
+        return IngestionBatchPageOut(
+            items=[_ingestion_batch_out(row) for row in rows],
+            total=total,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
 
 
 @router.get(
@@ -1052,18 +1340,32 @@ def list_drift_events_admin(
         if device_id:
             q = q.filter(DriftEvent.device_id == device_id)
         rows = q.order_by(desc(DriftEvent.created_at)).limit(limit).all()
-        return [
-            DriftEventOut(
-                id=row.id,
-                batch_id=row.batch_id,
-                device_id=row.device_id,
-                event_type=row.event_type,
-                action=row.action,
-                details=dict(row.details or {}),
-                created_at=row.created_at,
-            )
-            for row in rows
-        ]
+        return [_drift_event_out(row) for row in rows]
+
+
+@router.get(
+    "/drift-events-page",
+    response_model=DriftEventPageOut,
+)
+def list_drift_events_page_admin(
+    device_id: Optional[str] = Query(default=None, description="Optional device_id filter"),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=5000),
+) -> DriftEventPageOut:
+    normalized_limit = limit if isinstance(limit, int) else 200
+    normalized_offset = offset if isinstance(offset, int) else 0
+    with db_session() as session:
+        q = session.query(DriftEvent)
+        if device_id:
+            q = q.filter(DriftEvent.device_id == device_id)
+        total = int(q.count())
+        rows = q.order_by(desc(DriftEvent.created_at)).offset(normalized_offset).limit(normalized_limit).all()
+        return DriftEventPageOut(
+            items=[_drift_event_out(row) for row in rows],
+            total=total,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
 
 
 @router.get(
@@ -1072,27 +1374,68 @@ def list_drift_events_admin(
 )
 def list_notifications_admin(
     device_id: Optional[str] = Query(default=None, description="Optional device_id filter"),
+    source_kind: Optional[str] = Query(default=None),
+    channel: Optional[str] = Query(default=None),
+    decision: Optional[str] = Query(default=None),
+    delivered: Optional[bool] = Query(default=None),
     limit: int = Query(default=200, ge=1, le=2000),
 ) -> List[NotificationEventOut]:
     with db_session() as session:
         q = session.query(NotificationEvent)
         if device_id:
             q = q.filter(NotificationEvent.device_id == device_id)
+        if source_kind:
+            q = q.filter(NotificationEvent.source_kind == source_kind)
+        if channel:
+            q = q.filter(NotificationEvent.channel == channel)
+        if decision:
+            q = q.filter(NotificationEvent.decision == decision)
+        if delivered is not None:
+            q = q.filter(NotificationEvent.delivered.is_(delivered))
         rows = q.order_by(desc(NotificationEvent.created_at)).limit(limit).all()
-        return [
-            NotificationEventOut(
-                id=row.id,
-                alert_id=row.alert_id,
-                device_id=row.device_id,
-                alert_type=row.alert_type,
-                channel=row.channel,
-                decision=row.decision,
-                delivered=row.delivered,
-                reason=row.reason,
-                created_at=row.created_at,
-            )
-            for row in rows
-        ]
+        return [_notification_event_out(row) for row in rows]
+
+
+@router.get(
+    "/notifications-page",
+    response_model=NotificationEventPageOut,
+)
+def list_notifications_page_admin(
+    device_id: Optional[str] = Query(default=None, description="Optional device_id filter"),
+    source_kind: Optional[str] = Query(default=None),
+    channel: Optional[str] = Query(default=None),
+    decision: Optional[str] = Query(default=None),
+    delivered: Optional[bool] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=5000),
+) -> NotificationEventPageOut:
+    normalized_limit = limit if isinstance(limit, int) else 200
+    normalized_offset = offset if isinstance(offset, int) else 0
+    with db_session() as session:
+        q = session.query(NotificationEvent)
+        if device_id:
+            q = q.filter(NotificationEvent.device_id == device_id)
+        if source_kind:
+            q = q.filter(NotificationEvent.source_kind == source_kind)
+        if channel:
+            q = q.filter(NotificationEvent.channel == channel)
+        if decision:
+            q = q.filter(NotificationEvent.decision == decision)
+        if delivered is not None:
+            q = q.filter(NotificationEvent.delivered.is_(delivered))
+        total = q.count()
+        rows = (
+            q.order_by(desc(NotificationEvent.created_at))
+            .offset(normalized_offset)
+            .limit(normalized_limit)
+            .all()
+        )
+        return NotificationEventPageOut(
+            items=[_notification_event_out(row) for row in rows],
+            total=total,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )
 
 
 @router.get(
@@ -1134,6 +1477,8 @@ def create_notification_destination_admin(
             channel=req.channel,
             kind=req.kind,
             webhook_url=webhook_url,
+            source_types=[str(v).strip() for v in req.source_types if str(v).strip()],
+            event_types=[str(v).strip() for v in req.event_types if str(v).strip()],
             enabled=req.enabled,
         )
         session.add(row)
@@ -1151,6 +1496,8 @@ def create_notification_destination_admin(
                 "name": row.name,
                 "channel": row.channel,
                 "kind": row.kind,
+                "source_types": row.source_types,
+                "event_types": row.event_types,
                 "enabled": row.enabled,
                 "destination_fingerprint": destination_fingerprint(row.webhook_url),
                 "actor_role": actor.role,
@@ -1215,6 +1562,12 @@ def update_notification_destination_admin(
         if req.webhook_url is not None:
             row.webhook_url = _normalize_webhook_url(req.webhook_url)
             changed_fields.append("webhook_url")
+        if req.source_types is not None:
+            row.source_types = [str(v).strip() for v in req.source_types if str(v).strip()]
+            changed_fields.append("source_types")
+        if req.event_types is not None:
+            row.event_types = [str(v).strip() for v in req.event_types if str(v).strip()]
+            changed_fields.append("event_types")
 
         if req.enabled is not None:
             row.enabled = req.enabled
@@ -1235,6 +1588,8 @@ def update_notification_destination_admin(
                     "name": row.name,
                     "channel": row.channel,
                     "kind": row.kind,
+                    "source_types": row.source_types,
+                    "event_types": row.event_types,
                     "enabled": row.enabled,
                     "destination_fingerprint": destination_fingerprint(row.webhook_url),
                     "actor_role": actor.role,
@@ -1280,6 +1635,8 @@ def delete_notification_destination_admin(
                 "name": row.name,
                 "channel": row.channel,
                 "kind": row.kind,
+                "source_types": row.source_types,
+                "event_types": row.event_types,
                 "enabled": row.enabled,
                 "destination_fingerprint": destination_fingerprint(row.webhook_url),
                 "actor_role": actor.role,
@@ -1304,19 +1661,31 @@ def list_exports_admin(
         if status_filter:
             q = q.filter(ExportBatch.status == status_filter)
         rows = q.order_by(desc(ExportBatch.started_at)).limit(limit).all()
-        return [
-            ExportBatchOut(
-                id=row.id,
-                started_at=row.started_at,
-                finished_at=row.finished_at,
-                watermark_from=row.watermark_from,
-                watermark_to=row.watermark_to,
-                contract_version=row.contract_version,
-                contract_hash=row.contract_hash,
-                gcs_uri=row.gcs_uri,
-                row_count=row.row_count,
-                status=row.status,
-                error_message=row.error_message,
-            )
-            for row in rows
-        ]
+        return [_export_batch_out(row) for row in rows]
+
+
+@router.get(
+    "/exports-page",
+    response_model=ExportBatchPageOut,
+)
+def list_exports_page_admin(
+    status_filter: Optional[str] = Query(default=None, description="Optional status filter"),
+    limit: int = Query(default=200, ge=1, le=2000),
+    offset: int = Query(default=0, ge=0, le=5000),
+) -> ExportBatchPageOut:
+    normalized_limit = limit if isinstance(limit, int) else 200
+    normalized_offset = offset if isinstance(offset, int) else 0
+    with db_session() as session:
+        q = session.query(ExportBatch)
+        if status_filter:
+            q = q.filter(ExportBatch.status == status_filter)
+        total = int(q.count())
+        rows = (
+            q.order_by(desc(ExportBatch.started_at)).offset(normalized_offset).limit(normalized_limit).all()
+        )
+        return ExportBatchPageOut(
+            items=[_export_batch_out(row) for row in rows],
+            total=total,
+            limit=normalized_limit,
+            offset=normalized_offset,
+        )

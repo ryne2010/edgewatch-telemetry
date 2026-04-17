@@ -1,6 +1,7 @@
 import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
+import { useSearch } from '@tanstack/react-router'
 import { api, type EdgePolicyContractOut, type NotificationDestinationOut } from '../api'
 import { useAppSettings } from '../app/settings'
 import { useAdminAccess } from '../hooks/useAdminAccess'
@@ -246,6 +247,7 @@ function PolicyNumberField(props: {
 }
 
 export function SettingsPage() {
+  const routeSearch = useSearch({ from: '/settings' })
   const { theme, setTheme, adminKey, setAdminKey, clearAdminKey, adminKeyPersisted } = useAppSettings()
   const { toast } = useToast()
   const qc = useQueryClient()
@@ -265,6 +267,22 @@ export function SettingsPage() {
   const [destinationName, setDestinationName] = React.useState('')
   const [destinationKind, setDestinationKind] = React.useState<'discord' | 'telegram' | 'generic'>('discord')
   const [destinationUrl, setDestinationUrl] = React.useState('')
+  const [destinationSourceTypes, setDestinationSourceTypes] = React.useState('alert')
+  const [destinationEventTypes, setDestinationEventTypes] = React.useState('')
+  const [editingDestinationId, setEditingDestinationId] = React.useState<string | null>(null)
+
+  const loadDestinationIntoEditor = React.useCallback((destination: NotificationDestinationOut) => {
+    setEditingDestinationId(destination.id)
+    setDestinationName(destination.name)
+    setDestinationKind(
+      destination.kind === 'telegram' || destination.kind === 'generic' || destination.kind === 'discord'
+        ? destination.kind
+        : 'generic',
+    )
+    setDestinationUrl(destination.webhook_url_masked.includes('***') ? '' : destination.webhook_url_masked)
+    setDestinationSourceTypes(destination.source_types.join(', '))
+    setDestinationEventTypes(destination.event_types.join(', '))
+  }, [])
 
   const [importantDraft, setImportantDraft] = React.useState<ImportantPolicyDraft | null>(null)
   const [importantInitial, setImportantInitial] = React.useState<ImportantPolicyDraft | null>(null)
@@ -286,6 +304,15 @@ export function SettingsPage() {
     enabled: healthQ.isSuccess && adminAccess,
     staleTime: 30_000,
   })
+
+  React.useEffect(() => {
+    const destinationId = routeSearch.destinationId?.trim()
+    if (!destinationId || !destinationsQ.data?.length) return
+    const match = destinationsQ.data.find((destination) => destination.id === destinationId)
+    if (!match) return
+    if (editingDestinationId === match.id) return
+    loadDestinationIntoEditor(match)
+  }, [destinationsQ.data, editingDestinationId, loadDestinationIntoEditor, routeSearch.destinationId])
 
   const telemetryQ = useQuery({
     queryKey: ['telemetryContract'],
@@ -330,13 +357,18 @@ export function SettingsPage() {
     mutationFn: async () => {
       const name = destinationName.trim()
       const webhook_url = destinationUrl.trim()
+      const source_types = Array.from(new Set(destinationSourceTypes.split(',').map((v) => v.trim()).filter(Boolean)))
+      const event_types = Array.from(new Set(destinationEventTypes.split(',').map((v) => v.trim()).filter(Boolean)))
       if (!name) throw new Error('Name is required')
       if (!webhook_url) throw new Error('Webhook URL is required')
+      if (!source_types.length) throw new Error('At least one source type is required')
       return await api.admin.createNotificationDestination(adminCred, {
         name,
         channel: 'webhook',
         kind: destinationKind,
         webhook_url,
+        source_types,
+        event_types,
         enabled: true,
       })
     },
@@ -344,6 +376,8 @@ export function SettingsPage() {
       setDestinationName('')
       setDestinationUrl('')
       setDestinationKind('discord')
+      setDestinationSourceTypes('alert')
+      setDestinationEventTypes('')
       toast({ title: 'Webhook destination added', variant: 'success' })
       qc.invalidateQueries({ queryKey: ['admin', 'notificationDestinations'] })
     },
@@ -351,6 +385,44 @@ export function SettingsPage() {
       toast({
         title: 'Failed to add webhook destination',
         description: adminErrorMessage(e, 'Unable to add webhook destination.'),
+        variant: 'error',
+      })
+    },
+  })
+
+  const saveDestinationMutation = useMutation({
+    mutationFn: async () => {
+      const destinationId = editingDestinationId?.trim()
+      const name = destinationName.trim()
+      const webhook_url = destinationUrl.trim()
+      const source_types = Array.from(new Set(destinationSourceTypes.split(',').map((v) => v.trim()).filter(Boolean)))
+      const event_types = Array.from(new Set(destinationEventTypes.split(',').map((v) => v.trim()).filter(Boolean)))
+      if (!destinationId) throw new Error('Select a destination to edit.')
+      if (!name) throw new Error('Name is required')
+      if (!webhook_url) throw new Error('Webhook URL is required')
+      if (!source_types.length) throw new Error('At least one source type is required')
+      return await api.admin.updateNotificationDestination(adminCred, destinationId, {
+        name,
+        kind: destinationKind,
+        webhook_url,
+        source_types,
+        event_types,
+      })
+    },
+    onSuccess: (updated) => {
+      toast({ title: 'Destination updated', description: updated.name, variant: 'success' })
+      qc.invalidateQueries({ queryKey: ['admin', 'notificationDestinations'] })
+      setEditingDestinationId(null)
+      setDestinationName('')
+      setDestinationUrl('')
+      setDestinationKind('discord')
+      setDestinationSourceTypes('alert')
+      setDestinationEventTypes('')
+    },
+    onError: (e) => {
+      toast({
+        title: 'Failed to update destination',
+        description: adminErrorMessage(e, 'Unable to update destination.'),
         variant: 'error',
       })
     },
@@ -689,7 +761,7 @@ export function SettingsPage() {
               )}
 
               {healthQ.isSuccess && adminEnabled ? (
-                <div className="space-y-3 border-t pt-4">
+                <div id="notification-webhooks" className="space-y-3 border-t pt-4">
                   <div className="text-sm font-medium">Notification webhooks</div>
                   <div className="text-xs text-muted-foreground">
                     Create one or more webhook destinations for alert delivery. Each enabled destination receives routed notifications.
@@ -706,6 +778,16 @@ export function SettingsPage() {
                   ) : (
                     <>
                       <div className="space-y-2 rounded-md border bg-background p-3">
+                        {editingDestinationId ? (
+                          <div className="text-xs font-medium text-muted-foreground">
+                            Editing destination <span className="font-mono">{editingDestinationId}</span>
+                          </div>
+                        ) : null}
+                        {editingDestinationId ? (
+                          <div className="text-xs text-muted-foreground">
+                            Re-enter the full webhook URL when editing, because only the masked value is available from the API response.
+                          </div>
+                        ) : null}
                         <div className="grid gap-2">
                           <div className="space-y-1">
                             <Label>Destination name</Label>
@@ -757,13 +839,55 @@ export function SettingsPage() {
                               </Button>
                             </div>
                           </div>
+                          <div className="space-y-1">
+                            <Label>Source kinds</Label>
+                            <Input
+                              value={destinationSourceTypes}
+                              onChange={(e) => setDestinationSourceTypes(e.target.value)}
+                              placeholder="alert, device_event"
+                            />
+                            <div className="text-xs text-muted-foreground">
+                              Comma-separated. Examples: <code className="font-mono">alert</code>, <code className="font-mono">device_event</code>, <code className="font-mono">procedure_invocation</code>, <code className="font-mono">deployment_event</code>.
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Event type filters (optional)</Label>
+                            <Input
+                              value={destinationEventTypes}
+                              onChange={(e) => setDestinationEventTypes(e.target.value)}
+                              placeholder="BATTERY_LOW, procedure.capture_snapshot.requested"
+                            />
+                          </div>
                         </div>
-                        <Button
-                          onClick={() => createDestinationMutation.mutate()}
-                          disabled={createDestinationMutation.isPending}
-                        >
-                          Add webhook destination
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            onClick={() => (editingDestinationId ? saveDestinationMutation.mutate() : createDestinationMutation.mutate())}
+                            disabled={createDestinationMutation.isPending || saveDestinationMutation.isPending}
+                          >
+                            {editingDestinationId
+                              ? saveDestinationMutation.isPending
+                                ? 'Saving destination…'
+                                : 'Save destination'
+                              : createDestinationMutation.isPending
+                                ? 'Adding destination…'
+                                : 'Add webhook destination'}
+                          </Button>
+                          {editingDestinationId ? (
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setEditingDestinationId(null)
+                                setDestinationName('')
+                                setDestinationUrl('')
+                                setDestinationKind('discord')
+                                setDestinationSourceTypes('alert')
+                                setDestinationEventTypes('')
+                              }}
+                            >
+                              Cancel edit
+                            </Button>
+                          ) : null}
+                        </div>
                       </div>
 
                       {destinationsQ.isLoading ? <div className="text-sm text-muted-foreground">Loading destinations…</div> : null}
@@ -784,7 +908,25 @@ export function SettingsPage() {
                                   {d.enabled ? <Badge variant="success">enabled</Badge> : <Badge variant="outline">disabled</Badge>}
                                   <div className="ml-auto text-xs text-muted-foreground">{d.webhook_url_masked}</div>
                                 </div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  {d.source_types.map((sourceType) => (
+                                    <Badge key={sourceType} variant="secondary">{sourceType}</Badge>
+                                  ))}
+                                  {d.event_types.length ? (
+                                    <span className="font-mono">events: {d.event_types.join(', ')}</span>
+                                  ) : (
+                                    <span>all event types for selected sources</span>
+                                  )}
+                                </div>
                                 <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => loadDestinationIntoEditor(d)}
+                                  >
+                                    Edit
+                                  </Button>
                                   <Button
                                     type="button"
                                     size="sm"

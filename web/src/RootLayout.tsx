@@ -10,7 +10,11 @@ import {
   IconBell,
   IconDashboard,
   IconDevices,
+  IconFile,
   IconInfo,
+  IconLayers,
+  IconPulse,
+  IconSignal,
   IconSettings,
   IconShield,
 } from './ui-kit'
@@ -47,7 +51,11 @@ export function RootLayout() {
       nav={[
         { to: '/', label: 'Dashboard', icon: <IconDashboard /> },
         { to: '/devices', label: 'Devices', icon: <IconDevices /> },
+        { to: '/cellular', label: 'Cellular', icon: <IconSignal /> },
+        { to: '/fleets', label: 'Fleets', icon: <IconLayers /> },
         { to: '/alerts', label: 'Alerts', icon: <IconBell /> },
+        { to: '/live', label: 'Live', icon: <IconPulse /> },
+        { to: '/releases', label: 'Releases', icon: <IconFile />, requiresAdminRoutes: true },
         { to: '/admin', label: 'Admin', icon: <IconShield />, requiresAdminRoutes: true },
         { to: '/settings', label: 'Settings', icon: <IconSettings /> },
         { to: '/meta', label: 'System', icon: <IconInfo /> },

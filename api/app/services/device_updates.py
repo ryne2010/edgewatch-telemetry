@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 
 from ..models import (
     Deployment,
@@ -14,6 +15,7 @@ from ..models import (
     DeviceReleaseState,
     ReleaseManifest,
 )
+from .notifications import PlatformEvent, process_platform_event
 
 
 DEPLOYMENT_STATUS_ACTIVE = "active"
@@ -24,8 +26,11 @@ DEPLOYMENT_STATUS_COMPLETED = "completed"
 
 TARGET_STATUS_QUEUED = "queued"
 TARGET_STATUS_DOWNLOADING = "downloading"
+TARGET_STATUS_DOWNLOADED = "downloaded"
 TARGET_STATUS_VERIFYING = "verifying"
 TARGET_STATUS_APPLYING = "applying"
+TARGET_STATUS_STAGED = "staged"
+TARGET_STATUS_SWITCHING = "switching"
 TARGET_STATUS_RESTARTING = "restarting"
 TARGET_STATUS_HEALTHY = "healthy"
 TARGET_STATUS_ROLLED_BACK = "rolled_back"
@@ -42,8 +47,11 @@ PROGRESSING_TARGET_STATUSES = {
     TARGET_STATUS_QUEUED,
     TARGET_STATUS_DEFERRED,
     TARGET_STATUS_DOWNLOADING,
+    TARGET_STATUS_DOWNLOADED,
     TARGET_STATUS_VERIFYING,
     TARGET_STATUS_APPLYING,
+    TARGET_STATUS_STAGED,
+    TARGET_STATUS_SWITCHING,
     TARGET_STATUS_RESTARTING,
 }
 
@@ -74,8 +82,8 @@ def normalize_rollout_stages(stages: Iterable[int] | None) -> list[int]:
 def normalize_target_selector(selector: dict[str, Any] | None) -> dict[str, Any]:
     raw = dict(selector or {})
     mode = str(raw.get("mode") or "all").strip().lower()
-    if mode not in {"all", "cohort", "labels", "explicit_ids"}:
-        raise ValueError("target selector mode must be one of: all, cohort, labels, explicit_ids")
+    if mode not in {"all", "cohort", "labels", "explicit_ids", "channel"}:
+        raise ValueError("target selector mode must be one of: all, cohort, labels, explicit_ids, channel")
 
     normalized: dict[str, Any] = {"mode": mode}
     cohort = raw.get("cohort")
@@ -83,6 +91,12 @@ def normalize_target_selector(selector: dict[str, Any] | None) -> dict[str, Any]
         c = str(cohort).strip()
         if c:
             normalized["cohort"] = c
+
+    channel = raw.get("channel")
+    if channel is not None:
+        c = str(channel).strip()
+        if c:
+            normalized["channel"] = c
 
     labels_raw = raw.get("labels")
     labels: dict[str, str] = {}
@@ -107,6 +121,8 @@ def normalize_target_selector(selector: dict[str, Any] | None) -> dict[str, Any]
 
     if mode == "cohort" and "cohort" not in normalized:
         raise ValueError("target selector 'cohort' mode requires selector.cohort")
+    if mode == "channel" and "channel" not in normalized:
+        raise ValueError("target selector 'channel' mode requires selector.channel")
     if mode == "labels" and "labels" not in normalized:
         raise ValueError("target selector 'labels' mode requires selector.labels")
     if mode == "explicit_ids" and "device_ids" not in normalized:
@@ -136,6 +152,22 @@ def _target_device_ids(session: Session, *, selector: dict[str, Any]) -> list[st
         rows = (
             session.query(Device.device_id)
             .filter(Device.enabled.is_(True), Device.cohort == cohort)
+            .order_by(Device.device_id.asc())
+            .all()
+        )
+        return [str(r[0]) for r in rows]
+
+    if mode == "channel":
+        channel = str(selector.get("channel") or "").strip()
+        if not channel:
+            return []
+        rows = (
+            session.query(Device.device_id)
+            .filter(
+                Device.enabled.is_(True),
+                Device.ota_is_development.is_(False),
+                Device.ota_channel == channel,
+            )
             .order_by(Device.device_id.asc())
             .all()
         )
@@ -204,6 +236,19 @@ def _event(
         details=dict(details or {}),
     )
     session.add(row)
+    process_platform_event(
+        session,
+        PlatformEvent(
+            source_kind="deployment_event",
+            source_id=None,
+            device_id=device_id or "",
+            event_type=event_type,
+            severity="info",
+            message=event_type,
+            payload={"deployment_id": deployment_id, **dict(details or {})},
+            created_at=row.created_at,
+        ),
+    )
     return row
 
 
@@ -212,15 +257,39 @@ def create_release_manifest(
     *,
     git_tag: str,
     commit_sha: str,
+    update_type: str = "application_bundle",
+    artifact_uri: str = "",
+    artifact_size: int = 1,
+    artifact_sha256: str = "",
+    artifact_signature: str = "",
+    artifact_signature_scheme: str = "none",
+    compatibility: dict[str, Any] | None = None,
     signature: str,
     signature_key_id: str,
     constraints: dict[str, Any] | None,
     created_by: str,
     status: str = "active",
 ) -> ReleaseManifest:
+    normalized_update_type = (update_type or "application_bundle").strip().lower()
+    if normalized_update_type not in {"application_bundle", "asset_bundle", "system_image"}:
+        raise ValueError("update_type must be one of: application_bundle, asset_bundle, system_image")
+    normalized_sig_scheme = (artifact_signature_scheme or "none").strip().lower()
+    if normalized_sig_scheme not in {"none", "openssl_rsa_sha256"}:
+        raise ValueError("artifact_signature_scheme must be one of: none, openssl_rsa_sha256")
+    normalized_artifact_uri = artifact_uri.strip() or f"memory://{git_tag.strip()}"
+    normalized_artifact_sha256 = artifact_sha256.strip().lower() or ("0" * 64)
+    if len(normalized_artifact_sha256) != 64:
+        raise ValueError("artifact_sha256 must be a 64-character hex digest")
     row = ReleaseManifest(
         git_tag=git_tag.strip(),
         commit_sha=commit_sha.strip(),
+        update_type=normalized_update_type,
+        artifact_uri=normalized_artifact_uri,
+        artifact_size=max(1, int(artifact_size)),
+        artifact_sha256=normalized_artifact_sha256,
+        artifact_signature=artifact_signature.strip(),
+        artifact_signature_scheme=normalized_sig_scheme,
+        compatibility=dict(compatibility or {}),
         signature=signature.strip(),
         signature_key_id=signature_key_id.strip(),
         constraints=dict(constraints or {}),
@@ -253,6 +322,8 @@ def create_deployment(
     rollout_stages_pct: list[int] | None,
     failure_rate_threshold: float,
     no_quorum_timeout_s: int,
+    stage_timeout_s: int | None = None,
+    defer_rate_threshold: float = 0.5,
     health_timeout_s: int,
     command_ttl_s: int,
     power_guard_required: bool,
@@ -277,6 +348,8 @@ def create_deployment(
         updated_at=ts,
         failure_rate_threshold=float(failure_rate_threshold),
         no_quorum_timeout_s=int(no_quorum_timeout_s),
+        stage_timeout_s=int(stage_timeout_s if stage_timeout_s is not None else no_quorum_timeout_s),
+        defer_rate_threshold=float(defer_rate_threshold),
         command_expires_at=command_expires_at,
         power_guard_required=bool(power_guard_required),
         health_timeout_s=int(health_timeout_s),
@@ -388,8 +461,11 @@ def deployment_counts(session: Session, *, deployment_id: str) -> dict[str, int]
             counts["queued_targets"] += 1
         elif status in {
             TARGET_STATUS_DOWNLOADING,
+            TARGET_STATUS_DOWNLOADED,
             TARGET_STATUS_VERIFYING,
             TARGET_STATUS_APPLYING,
+            TARGET_STATUS_STAGED,
+            TARGET_STATUS_SWITCHING,
             TARGET_STATUS_RESTARTING,
         }:
             counts["in_progress_targets"] += 1
@@ -407,6 +483,7 @@ def deployment_counts(session: Session, *, deployment_id: str) -> dict[str, int]
 def _evaluate_rollout_progress(session: Session, *, deployment: Deployment) -> None:
     if deployment.status != DEPLOYMENT_STATUS_ACTIVE:
         return
+    now = utcnow()
     strategy = deployment.strategy if isinstance(deployment.strategy, dict) else {}
     stages = normalize_rollout_stages(strategy.get("rollout_stages_pct"))
     current_stage = max(0, int(deployment.stage))
@@ -420,6 +497,26 @@ def _evaluate_rollout_progress(session: Session, *, deployment: Deployment) -> N
     )
     if not stage_targets:
         return
+    deferred = [row for row in stage_targets if row.status == TARGET_STATUS_DEFERRED]
+    defer_rate = float(len(deferred)) / float(len(stage_targets))
+    if defer_rate > float(getattr(deployment, "defer_rate_threshold", 0.5)):
+        deployment.status = DEPLOYMENT_STATUS_HALTED
+        deployment.halt_reason = "defer_rate_exceeded %.3f > %.3f" % (
+            defer_rate,
+            float(getattr(deployment, "defer_rate_threshold", 0.5)),
+        )
+        deployment.updated_at = now
+        _event(
+            session,
+            deployment_id=deployment.id,
+            event_type="deployment.halted",
+            details={
+                "defer_rate": defer_rate,
+                "threshold": float(getattr(deployment, "defer_rate_threshold", 0.5)),
+                "stage": current_stage,
+            },
+        )
+        return
     observed = [row for row in stage_targets if row.status in TERMINAL_TARGET_STATUSES]
     failures = [row for row in observed if row.status in {TARGET_STATUS_FAILED, TARGET_STATUS_ROLLED_BACK}]
 
@@ -431,7 +528,7 @@ def _evaluate_rollout_progress(session: Session, *, deployment: Deployment) -> N
                 failure_rate,
                 deployment.failure_rate_threshold,
             )
-            deployment.updated_at = utcnow()
+            deployment.updated_at = now
             _event(
                 session,
                 deployment_id=deployment.id,
@@ -444,12 +541,48 @@ def _evaluate_rollout_progress(session: Session, *, deployment: Deployment) -> N
             )
             return
 
+    if not observed and (now - deployment.updated_at).total_seconds() > float(
+        max(60, int(getattr(deployment, "no_quorum_timeout_s", 1800)))
+    ):
+        deployment.status = DEPLOYMENT_STATUS_HALTED
+        deployment.halt_reason = "no_quorum_timeout_exceeded"
+        deployment.updated_at = now
+        _event(
+            session,
+            deployment_id=deployment.id,
+            event_type="deployment.halted",
+            details={"reason": "no_quorum_timeout_exceeded", "stage": current_stage},
+        )
+        return
+
+    if (
+        observed
+        and len(observed) != len(stage_targets)
+        and (now - deployment.updated_at).total_seconds()
+        > float(
+            max(
+                60,
+                int(getattr(deployment, "stage_timeout_s", getattr(deployment, "no_quorum_timeout_s", 1800))),
+            )
+        )
+    ):
+        deployment.status = DEPLOYMENT_STATUS_HALTED
+        deployment.halt_reason = "stage_timeout_exceeded"
+        deployment.updated_at = now
+        _event(
+            session,
+            deployment_id=deployment.id,
+            event_type="deployment.halted",
+            details={"reason": "stage_timeout_exceeded", "stage": current_stage},
+        )
+        return
+
     if len(observed) != len(stage_targets):
         return
 
     if current_stage + 1 < len(stages):
         deployment.stage = current_stage + 1
-        deployment.updated_at = utcnow()
+        deployment.updated_at = now
         _event(
             session,
             deployment_id=deployment.id,
@@ -463,7 +596,7 @@ def _evaluate_rollout_progress(session: Session, *, deployment: Deployment) -> N
 
     deployment.status = DEPLOYMENT_STATUS_COMPLETED
     deployment.halt_reason = None
-    deployment.updated_at = utcnow()
+    deployment.updated_at = now
     _event(
         session,
         deployment_id=deployment.id,
@@ -481,6 +614,34 @@ def get_deployment(session: Session, *, deployment_id: str) -> Deployment | None
     )
 
 
+def list_deployments(
+    session: Session,
+    *,
+    limit: int = 200,
+    status: str | None = None,
+    manifest_id: str | None = None,
+    selector_channel: str | None = None,
+) -> list[Deployment]:
+    q = session.query(Deployment).options(joinedload(Deployment.manifest))
+    if status:
+        q = q.filter(Deployment.status == status)
+    if manifest_id:
+        q = q.filter(Deployment.manifest_id == manifest_id)
+    rows = q.order_by(Deployment.created_at.desc()).limit(max(1, min(limit, 2000))).all()
+    if selector_channel:
+        channel = selector_channel.strip()
+        if not channel:
+            return rows
+        return [
+            row
+            for row in rows
+            if isinstance(row.target_selector, dict)
+            and str(row.target_selector.get("mode") or "").strip().lower() == "channel"
+            and str(row.target_selector.get("channel") or "").strip() == channel
+        ]
+    return rows
+
+
 def list_deployment_events(
     session: Session, *, deployment_id: str, limit: int = 500
 ) -> list[DeploymentEvent]:
@@ -494,15 +655,32 @@ def list_deployment_events(
 
 
 def list_deployment_targets(
-    session: Session, *, deployment_id: str, limit: int = 5000
-) -> list[DeploymentTarget]:
-    return (
-        session.query(DeploymentTarget)
-        .filter(DeploymentTarget.deployment_id == deployment_id)
-        .order_by(DeploymentTarget.device_id.asc())
+    session: Session,
+    *,
+    deployment_id: str,
+    status: str | None = None,
+    search: str | None = None,
+    limit: int = 5000,
+    offset: int = 0,
+) -> tuple[list[DeploymentTarget], int]:
+    q = session.query(DeploymentTarget).filter(DeploymentTarget.deployment_id == deployment_id)
+    if status:
+        q = q.filter(DeploymentTarget.status == status)
+    if search:
+        pattern = f"%{search.strip()}%"
+        q = q.filter(
+            (DeploymentTarget.device_id.ilike(pattern))
+            | (DeploymentTarget.failure_reason.ilike(pattern))
+            | (DeploymentTarget.status.ilike(pattern))
+        )
+    total = int(q.with_entities(func.count()).scalar() or 0)
+    rows = (
+        q.order_by(DeploymentTarget.device_id.asc())
+        .offset(max(0, int(offset)))
         .limit(max(1, min(limit, 20_000)))
         .all()
     )
+    return rows, total
 
 
 def get_pending_update_command(
@@ -512,6 +690,11 @@ def get_pending_update_command(
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
     ts = now or utcnow()
+    device = session.query(Device).filter(Device.device_id == device_id).one_or_none()
+    if device is None:
+        return None
+    if bool(getattr(device, "ota_is_development", False)):
+        return None
     row = (
         session.query(DeploymentTarget, Deployment, ReleaseManifest)
         .join(Deployment, Deployment.id == DeploymentTarget.deployment_id)
@@ -530,11 +713,21 @@ def get_pending_update_command(
     if row is None:
         return None
     target, deployment, manifest = row
+    locked_manifest_id = str(getattr(device, "ota_locked_manifest_id", "") or "").strip() or None
+    if locked_manifest_id is not None and manifest.id != locked_manifest_id:
+        return None
     return {
         "deployment_id": deployment.id,
         "manifest_id": manifest.id,
         "git_tag": manifest.git_tag,
         "commit_sha": manifest.commit_sha,
+        "update_type": manifest.update_type,
+        "artifact_uri": manifest.artifact_uri,
+        "artifact_size": int(manifest.artifact_size),
+        "artifact_sha256": manifest.artifact_sha256,
+        "artifact_signature": manifest.artifact_signature,
+        "artifact_signature_scheme": manifest.artifact_signature_scheme,
+        "compatibility": dict(manifest.compatibility or {}),
         "issued_at": deployment.updated_at,
         "expires_at": deployment.command_expires_at,
         "signature": manifest.signature,
@@ -543,6 +736,8 @@ def get_pending_update_command(
         "health_timeout_s": deployment.health_timeout_s,
         "power_guard_required": deployment.power_guard_required,
         "target_status": target.status,
+        "updates_enabled": bool(getattr(device, "ota_updates_enabled", True)),
+        "busy_reason": getattr(device, "ota_busy_reason", None),
     }
 
 
@@ -560,6 +755,7 @@ def update_command_etag_fragment(
         f"{pending['manifest_id']}:"
         f"{pending['git_tag']}:"
         f"{pending['commit_sha']}:"
+        f"{pending['artifact_sha256']}:"
         f"{pending['expires_at'].isoformat()}"
     )
 
@@ -638,17 +834,37 @@ def report_device_update(
     if normalized_state == TARGET_STATUS_HEALTHY:
         release_state.current_tag = manifest.git_tag
         release_state.current_commit = manifest.commit_sha
+        release_state.current_manifest_id = manifest.id
+        release_state.current_artifact_sha256 = manifest.artifact_sha256
+        release_state.pending_manifest_id = None
+        release_state.pending_artifact_sha256 = None
         release_state.last_healthy_at = ts
         release_state.last_deployment_id = deployment.id
         release_state.updated_at = ts
     elif normalized_state == TARGET_STATUS_FAILED:
         release_state.last_failed_tag = manifest.git_tag
+        release_state.last_failed_manifest_id = manifest.id
         release_state.rollback_tag = deployment.rollback_to_tag
+        release_state.last_deployment_id = deployment.id
+        release_state.updated_at = ts
+    elif normalized_state in {
+        TARGET_STATUS_DOWNLOADING,
+        TARGET_STATUS_DOWNLOADED,
+        TARGET_STATUS_VERIFYING,
+        TARGET_STATUS_APPLYING,
+        TARGET_STATUS_STAGED,
+        TARGET_STATUS_SWITCHING,
+        TARGET_STATUS_RESTARTING,
+    }:
+        release_state.pending_manifest_id = manifest.id
+        release_state.pending_artifact_sha256 = manifest.artifact_sha256
         release_state.last_deployment_id = deployment.id
         release_state.updated_at = ts
     elif normalized_state == TARGET_STATUS_ROLLED_BACK:
         if deployment.rollback_to_tag:
             release_state.current_tag = deployment.rollback_to_tag
+        release_state.pending_manifest_id = None
+        release_state.pending_artifact_sha256 = None
         release_state.last_deployment_id = deployment.id
         release_state.updated_at = ts
 

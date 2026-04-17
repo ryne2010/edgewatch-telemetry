@@ -7,19 +7,22 @@ export type PageProps = {
   actions?: React.ReactNode
   children: React.ReactNode
   className?: string
+  contentClassName?: string
 }
 
-export function Page({ title, description, actions, children, className }: PageProps) {
+export function Page({ title, description, actions, children, className, contentClassName }: PageProps) {
   return (
-    <div className={cn('space-y-6', className)}>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-          {description ? <div className="text-sm text-muted-foreground">{description}</div> : null}
+    <div className={cn('w-full', className)}>
+      <div className={cn('mx-auto box-border w-full max-w-7xl space-y-6 px-4 py-6', contentClassName)}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+            {description ? <div className="text-sm text-muted-foreground">{description}</div> : null}
+          </div>
+          {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
         </div>
-        {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+        {children}
       </div>
-      {children}
     </div>
   )
 }

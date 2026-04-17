@@ -38,10 +38,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
     <div
       className={cn(
         'rounded-md border bg-card text-card-foreground',
-        'overflow-x-auto overflow-y-auto',
+        'overflow-x-auto',
+        props.height == null ? '' : 'overflow-y-auto',
         props.className,
       )}
-      style={{ height: props.height ?? 520 }}
+      style={props.height == null ? undefined : { height: props.height }}
     >
       <table className="w-full min-w-full table-fixed text-sm">
         <thead className="sticky top-0 z-10 bg-card">

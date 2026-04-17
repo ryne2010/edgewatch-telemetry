@@ -112,7 +112,7 @@ export function AppShell(props: AppShellProps) {
   }, [props.nav, props.adminEnabled, adminAccess])
 
   return (
-    <div className="h-screen overflow-hidden bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:border focus:bg-background focus:px-3 focus:py-2"
@@ -120,9 +120,9 @@ export function AppShell(props: AppShellProps) {
         Skip to content
       </a>
 
-      <div className="flex h-full overflow-hidden">
+      <div className="flex min-h-screen">
         {/* Desktop sidebar */}
-        <aside className="sticky top-0 hidden h-screen w-64 flex-col border-r bg-card lg:flex">
+        <aside className="sticky top-0 hidden h-screen w-64 flex-col self-start border-r bg-card lg:flex">
           <div className="flex items-center gap-2 px-4 py-4">
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold tracking-tight">{props.appName}</div>
@@ -180,10 +180,10 @@ export function AppShell(props: AppShellProps) {
         </aside>
 
         {/* Main column */}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col">
           {/* Mobile header */}
           <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur lg:hidden">
-            <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+            <div className="mx-auto flex w-full max-w-7xl box-border items-center gap-3 px-4 py-3">
               <Button
                 variant="outline"
                 size="sm"
@@ -282,12 +282,12 @@ export function AppShell(props: AppShellProps) {
             </div>
           ) : null}
 
-          <main id="main" className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col overflow-y-auto px-4 py-6">
+          <main id="main" className="min-w-0 flex-1">
             {props.children}
           </main>
 
           <footer className="border-t">
-            <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 text-xs text-muted-foreground">
+            <div className="mx-auto flex w-full max-w-7xl box-border items-center justify-between gap-3 px-4 py-4 text-xs text-muted-foreground">
               <span>EdgeWatch Telemetry</span>
               <span className="hidden sm:inline">Local-first • Cloud Run + RPi ready</span>
             </div>

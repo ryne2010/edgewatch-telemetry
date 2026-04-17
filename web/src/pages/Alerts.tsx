@@ -1,7 +1,7 @@
 import React from 'react'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Link, useLocation } from '@tanstack/react-router'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
 import { useDebouncedValue } from '@tanstack/react-pacer/debouncer'
 import { useAppSettings } from '../app/settings'
 import { api, type AlertOut, type NotificationEventOut } from '../api'
@@ -22,11 +22,16 @@ import {
 } from '../ui-kit'
 import { Sparkline } from '../ui/Sparkline'
 import type { Point } from '../ui/LineChart'
+import {
+  buildAlertsSearch,
+  buildHref,
+  type ResolutionFilter,
+  type SeverityFilter,
+  normalizeSearchString,
+  parseAlertsSearch,
+} from '../utils/filterUrlState'
 import { fmtAlertType, fmtDateTime, timeAgo } from '../utils/format'
-
-type SeverityFilter = 'all' | 'critical' | 'warning' | 'info'
 type SeverityKind = Exclude<SeverityFilter, 'all'>
-type ResolutionFilter = 'all' | 'open' | 'resolved'
 
 function sevKind(sev: string): SeverityKind {
   const s = (sev ?? '').toLowerCase()
@@ -97,31 +102,9 @@ function buildVolumeSeries(rows: AlertOut[], opts?: { hours?: number }) {
   }
 }
 
-function parseAlertsSearch(searchStr: string): { resolutionFilter: ResolutionFilter; severityFilter: SeverityFilter } {
-  const params = new URLSearchParams(searchStr.startsWith('?') ? searchStr.slice(1) : searchStr)
-  const rawSeverity = String(params.get('severity') ?? '').toLowerCase()
-  const severityFilter: SeverityFilter =
-    rawSeverity === 'critical' || rawSeverity === 'warning' || rawSeverity === 'info' ? rawSeverity : 'all'
-
-  const rawResolution = String(params.get('resolution') ?? '').toLowerCase()
-  if (rawResolution === 'open' || rawResolution === 'resolved' || rawResolution === 'all') {
-    return { resolutionFilter: rawResolution, severityFilter }
-  }
-
-  const rawResolvedOnly = String(params.get('resolvedOnly') ?? params.get('resolved_only') ?? '').toLowerCase()
-  if (rawResolvedOnly === '1' || rawResolvedOnly === 'true' || rawResolvedOnly === 'yes' || rawResolvedOnly === 'on') {
-    return { resolutionFilter: 'resolved', severityFilter }
-  }
-
-  const rawOpen = String(params.get('openOnly') ?? params.get('open_only') ?? '').toLowerCase()
-  if (rawOpen === '1' || rawOpen === 'true' || rawOpen === 'yes' || rawOpen === 'on') {
-    return { resolutionFilter: 'open', severityFilter }
-  }
-
-  return { resolutionFilter: 'all', severityFilter }
-}
-
 export function AlertsPage() {
+  const navigate = useNavigate()
+  const pathname = useLocation({ select: (s) => s.pathname })
   const searchStr = useLocation({ select: (s) => s.searchStr })
   const { adminKey } = useAppSettings()
   const qc = useQueryClient()
@@ -147,28 +130,45 @@ export function AlertsPage() {
     qc.invalidateQueries({ queryKey: ['admin'] })
   }, [qc, adminAuthMode, adminKey])
 
-  const [limit, setLimit] = React.useState(200)
   const initialSearchFilters = React.useMemo(() => parseAlertsSearch(searchStr), [searchStr])
+  const [limit, setLimit] = React.useState(initialSearchFilters.limit)
   const [resolutionFilter, setResolutionFilter] = React.useState<ResolutionFilter>(initialSearchFilters.resolutionFilter)
   const [severity, setSeverity] = React.useState<SeverityFilter>(initialSearchFilters.severityFilter)
-  const [typeFilter, setTypeFilter] = React.useState('all')
-  const [deviceFilterRaw, setDeviceFilterRaw] = React.useState('')
+  const [typeFilter, setTypeFilter] = React.useState(initialSearchFilters.typeFilter)
+  const [deviceFilterRaw, setDeviceFilterRaw] = React.useState(initialSearchFilters.deviceFilter)
   const [deviceFilter] = useDebouncedValue(deviceFilterRaw, { wait: 250 })
-  const [searchRaw, setSearchRaw] = React.useState('')
+  const [searchRaw, setSearchRaw] = React.useState(initialSearchFilters.search)
   const [search] = useDebouncedValue(searchRaw, { wait: 200 })
   const feedRef = React.useRef<HTMLDivElement | null>(null)
 
   React.useEffect(() => {
     const parsed = parseAlertsSearch(searchStr)
+    setLimit(parsed.limit)
     setResolutionFilter(parsed.resolutionFilter)
     setSeverity(parsed.severityFilter)
+    setTypeFilter(parsed.typeFilter)
+    setDeviceFilterRaw(parsed.deviceFilter)
+    setSearchRaw(parsed.search)
   }, [searchStr])
+
+  React.useEffect(() => {
+    const nextSearch = buildAlertsSearch({
+      resolutionFilter,
+      severityFilter: severity,
+      typeFilter,
+      deviceFilter,
+      search,
+      limit,
+    })
+    if (nextSearch === normalizeSearchString(searchStr)) return
+    navigate({ href: buildHref(pathname, nextSearch), replace: true })
+  }, [resolutionFilter, severity, typeFilter, deviceFilter, search, limit, searchStr, pathname, navigate])
 
   type Cursor = { before: string; before_id: string }
   const queryOpenOnly = resolutionFilter === 'open'
 
   const q = useInfiniteQuery({
-    queryKey: ['alerts', { pageSize: limit, resolutionFilter, severity, typeFilter, deviceFilter }],
+    queryKey: ['alerts', { pageSize: limit, resolutionFilter, severity, typeFilter, deviceFilter, search }],
     initialPageParam: undefined as Cursor | undefined,
     queryFn: ({ pageParam }) =>
       api.alerts({
@@ -177,6 +177,7 @@ export function AlertsPage() {
         severity: severity === 'all' ? undefined : severity,
         alert_type: typeFilter === 'all' ? undefined : typeFilter,
         device_id: deviceFilter.trim() || undefined,
+        q: search.trim() || undefined,
         before: pageParam?.before,
         before_id: pageParam?.before_id,
       }),
@@ -196,14 +197,12 @@ export function AlertsPage() {
   }, [rows])
 
   const filtered = React.useMemo(() => {
-    const s = search.trim().toLowerCase()
     return rows.filter((a) => {
       if (resolutionFilter === 'open' && a.resolved_at) return false
       if (resolutionFilter === 'resolved' && !a.resolved_at) return false
-      if (!s) return true
-      return `${a.device_id} ${a.alert_type} ${a.message}`.toLowerCase().includes(s)
+      return true
     })
-  }, [rows, search, resolutionFilter])
+  }, [rows, resolutionFilter])
 
   const scrollToFeed = React.useCallback(() => {
     feedRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })

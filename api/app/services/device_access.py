@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..auth.principal import Principal
 from ..config import settings
-from ..models import DeviceAccessGrant
+from ..models import DeviceAccessGrant, FleetAccessGrant, FleetDeviceMembership
 
 
 _ACCESS_ROLE_ORDER: dict[str, int] = {
@@ -45,10 +45,19 @@ def accessible_device_ids_subquery(
         return None
 
     allowed_roles = _allowed_access_roles(min_access_role)
-    return session.query(DeviceAccessGrant.device_id).filter(
+    direct = session.query(DeviceAccessGrant.device_id).filter(
         DeviceAccessGrant.principal_email == principal.email.lower(),
         DeviceAccessGrant.access_role.in_(allowed_roles),
     )
+    fleet_scoped = (
+        session.query(FleetDeviceMembership.device_id)
+        .join(FleetAccessGrant, FleetAccessGrant.fleet_id == FleetDeviceMembership.fleet_id)
+        .filter(
+            FleetAccessGrant.principal_email == principal.email.lower(),
+            FleetAccessGrant.access_role.in_(allowed_roles),
+        )
+    )
+    return direct.union(fleet_scoped)
 
 
 def ensure_device_access(
@@ -70,7 +79,18 @@ def ensure_device_access(
         .one_or_none()
     )
     if row is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="device access denied")
+        row = (
+            session.query(FleetAccessGrant.access_role)
+            .join(FleetDeviceMembership, FleetDeviceMembership.fleet_id == FleetAccessGrant.fleet_id)
+            .filter(
+                FleetDeviceMembership.device_id == device_id,
+                FleetAccessGrant.principal_email == principal.email.lower(),
+            )
+            .order_by(FleetAccessGrant.access_role.desc())
+            .first()
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="device access denied")
 
     granted = normalize_access_role(row[0])
     allowed_roles = _allowed_access_roles(min_access_role)

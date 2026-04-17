@@ -1,5 +1,1773 @@
 # Change Summary
 
+## OTA governance operator UX (2026-04-17)
+
+### What changed
+
+- Added direct per-device OTA governance controls to the device detail page:
+  - rollout channel
+  - updates enabled / disabled
+  - busy reason
+  - development-device posture
+  - manifest lock selection from known release manifests
+- Added fleet-level OTA governance controls to the fleets page:
+  - edit a fleet default OTA channel
+  - apply the fleet channel to all current fleet members
+- Fixed the admin device patch route so explicitly-sent `null` values can clear:
+  - `ota_busy_reason`
+  - `ota_locked_manifest_id`
+- Added regression coverage for clearing those OTA governance fields through the admin route.
+
+### Why it changed
+
+- The earlier backend/platform work exposed OTA governance and channel concepts, but operators still had to use raw admin forms or APIs to act on them.
+- Particle-style parity requires these controls to be directly operable from the day-to-day device and fleet workflows, not just technically present.
+- Clearing busy/lock fields is part of real rollback and recovery work; treating `null` as “field absent” made the UI incomplete.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Fleet “apply channel to fleet devices” currently performs per-device admin updates from the UI; it is operationally useful now, but a dedicated bulk backend endpoint would scale better for very large fleets.
+- Fleet default-channel edits change the governance default immediately, but channel application to existing devices remains an explicit operator step by design.
+
+## Cellular cost-cap operator workflow (2026-04-17)
+
+### What changed
+
+- Expanded the cellular operator page with a writable cost-cap policy section.
+- Added live display of the current shared edge-policy cost caps for:
+  - daily bytes
+  - daily media uploads
+  - daily snapshots
+- Added operator controls on the cellular page for:
+  - conservative / balanced / aggressive presets
+  - direct editing of the three cap values
+  - saving those values through the existing edge-policy YAML contract path
+- Kept the existing fleet-health cellular table and focus filters intact while making the page actionable.
+
+### Why it changed
+
+- The approved Particle-parity plan still had a gap around broader cellular quota and cost workflows.
+- Operators diagnosing cap-triggered throttling should be able to inspect and change the shared cellular budget posture from the same page, not bounce between diagnosis and a separate settings editor.
+- Reusing the existing edge-policy contract update path keeps cellular policy edits on the canonical configuration surface instead of introducing a second backend contract.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Cellular cost-cap edits still operate on the shared global edge policy, not per-fleet or per-device policy overlays.
+- The page now makes quota editing easier, but it does not yet add historical cost analytics, per-SIM billing data, or carrier-specific control integrations.
+
+## Release rollout discovery UX (2026-04-17)
+
+### What changed
+
+- Added an admin deployment listing route:
+  - `GET /api/v1/admin/deployments`
+  - supports filtering by `status`, `manifest_id`, and `selector_channel`
+- Added backend support for listing deployments with manifest preload and current target counts.
+- Added Admin UI support for:
+  - manifest status filtering
+  - recent deployment filtering by status and channel
+  - clicking a recent deployment row to load the existing detailed deployment inspector
+- Added regression coverage for channel-filtered deployment listing.
+- Updated the OTA runbook to include the new deployment discovery path.
+
+### Why it changed
+
+- Operators previously needed a deployment UUID ahead of time to inspect rollout state, which made release operations too dependent on external copy/paste and admin-event spelunking.
+- Particle-style parity expects rollout operations to be discoverable and inspectable from the console itself, not only through direct object lookup.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Deployment listing currently computes per-row target counts on read, which is acceptable now but could need optimization for very large rollout histories.
+- Release promotion is still represented through manifest status and channel-targeted deployments rather than a richer first-class promotion workflow.
+
+## Manifest promotion controls (2026-04-17)
+
+### What changed
+
+- Added a narrow release-manifest update route:
+  - `PATCH /api/v1/admin/releases/manifests/{manifest_id}`
+  - currently supports status transitions through the admin API
+- Added regression coverage for manifest status updates.
+- Added Admin UI manifest actions for:
+  - `Draft`
+  - `Promote`
+  - `Retire`
+- Updated the OTA runbook to document first-class manifest promotion / retirement.
+
+### Why it changed
+
+- Release promotion was still too implicit and form-driven even after the deployment discovery work.
+- Operators needed a direct way to move manifests between lifecycle states without recreating them or treating status as an informal convention.
+- This is a concrete step toward richer release-channel operations while keeping the API additive and narrow.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Manifest lifecycle is still status-based rather than a fuller release-promotion model with approvals, provenance chains, or environment promotion history.
+- The current UI exposes the most common status transitions only; it does not yet provide a dedicated release-management page or promotion audit timeline.
+
+## Operator CLI release coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` release operations to cover newer admin surfaces:
+  - `releases manifests-list --status ...`
+  - `releases manifests-update-status --manifest-id ... --status ...`
+  - `releases deployments-list --status ... --manifest-id ... --selector-channel ...`
+- Added regression tests for:
+  - manifest status update request shaping
+  - deployment list request shaping with filters
+
+### Why it changed
+
+- The approved parity plan still had a CLI/operator tooling gap.
+- The UI now exposes richer release operations, but operators also need scriptable access for local workflows, smoke runs, and automation without dropping to raw HTTP requests.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- CLI coverage is materially better now, but it still is not exhaustive across every new platform surface.
+- The CLI remains a thin HTTP wrapper and does not yet add higher-level rollout helpers, wait/poll flows, or bulk operational scripting primitives.
+
+## Operator CLI rollout control coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` rollout lifecycle support with:
+  - `releases deployment-pause`
+  - `releases deployment-resume`
+  - `releases deployment-abort --reason ...`
+- Added regression tests for pause and abort request shaping in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- The CLI could inspect and create deployments, but it still could not fully operate them.
+- Closing that gap makes the CLI a more realistic operator surface for scripted rollout control, not just read/create flows.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- CLI rollout control is still intentionally thin; it does not yet provide guided safety prompts, waiter loops, or rollout summary/diff views.
+
+## Deployment target inspector UX (2026-04-17)
+
+### What changed
+
+- Expanded the Admin deployment detail view with a filtered deployment-target table.
+- Added operator filters for:
+  - target status
+  - device/failure search
+- Surfaced deployment target details directly in the rollout inspector:
+  - device ID
+  - assigned stage
+  - status
+  - last report timestamp
+  - failure reason
+
+### Why it changed
+
+- Rollout discovery and control had improved, but diagnosis still depended too heavily on raw event JSON.
+- Particle-style parity requires per-target rollout inspection to be directly operable from the console, especially for failed, deferred, or partially healthy deployments.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The target table is driven from the existing deployment detail payload, so very large deployments still rely on the current full-detail response shape rather than a paginated target API.
+
+## Paginated deployment target API (2026-04-17)
+
+### What changed
+
+- Added a paginated admin route for deployment targets:
+  - `GET /api/v1/admin/deployments/{deployment_id}/targets`
+  - supports `status`, `q`, `limit`, and `offset`
+- Added backend filtering and total-count support for deployment targets.
+- Switched the Admin deployment target table to use the new paginated endpoint instead of reading all targets from the full deployment detail payload.
+- Added regression coverage for filtered/paginated deployment-target reads.
+
+### Why it changed
+
+- The earlier deployment inspector improvement still depended on the full deployment detail response carrying every target row.
+- This slice reduces that coupling and moves the rollout inspector toward a more scalable read path for larger deployments.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The UI currently uses the paginated endpoint with a fixed first page (`limit=200`, `offset=0`) and filters, so true multi-page navigation is still a follow-up.
+- Deployment detail still includes the legacy embedded `targets` array for compatibility; fully slimming that payload would be a separate compatibility decision.
+
+## Deployment target paging UX (2026-04-17)
+
+### What changed
+
+- Added target-page controls to the Admin deployment inspector:
+  - page size selector (`50`, `100`, `200`)
+  - previous / next page controls
+  - visible range display (`start-end of total`)
+- Wired the target table to page through the new paginated target API instead of remaining fixed at the first page.
+
+### Why it changed
+
+- The paginated backend route reduced payload coupling, but the UI still behaved like a fixed first-page view.
+- This closes the loop so larger deployments can actually be inspected across multiple pages from the operator console.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Pagination is still offset-based and local to the current filter set; there is not yet a deep-linkable or cursor-based target inspector.
+
+## Server-side live stream filtering (2026-04-17)
+
+### What changed
+
+- Extended the SSE event stream route to support server-side:
+  - `source_kind`
+  - `event_name`
+- Preserved backward compatibility with the older `event_type` source-category aliases.
+- Updated the Live page to subscribe using the new server-side filters instead of only filtering in the browser after subscribing to everything.
+- Fixed stream cursor timestamp normalization so SQLite-backed naive timestamps do not break the SSE loop.
+- Added regression coverage for source-kind and event-name stream filtering.
+
+### Why it changed
+
+- The Live page previously narrowed events mostly on the client, which is wasteful and does not move the platform toward higher-scale streaming behavior.
+- This slice reduces unnecessary event fan-in and makes the live stream UI a better fit for larger event volumes while keeping the current SSE surface.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Streaming is still poll-based SSE under the hood rather than a more scalable push/broker architecture.
+- The current filter surface improves selectivity, but it does not yet add resumable cursors or historical replay windows to the live stream endpoint.
+
+## Dedicated releases workspace (2026-04-17)
+
+### What changed
+
+- Added a dedicated Releases page at `/releases`.
+- Wired the page into routing and primary navigation.
+- The page provides a focused operator workspace for:
+  - manifest filtering and lifecycle actions
+  - deployment filtering and selection
+  - deployment pause/resume/abort controls
+  - paged target inspection
+  - recent deployment event review
+
+### Why it changed
+
+- Release operations were still concentrated inside the generic Admin page, which kept rollout work overly admin-centric.
+- This dedicated workspace moves the product closer to a first-class release-management surface without requiring a separate backend contract.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Release creation still lives in the Admin page; the new Releases page currently focuses on lifecycle management and rollout inspection rather than the initial publish form.
+
+## End-to-end releases workspace (2026-04-17)
+
+### What changed
+
+- Expanded the dedicated `/releases` workspace so it now supports:
+  - release manifest creation
+  - deployment creation
+  - manifest lifecycle actions
+  - deployment lifecycle actions
+  - paged target inspection
+  - recent deployment event review
+- This closes the earlier gap where the Releases page still depended on Admin for initial publish/deploy actions.
+
+### Why it changed
+
+- Release management was still split awkwardly between the new Releases page and the older Admin form.
+- An operator-facing release workspace should cover the full release lifecycle, not just post-creation inspection and intervention.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Admin still contains overlapping release forms; this is now duplication rather than a missing capability, and consolidation is a future cleanup choice.
+
+## Operator CLI target paging + live stream reads (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `releases deployment-targets-list`
+  - `live-stream`
+- `deployment-targets-list` supports paged target inspection with:
+  - `--status`
+  - `--query`
+  - `--limit`
+  - `--offset`
+- `live-stream` supports filtered SSE reads with:
+  - `--device-id`
+  - `--source-kinds`
+  - `--event-name`
+  - `--max-events`
+  - `--timeout-s`
+- Added regression tests for both request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- The CLI still lagged behind the newer paginated rollout-inspection and server-filtered live-stream surfaces.
+- This closes another part of the operator-tooling gap without inventing a separate CLI-only backend.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The live-stream CLI is still a thin SSE reader, not a durable tail/follow workflow with cursors or reconnection state.
+
+## Concrete system-image updater wrappers (2026-04-17)
+
+### What changed
+
+- Added repo-owned helper scripts:
+  - [scripts/ota/system_image_updater.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/scripts/ota/system_image_updater.py)
+  - [scripts/ota/system_image_rollback.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/scripts/ota/system_image_rollback.py)
+- The apply wrapper now:
+  - validates the agent-provided artifact path and SHA-256
+  - stages the artifact under `EDGEWATCH_SYSTEM_IMAGE_STAGE_DIR`
+  - writes per-manifest `metadata.json`
+  - updates `latest.json`
+  - optionally invokes a stage hook
+- The rollback wrapper now:
+  - reads the staged `latest.json`
+  - records a rollback request marker
+  - optionally invokes a rollback hook
+- Added regression coverage in [tests/test_system_image_updater_scripts.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_system_image_updater_scripts.py).
+- Updated [docs/RUNBOOKS/OTA_UPDATES.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/OTA_UPDATES.md) to document the repo-default wrapper commands.
+
+### Why it changed
+
+- The `system_image` OTA path previously depended on a completely unspecified external command contract.
+- This does not replace real updater/hardware validation, but it makes the integration surface concrete, documented, and testable inside the repo.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These wrappers stage and annotate artifacts; they do not by themselves implement a production-grade partition switch, bootloader integration, or proven rollback on Raspberry Pi hardware.
+- Real hardware validation is still required before claiming production-ready `system_image` OTA parity.
+
+## Default system-image wrapper fallback (2026-04-17)
+
+### What changed
+
+- Updated the agent so `system_image` apply now falls back to the repo-owned wrapper automatically when `EDGEWATCH_SYSTEM_IMAGE_APPLY_CMD` is unset and the wrapper script is present.
+- Updated boot-health timeout rollback so it similarly falls back to the repo-owned rollback wrapper when `EDGEWATCH_SYSTEM_IMAGE_ROLLBACK_CMD` is unset and the wrapper script is present.
+- Added agent-side regression coverage for both fallback paths in [tests/test_agent_update_delivery.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_agent_update_delivery.py).
+- Updated the OTA runbook to document that these wrappers are now the default fallback contract, not just optional examples.
+
+### Why it changed
+
+- The prior wrapper scripts made the integration contract concrete, but the agent still required explicit env wiring to use them.
+- This makes the repo-owned path the practical default and reduces the amount of undocumented glue required to exercise `system_image` OTA in development and controlled validation lanes.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- This improves default wiring, but it does not change the fundamental truth that real bootloader/partition/hardware validation is still required before claiming production-ready `system_image` OTA support.
+
+## Admin/Releases consolidation (2026-04-17)
+
+### What changed
+
+- Removed the duplicate release-management surface from [web/src/pages/Admin.tsx](/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Admin.tsx).
+- Admin now links operators to the dedicated Releases workspace instead of carrying a second copy of:
+  - manifest publish
+  - manifest lifecycle controls
+  - deployment creation
+  - deployment lifecycle controls
+  - rollout target inspection
+
+### Why it changed
+
+- Once the dedicated Releases page became end-to-end, the Admin copy turned into fragmentation rather than redundancy with value.
+- Consolidating onto one operator path reduces UI sprawl and makes the release workflow easier to reason about.
+
+### Validation
+
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- This is a UX consolidation only; no release-management API capability was removed.
+- Admin still retains broad operational controls, but Releases is now the intended operator surface for OTA lifecycle work.
+
+## Server-side search entity filters (2026-04-17)
+
+### What changed
+
+- Added server-side `entity_type` filtering to `/api/v1/search`.
+- Updated the System page search UI to send explicit entity-type filters instead of always searching across every entity class.
+- Expanded the operator CLI `search` command with `--entity-types`.
+- Added regression coverage for both the route and CLI request shapes.
+
+### Why it changed
+
+- Search was still an all-entities mixed result set with no server-side narrowing.
+- This improves selectivity and moves the search surface a step closer to a more scalable/operator-friendly query model.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Search remains a simple filtered query API rather than a ranked/full-text search service with deeper query semantics.
+
+## Paged unified search (2026-04-17)
+
+### What changed
+
+- Added `offset` support to `/api/v1/search` while preserving the current list-shaped response.
+- Updated the System page search UI to support previous/next page navigation.
+- Expanded the CLI `search` command with `--offset`.
+- Added regression coverage for both route-side and CLI-side pagination request behavior.
+
+### Why it changed
+
+- Even with entity-type filters, search was still a single capped result page.
+- This is a pragmatic step toward more scalable operator search without forcing an immediate response-shape break.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Search pagination is still offset-based over a mixed-entity result set and does not provide total counts, cursors, or strong ranking guarantees.
+
+## Deployment deep-linking into Releases (2026-04-17)
+
+### What changed
+
+- Added route-search support on `/releases` for selected deployment and manifest IDs.
+- Updated the Releases page to hydrate its selected deployment/manifest from route search state.
+- Updated search-result navigation so deployment hits open directly into the Releases workspace instead of falling back to unrelated pages.
+- Updated the Admin handoff link to the Releases workspace to use the explicit route-search contract.
+
+### Why it changed
+
+- Search and navigation should drop operators into the relevant rollout context, not force them to re-find the same deployment after navigating.
+- This improves operator flow without adding another backend surface.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Deep linking is still limited to deployment/manifest selection; it does not yet preserve richer UI filter/paging state for the full Releases workspace.
+
+## Live stream replay window (2026-04-17)
+
+### What changed
+
+- Added `since_seconds` support to `/api/v1/event-stream`.
+- Updated the Live page to expose a replay window input and pass it server-side.
+- Expanded the CLI `live-stream` command with `--since-seconds`.
+- Added regression coverage for recent-event replay behavior and CLI request shaping.
+
+### Why it changed
+
+- The live stream previously behaved only as “tail from now,” which is weak for operator workflows and incident review.
+- A small replay window makes the existing SSE surface more useful without introducing a separate historical-stream API.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Replay is still bounded by a simple relative window and uses the same poll-based SSE implementation; it is not a durable cursor/replay protocol.
+
+## Release-manifest search results (2026-04-17)
+
+### What changed
+
+- Added `release_manifest` as a first-class unified-search entity.
+- The backend search route now returns matching release manifests for admin users.
+- The System page search UI now includes release manifests in its default entity-type set.
+- Search results for release manifests now deep-link into the Releases workspace with the selected manifest.
+- The CLI `search --entity-types` path now supports `release_manifest`.
+- Added regression coverage for both route and CLI search behavior.
+
+### Why it changed
+
+- Release discovery in search was still deployment-only, which made manifest lookup incomplete for operator workflows.
+- This closes another part of the release-management discoverability gap without introducing a separate manifest-search endpoint.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Manifest search is still part of the same mixed-entity search surface, so it inherits the current ranking and pagination limitations of unified search.
+
+## Total-aware search page API (2026-04-17)
+
+### What changed
+
+- Added a new paged search response endpoint:
+  - `GET /api/v1/search-page`
+  - returns `items`, `total`, `limit`, and `offset`
+- Updated the System page to use this response so pagination can show real totals instead of inferring from page size.
+- Added route-side regression coverage for the new page response contract.
+
+### Why it changed
+
+- Offset pagination on the old list-only search API forced the UI to guess whether more results existed.
+- This keeps the original `/api/v1/search` response shape intact while providing a clearer path for richer search UX.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- `search-page` still computes over the same mixed-entity search model and is not yet a true full-text or cursor-based search system.
+
+## Paged operator-events feed (2026-04-17)
+
+### What changed
+
+- Added a new unified event-history endpoint:
+  - `GET /api/v1/operator-events`
+  - supports mixed alert/device_event/procedure_invocation history
+  - supports `device_id`, `source_kind`, `event_name`, `limit`, and `offset`
+- Added shared client types and fetch support in [web/src/api.ts](/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts).
+- Updated the Live page to show a paged recent-history view alongside the SSE tail.
+- Expanded the CLI with `operator-events`.
+- Added route-side and CLI regression coverage.
+
+### Why it changed
+
+- The platform had a live stream, but no unified paged event-history surface to complement it.
+- This is a meaningful step toward a more capable operator event architecture without jumping straight to a larger streaming system redesign.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- `operator-events` still uses an offset-based mixed-source aggregation model and is not yet backed by a purpose-built event index or durable cursor system.
+
+## Deployment events in operator feeds (2026-04-17)
+
+### What changed
+
+- Added `deployment_event` support to both:
+  - `/api/v1/operator-events`
+  - `/api/v1/event-stream`
+- Updated shared client types to include deployment events.
+- Updated the Live page to:
+  - subscribe to deployment events by default
+  - show deployment events in recent history
+  - deep-link deployment-event history rows into the Releases workspace
+- Updated CLI defaults so both `live-stream` and `operator-events` include deployment events.
+- Added route-side and CLI regression coverage for the expanded event surface.
+
+### Why it changed
+
+- Release operations were still second-class in the operator event surfaces.
+- This closes an important gap between rollout control and event visibility by making deployment events first-class alongside alerts, device events, and procedure invocations.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Deployment-event history still shares the same mixed-source offset model as the rest of `operator-events`; it is not yet a dedicated rollout event timeline API with cursors or richer drill-down state.
+
+## Release-manifest lifecycle events in operator feeds (2026-04-17)
+
+### What changed
+
+- Added `release_manifest_event` support to both:
+  - `/api/v1/operator-events`
+  - `/api/v1/event-stream`
+- Release-manifest create/update admin audit entries are now visible through the operator event surfaces for admin users.
+- Updated shared client types and Live-page defaults to include release-manifest events.
+- Added deep links from release-manifest event history rows into the Releases workspace with the selected manifest.
+- Updated CLI defaults so `live-stream` and `operator-events` include `release_manifest_event`.
+- Added route-side and CLI regression coverage.
+
+### Why it changed
+
+- Release manifest lifecycle changes were still invisible in the main operator event surfaces even after deployment events became first-class.
+- This closes another release-ops visibility gap and makes the release lifecycle more observable without inventing a separate manifest event API.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Release-manifest events are currently sourced from admin audit rows and therefore remain admin-only in operator event surfaces.
+
+## Generic admin events in operator feeds (2026-04-17)
+
+### What changed
+
+- Added `admin_event` support to both:
+  - `/api/v1/operator-events`
+  - `/api/v1/event-stream`
+- Non-release admin audit rows now flow into the unified operator event surfaces for admin users.
+- Updated shared client types and Live-page defaults to include `admin_event`.
+- Added contextual Live-page linking for generic admin events back into Admin.
+- Updated CLI defaults so both `live-stream` and `operator-events` include `admin_event`.
+- Added route-side and CLI regression coverage.
+
+### Why it changed
+
+- Important admin-side policy and configuration changes were still outside the main operator event surfaces.
+- This closes another observability gap by making non-release admin mutations visible in the same live/history tools.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- `admin_event` is still sourced from audit rows and remains admin-only; it is not yet a broader multi-role operator timeline.
+
+## Deep-linkable Live filters (2026-04-17)
+
+### What changed
+
+- Added route-search support on `/live` for:
+  - `deviceId`
+  - `sourceKinds`
+  - `eventName`
+  - `sinceSeconds`
+- Updated the Live page to hydrate its filter state from route search.
+- Updated System-page search result navigation so event/procedure hits can open into a prefiltered Live view instead of a blank stream.
+
+### Why it changed
+
+- Operator search should land users in the relevant filtered stream context, not force them to re-enter the same filter state after navigation.
+- This improves operator flow without changing the underlying event APIs.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Live deep links currently preserve only core stream filters; they do not yet preserve paged history state or more advanced workspace context.
+
+## Admin audit/history CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `admin events`
+  - `admin notifications`
+  - `admin exports`
+- These commands now expose admin mutation audit, notification delivery audit, and analytics export history from the CLI.
+- Added regression coverage for all three request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Important audit/history surfaces still existed only in the web UI even after broader operator CLI expansion.
+- This closes another practical gap for scripted/admin-console workflows.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These remain thin list/read wrappers and do not yet add richer summarization or follow/wait workflows on top of the underlying audit endpoints.
+
+## Filtered admin audit lane (2026-04-17)
+
+### What changed
+
+- Added server-side filters to `GET /api/v1/admin/events`:
+  - `action`
+  - `target_type`
+  - `device_id`
+- Updated the Admin UI events tab to expose those filters.
+- Updated the CLI `admin events` command to pass the same filters.
+- Added regression coverage for both the route and CLI request behavior.
+
+### Why it changed
+
+- The admin audit stream had become too blunt as the platform surface expanded.
+- This makes the audit lane more usable for focused investigations without changing the underlying audit model.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The admin audit lane is still a simple list endpoint and does not yet support richer paging or full-text filtering.
+
+## Total-aware admin audit lane (2026-04-17)
+
+### What changed
+
+- Added `GET /api/v1/admin/events-page` with:
+  - `items`
+  - `total`
+  - `limit`
+  - `offset`
+- Updated the Admin UI events tab to use the paged response and show real totals with previous/next page controls.
+- Expanded the CLI with `admin events-page`.
+- Added regression coverage for the paged route and CLI request shape.
+
+### Why it changed
+
+- Even with filters, the admin audit lane was still a simple capped list with no total-aware pagination.
+- This is a meaningful step toward a more scalable/admin-friendly audit workflow without breaking the original list endpoint.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The admin audit lane is still offset-based and not yet backed by a more advanced search/index model.
+
+## Admin events in unified search (2026-04-17)
+
+### What changed
+
+- Added `admin_event` as a first-class unified-search entity for admin users.
+- Updated the System page search defaults and result routing so admin-event hits deep-link into the Admin events tab with relevant filters.
+- Added `/admin` route-search support for event-tab filter context and updated Admin to hydrate from that state.
+- Added route-side and CLI regression coverage for the new search entity and deep-link contract.
+
+### Why it changed
+
+- Important admin-side changes were filterable in the audit lane but still not searchable alongside the rest of the operator surface.
+- This closes another discoverability gap and makes admin audit changes navigable from unified search.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- `admin_event` search is still based on the current mixed-entity query model and inherits its ranking/pagination limitations.
+
+## Notification/export search entities (2026-04-17)
+
+### What changed
+
+- Added `notification_event` and `export_batch` as first-class unified-search entities for admin users.
+- Updated the System page search defaults and result routing so:
+  - notification audit hits deep-link into the Admin notifications tab
+  - export batch hits deep-link into the Admin exports tab
+- Added route-side regression coverage for the broader mixed search results.
+
+### Why it changed
+
+- Important admin-only audit/history surfaces were still absent from unified search.
+- This closes another search/discovery gap without adding new backend endpoints.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These new search entities still inherit the mixed-entity ranking and pagination limits of the unified search model.
+
+## Device admin CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `devices create`
+  - `devices update`
+  - `devices shutdown`
+- These commands now expose device registration, metadata/config updates, and admin shutdown intent from the CLI.
+- Added regression coverage for all three request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Important device-admin capabilities still existed only in the backend/UI even after broader operator CLI expansion.
+- This closes another practical operator-tooling breadth gap for scripted fleet administration.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These commands remain thin wrappers over the admin API and do not yet add interactive confirmation or higher-level safety rails.
+
+## Contextual event-history links (2026-04-17)
+
+### What changed
+
+- Updated the Live page so event-history rows and SSE rows now deep-link into the most relevant workspace for each event kind:
+  - alerts -> Alerts
+  - device events -> filtered Live
+  - procedure invocations -> filtered Live
+  - deployment events -> Releases
+  - release-manifest events -> Releases
+
+### Why it changed
+
+- Operator event surfaces should not be dead-end logs.
+- This improves navigation flow by turning the event feeds into actionable jump-off points rather than forcing manual re-filtering after every click.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py typecheck`
+
+### Risks / rollout notes
+
+- Event-history links preserve core context, but they still do not capture every possible local UI state or pagination detail in the destination workspace.
+
+## Ingestion/drift audit CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `admin ingestions`
+  - `admin drift-events`
+- These commands expose ingestion lineage and drift audit history from the CLI with optional device filtering.
+- Added regression coverage for both request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- The admin/history CLI surface was still missing two important audit lanes that were already available in the web UI.
+- This further narrows the operator-tooling breadth gap without adding any new backend contract.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These remain thin list/read wrappers and do not yet provide higher-level summaries or diffing across ingestion/drift history.
+
+## Explicit parity signoff docs (2026-04-17)
+
+### What changed
+
+- Added [docs/PARTICLE_PARITY_MATRIX.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/PARTICLE_PARITY_MATRIX.md) to explicitly map repo/platform status versus the Particle-style target surface.
+- Added [docs/RUNBOOKS/SYSTEM_IMAGE_HARDWARE_VALIDATION.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SYSTEM_IMAGE_HARDWARE_VALIDATION.md) as the final real-hardware signoff gate for `system_image` OTA.
+- Linked both from [docs/START_HERE.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/START_HERE.md).
+
+### Why it changed
+
+- The remaining blocker is now mostly operational proof on real hardware, not missing repo plumbing.
+- Making that explicit in-repo prevents the project from oscillating between “almost done” and “not clearly defined.”
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These docs do not replace the required real Pi validation itself; they only make the final acceptance gate explicit and auditable.
+
+## Hardware validation evidence helper (2026-04-17)
+
+### What changed
+
+- Added [scripts/ota/collect_system_image_validation_evidence.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/scripts/ota/collect_system_image_validation_evidence.py) to collect:
+  - agent update-state data
+  - staged system-image `latest.json`
+  - per-manifest metadata when present
+- Added regression coverage in [tests/test_system_image_validation_evidence_script.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_system_image_validation_evidence_script.py).
+- Updated [docs/RUNBOOKS/SYSTEM_IMAGE_HARDWARE_VALIDATION.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SYSTEM_IMAGE_HARDWARE_VALIDATION.md) and [docs/START_HERE.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/START_HERE.md) to reference the helper.
+
+### Why it changed
+
+- The remaining blocker is real Pi validation, so the repo should make evidence capture as concrete and repeatable as possible.
+- This reduces the remaining ambiguity around what operators should collect during hardware signoff.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- This helper collects evidence; it does not perform the hardware validation itself or prove reboot/rollback behavior.
+
+## Hardware validation evidence evaluator (2026-04-17)
+
+### What changed
+
+- Added [scripts/ota/evaluate_system_image_validation.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/scripts/ota/evaluate_system_image_validation.py) to evaluate collected `system_image` validation evidence for:
+  - `good_release`
+  - `rollback_drill`
+- Added regression coverage in [tests/test_system_image_validation_evaluator.py](/Users/ryneschroder/Developer/git/edgewatch-telemetry/tests/test_system_image_validation_evaluator.py).
+- Updated [docs/RUNBOOKS/SYSTEM_IMAGE_HARDWARE_VALIDATION.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/SYSTEM_IMAGE_HARDWARE_VALIDATION.md) and [docs/START_HERE.md](/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/START_HERE.md) to reference the evaluator.
+
+### Why it changed
+
+- The repo now has a clear evidence collection helper, but operators still needed a consistent way to judge whether the captured evidence is complete enough for review.
+- This makes the final non-hardware acceptance workflow more concrete and repeatable.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The evaluator only checks evidence completeness heuristically; it does not prove real reboot/apply/rollback behavior on its own.
+
+## Hardware validation CLI workflow (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `ota-validation collect`
+  - `ota-validation evaluate`
+  - `ota-validation run`
+- These commands wrap the repo-owned evidence collector/evaluator so the final `system_image` validation workflow is reachable from the same operator CLI surface as the rest of the platform.
+- Added regression coverage for the chained `run` workflow in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- The remaining blocker is real Pi validation, so the repo should make that last-mile workflow as operationally crisp as possible.
+- This reduces the remaining “glue work” around the final acceptance gate.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- This still does not replace actual hardware execution; it only consolidates the evidence workflow into one operator-facing command surface.
+
+## Access-management CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `fleets remove-device`
+  - `fleets access-list`
+  - `fleets revoke`
+  - `devices access-list`
+  - `devices access-grant`
+  - `devices access-revoke`
+- These commands now expose the remaining per-device and fleet access-management primitives from the CLI.
+- Added regression coverage for all new request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Access management was still incomplete in the CLI even though the backend and admin UI already supported it.
+- This closes another practical operator-tooling breadth gap for scripted fleet administration.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Access-management commands remain low-level wrappers and do not yet provide diff/preview flows or higher-level policy summaries.
+
+## Procedure-definition update CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with `procedures update`.
+- The CLI can now patch existing procedure definitions for:
+  - description
+  - timeout
+  - request schema
+  - response schema
+  - enabled/disabled state
+- Added regression coverage for the update request shape in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Procedure definitions were still create/list-only in the CLI even though the backend already supported updates.
+- This closes another operator-tooling gap for scripted device-cloud administration.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Procedure updates remain low-level patch operations; the CLI does not yet provide higher-level schema diff or validation helpers beyond basic JSON parsing.
+
+## Remaining fleet/device CLI breadth (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `fleets devices`
+  - `notification-destinations delete`
+  - `devices list`
+  - `fleets access-list`
+  - `fleets revoke`
+  - `fleets remove-device`
+  - `devices access-list`
+  - `devices access-grant`
+  - `devices access-revoke`
+- Added regression coverage for the new request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Several routine operator/admin actions were still missing from the CLI even though the backend supported them.
+- This materially reduces the remaining operator-tooling breadth gap without changing backend contracts.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These commands remain thin wrappers over the API and still do not provide richer guardrails, previews, or bulk workflow helpers.
+
+## Owner/operator controls CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `devices controls-get`
+  - `devices operation-set`
+  - `devices alerts-set`
+- These commands now expose the owner/operator device control flows from the CLI:
+  - read current control state
+  - set operation/runtime power mode
+  - set or clear alert mute windows
+- Added regression coverage for all three request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Important operator controls still existed only in the API/UI even after broader admin CLI expansion.
+- This closes another practical operator-tooling gap for scripted device operations.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These commands remain thin wrappers and do not yet add richer validation or safety flows for operator mistakes.
+
+## Edge-policy CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `admin edge-policy-source`
+  - `admin edge-policy-update`
+- These commands now expose the active edge-policy YAML source read/update workflow from the CLI.
+- Added regression coverage for both request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Edge policy management was still a backend/UI-only surface even after broader admin CLI expansion.
+- This closes another practical operator-tooling gap for policy-driven fleet operations.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The CLI currently replaces the YAML source text directly and does not yet offer structured field-level editing or schema-aware assistance.
+
+## Media CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `media list`
+  - `media download`
+- These commands now expose device-auth media listing and payload download from the CLI.
+- Added regression coverage for both request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Media operations were still only practically available in the web UI despite being part of the platform surface.
+- This closes another operator-tooling breadth gap for field/media workflows.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Media download is currently a direct file write helper and does not yet add richer file naming or preview workflows.
+
+## Alerts + telemetry CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `alerts`
+  - `telemetry`
+  - `timeseries`
+- These commands now expose the core read-side operator workflows for alerts, raw telemetry, and bucketed telemetry from the CLI.
+- Added regression coverage for all three request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Alerts and telemetry are core operator flows and still were not directly exposed in the CLI.
+- This closes another major operator-tooling breadth gap without changing any backend contracts.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These remain low-level read wrappers and do not yet add richer summaries, charting, or cursor/pagination helpers for large telemetry datasets.
+
+## Device/fleet read CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `devices get`
+  - `devices summary`
+  - `fleets devices`
+- These commands now expose direct device detail, fleet-friendly device summaries, and accessible fleet membership reads from the CLI.
+- Added regression coverage for all new request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- Even with alerts and telemetry added, the CLI still lacked a few foundational read-side operator workflows.
+- This closes another chunk of operator-tooling breadth without requiring any backend changes.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These remain direct API wrappers and do not yet provide richer fleet/device summaries beyond what the API already returns.
+
+## Public health/contracts CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `health`
+  - `contracts telemetry`
+  - `contracts edge-policy`
+- These commands now expose the core public platform diagnostics/contracts from the CLI.
+- Added regression coverage for all three request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- The CLI still lacked the platform’s most basic public diagnostic/configuration reads.
+- This closes another operator-tooling breadth gap without any backend changes.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- These are still direct read wrappers and do not yet provide richer human-oriented summaries on top of the raw contract data.
+
+## Total-aware search CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with `search-page`.
+- This exposes the newer total-aware `/api/v1/search-page` surface directly in the CLI instead of leaving it UI-only.
+- Added regression coverage for the request shape in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- The CLI still only exposed the older list-shaped search result, even after the paged search API existed.
+- This closes another operator-tooling gap and aligns the CLI with the richer search surface.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- `search-page` still inherits the current mixed-entity ranking and offset-based pagination model from the backend.
+
+## Fleet/device OTA governance CLI coverage (2026-04-17)
+
+### What changed
+
+- Expanded `scripts/operator_cli.py` with:
+  - `fleets update`
+  - `devices update-ota`
+- `fleets update` now supports fleet metadata/default-channel edits from the CLI.
+- `devices update-ota` now exposes per-device OTA governance fields from the CLI:
+  - channel
+  - updates enabled/disabled
+  - busy reason / clear busy reason
+  - development / not-development
+  - locked manifest / clear locked manifest
+- Added regression coverage for both request shapes in `tests/test_operator_cli.py`.
+
+### Why it changed
+
+- OTA governance was still split between backend/UI support and incomplete CLI coverage.
+- This closes another practical operator-tooling gap for scripted fleet/device rollout posture changes.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The CLI now covers more governance operations, but it still remains a thin HTTP wrapper rather than a higher-level operational assistant with guardrails or diff previews.
+
+## Device cloud core: procedures, state, and events (2026-04-17)
+
+### What changed
+
+- Added device-cloud persistence models and migration support for:
+  - typed procedure definitions
+  - durable procedure invocations
+  - reported device state snapshots
+  - append-only device events
+- Added new API surfaces for:
+  - admin-managed procedure definitions
+  - operator procedure invocation and history
+  - device-auth procedure result reporting
+  - device-auth state reporting
+  - device-auth event publishing
+  - operator read access to state and device events
+- Extended device policy delivery so devices can receive a pending procedure invocation through the existing cached policy loop.
+- Added a generic device-local procedure runner hook in the agent using `EDGEWATCH_PROCEDURE_RUNNER_CMD`.
+- Added regression coverage for:
+  - route surface toggles
+  - SQLite migrations
+  - procedure definition/invocation/result flow
+  - reported state round-trip
+  - device event publish/list
+  - agent-side procedure execution/reporting
+
+### Why it changed
+
+- Particle-style software-platform parity requires more than telemetry and OTA; it also needs first-class device-cloud primitives.
+- EdgeWatch already had a durable command/policy model, so procedures, state, and events were added as explicit, typed constructs instead of inventing an arbitrary remote-exec path.
+- Separating telemetry, reported state, device events, and procedures keeps the platform legible and safer to evolve.
+
+### Validation
+
+- `uv run --locked pyright api/app agent tests`
+- `uv run --locked pytest tests/test_device_cloud_routes.py tests/test_agent_procedure_delivery.py tests/test_route_surface_toggles.py tests/test_migrations_sqlite.py`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Procedure execution currently depends on a device-local runner hook (`EDGEWATCH_PROCEDURE_RUNNER_CMD`); without it, pending procedure invocations will fail closed.
+- This slice adds backend/platform primitives only; there is not yet a dedicated UI workflow for procedures, state, and events beyond the APIs.
+- Procedure definitions are global and single-tenant at this stage; fleet-scoped governance is a follow-up slice.
+
+## Fleet governance + fleet-scoped access (2026-04-17)
+
+### What changed
+
+- Added first-class fleet persistence and migrations:
+  - `fleets`
+  - `fleet_device_memberships`
+  - `fleet_access_grants`
+- Added fleet admin APIs for:
+  - create/list/update fleets
+  - add/remove device memberships
+  - list/put/delete fleet access grants
+- Added read APIs for:
+  - list accessible fleets
+  - list accessible devices in a fleet
+- Extended device access resolution so non-admin users can reach devices through:
+  - existing per-device grants
+  - new fleet-scoped grants via fleet membership
+- Preserved per-device grants as valid narrow-scope / break-glass access.
+
+### Why it changed
+
+- The approved Particle-parity plan requires fleets to be first-class governance and release scope, not just selectors.
+- EdgeWatch already had per-device ownership, but nothing equivalent to a fleet boundary for operator grouping and rollout scope.
+- Reusing the existing grant model at fleet scope adds governance without replacing the current least-privilege design.
+
+### Validation
+
+- `uv run --locked pyright api/app tests`
+- `uv run --locked pytest tests/test_fleet_routes.py tests/test_device_access.py tests/test_route_surface_toggles.py tests/test_migrations_sqlite.py`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Fleet membership and fleet grants are backend-only in this slice; dedicated UI workflows are still follow-up work.
+- Devices can still be targeted by labels/cohorts and explicit IDs; fleets add a governance path rather than deprecating existing selectors yet.
+
+## Operator search + live event stream (2026-04-17)
+
+### What changed
+
+- Added a unified operator search API covering:
+  - devices
+  - fleets
+  - alerts
+  - device events
+  - procedure invocations
+  - deployments (admin-visible)
+- Added a server-sent event stream endpoint that emits:
+  - alerts
+  - device events
+  - procedure invocation events
+- Scoped both surfaces through the existing viewer/device access model.
+- Added route-surface and backend search tests.
+
+### Why it changed
+
+- The approved parity plan calls for operator-visible search and live event streaming as core platform capabilities, not just UI backlog items.
+- EdgeWatch already had the underlying entities; adding a unified read surface makes them usable without inventing a second control model.
+
+### Validation
+
+- `uv run --locked pyright api/app tests`
+- `uv run --locked pytest tests/test_operator_tools_routes.py tests/test_route_surface_toggles.py`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The SSE endpoint currently uses simple polling over the database-backed event sources; it is operationally fine for small/medium fleets but not yet an optimized high-fanout streaming architecture.
+- Search is backend-only in this slice; dedicated UI search workflows are still follow-up work.
+
+## Generalized event delivery (2026-04-17)
+
+### What changed
+
+- Extended notification destinations so they can filter by:
+  - source kind
+  - event type
+- Extended notification delivery history so it now records:
+  - alert deliveries
+  - device event deliveries
+  - procedure invocation deliveries
+  - deployment event deliveries
+- Generalized the webhook delivery pipeline so non-alert platform events use the same destination, filtering, and audit model as alerts.
+- Hooked event delivery into:
+  - device event publication
+  - procedure invocation result completion
+  - deployment lifecycle event creation
+- Preserved backward-compatible alert behavior by defaulting destinations to alert-only unless configured otherwise.
+
+### Why it changed
+
+- The parity plan requires integrations to be event-driven across the platform, not just alert-driven.
+- Reusing the existing destination/audit model keeps one delivery pipeline instead of fragmenting alerts and platform events into separate mechanisms.
+
+### Validation
+
+- `uv run --locked pyright api/app tests`
+- `uv run --locked pytest tests/test_notifications_service.py tests/test_operator_tools_routes.py tests/test_device_cloud_routes.py tests/test_admin_deployments.py tests/test_device_updates_service.py`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Existing destinations remain alert-only by default; operators must explicitly opt a destination into non-alert event sources.
+- Deployment events without a concrete device still flow through the generic delivery model, but per-fleet targeting and richer destination policy are still follow-up work.
+
+## Operator CLI baseline (2026-04-17)
+
+### What changed
+
+- Added `scripts/operator_cli.py` as a thin operator workflow surface for:
+  - search
+  - fleets
+  - procedures
+  - device state and device events
+  - notification destinations
+  - release/deployment inspection
+- The CLI reuses the current HTTP API and auth posture:
+  - `--admin-key` for admin routes
+  - dev principal headers for local authz testing
+  - optional extra headers for perimeter/IAP-oriented setups
+- Added focused tests covering search and fleet-create request shaping.
+
+### Why it changed
+
+- The parity plan calls for operator/developer tooling, and the backend/platform surface is now broad enough that a CLI materially improves usability before more UI work lands.
+- A thin CLI over the existing API avoids inventing a second control model.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- The CLI is intentionally thin and does not yet cover every backend surface.
+- It assumes the same auth/perimeter posture as the HTTP API; production workflows may still prefer IAP/private-admin entrypoints.
+
+## OTA artifact manifests + hybrid updater path (2026-04-16)
+
+### What changed
+
+- Extended the OTA data model and API contracts so release manifests now carry:
+  - `update_type`
+  - artifact URI/size/hash
+  - artifact signature metadata
+  - compatibility metadata
+- Extended device OTA policy/reporting so devices now receive:
+  - artifact-aware `pending_update_command`
+  - OTA readiness fields (`updates_enabled`, `updates_pending`, `busy_reason`)
+  - richer device update states (`downloaded`, `staged`, `switching`) in addition to the previous lifecycle
+- Added OTA governance/device fields on devices:
+  - `ota_channel`
+  - `ota_updates_enabled`
+  - `ota_busy_reason`
+  - `ota_is_development`
+  - `ota_locked_manifest_id`
+- Updated the agent OTA apply path to:
+  - download artifacts into a persistent cache
+  - verify artifact hash
+  - optionally verify artifact signatures via `openssl`
+  - apply `application_bundle` natively
+  - apply `asset_bundle` via extract or optional hook
+  - invoke an external updater command for `system_image`
+  - persist pending boot-health state for post-reboot confirmation
+- Extended deployment health logic to include defer-rate halts and timeout-based halts.
+- Added/updated OTA tests covering:
+  - artifact-aware manifest creation
+  - pending update policy delivery
+  - richer agent update flow
+  - deployment service/route behavior
+- Updated OTA design/contracts/runbook docs for the artifact-based hybrid updater path.
+
+### Why it changed
+
+- The previous OTA implementation had a strong rollout control plane but still treated on-device git tags as the actual update payload.
+- Particle-grade OTA requires real artifact delivery, on-device verification, richer lifecycle state, and a safer system-image apply path than a repo/tag swap can provide.
+- A hybrid updater model lets EdgeWatch keep ownership of rollout/orchestration while using a safer external system updater for image installs and rollback.
+
+### Validation
+
+- `uv run --locked pyright api/app agent tests`
+- `uv run --locked pytest tests/test_agent_update_delivery.py tests/test_device_updates_service.py tests/test_device_policy.py tests/test_admin_deployments.py tests/test_agent_device_policy.py tests/test_device_updates_routes.py`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- `system_image` apply now assumes an external updater command is supplied; without it, system-image deployments will fail intentionally instead of pretending to succeed.
+- Artifact signature verification currently supports `openssl_rsa_sha256`; broader signature schemes or trust distribution workflows remain follow-up work if needed.
+- Boot-health confirmation for system-image updates is process-restart based; a production updater/bootloader integration still needs real-device validation before fleet rollout.
+
+## Alerts search completion + Tailscale operator overlay (2026-04-16)
+
+### What changed
+
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/api/app/routes/alerts.py` so `GET /api/v1/alerts` now accepts `q` plus legacy `search` and applies case-insensitive partial matching across `device_id`, `alert_type`, and `message`.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/api.ts` and `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx` so the alerts page sends its canonical URL search text to the server and includes that search term in the query cache key.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/DataTable.tsx` so bounded vertical scrolling is restored only for callers that pass an explicit `height`; pages without `height` keep viewport-owned scrolling.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx` so `health=open_alerts` no longer collapses to a false empty fleet while alert state is still loading or unavailable.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/CONTRACTS.md` and `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/DEPLOY_RPI.md` to document the new alerts search contract and a Tailscale operator overlay for MacBook-to-device private access.
+- Added `/Users/ryneschroder/Developer/git/edgewatch-telemetry/docs/RUNBOOKS/TAILSCALE_OPERATOR.md` with a concrete grants template, edge-device bootstrap commands, and verification/failure-mode guidance for the operator overlay.
+
+### Why it changed
+
+- Alerts URL search was claiming reload-safe behavior without actually searching the full backend dataset.
+- The shared table refactor changed scroll semantics for existing fixed-height admin/detail tables that still expect internal scroll regions.
+- The Devices page could deep-link into `health=open_alerts` before alert state loaded and incorrectly report that no devices matched.
+- Edge-device operator access needed explicit Tailscale guidance without changing the repo's default posture of public ingest plus private operator surfaces.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Server-side alerts search currently matches only `device_id`, `alert_type`, and `message`; if the UI later promises broader fields, the route contract must be expanded in lockstep.
+- Devices with `health=open_alerts` selected now stay visible while alert state is unavailable, which is safer than false-empty results but still depends on the alert feed to narrow correctly.
+
+## Canonical filter URL sync + dashboard handoff (2026-04-14)
+
+### What changed
+
+- Added `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/utils/filterUrlState.ts` to centralize canonical filter/query parsing and URL building for:
+  - Devices
+  - Alerts
+  - Dashboard timeline controls
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx` so:
+  - device filters now sync back to the URL
+  - legacy query keys are still read
+  - a new `health` filter supports dashboard-driven fleet views such as low water pressure, weak signal, low battery, and no telemetry
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Alerts.tsx` so resolution, severity, type, device, search text, and page size all sync into canonical URL params while still accepting older aliases.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx` so:
+  - dashboard timeline controls sync into URL params
+  - “Open in Alerts” uses the canonical alerts URL contract
+  - fleet health tiles now navigate to `/devices` with the correct filter params already applied
+
+### Why it changed
+
+- Clicking summary/detail tiles should carry the user into the next page with the relevant filters already active instead of dropping them onto an unfiltered list.
+- Filter state needs to be copy/pasteable and reload-safe, which requires writing current UI state back into the URL instead of only reading from it on first load.
+- Backward compatibility still matters because older links already use prior query-key names such as `openOnly`, `resolvedOnly`, `deviceStatus`, and `search`.
+
+### Validation
+
+- `pnpm --dir web typecheck`
+- `pnpm --dir web build`
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- Devices now supports additional URL-driven health filters that are UI-only fleet views; if those labels or threshold rules change later, the URL contract should be kept in sync.
+- Alerts URL updates use replace-navigation for filter changes, which avoids noisy history but means per-keystroke search changes do not create separate back-stack entries.
+
+## Full-width main scroll hit area (2026-04-13)
+
+### What changed
+
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/components/FleetMap.tsx` so the dashboard Leaflet map no longer captures mouse-wheel scrolling for zoom.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx` so the app no longer traps vertical scrolling inside a fixed-height inner pane. The viewport/body now owns scrolling, while the sidebar and header remain sticky.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx` so `main` stays a plain full-width scroll surface with no content-width wrapper.
+- Added the centered inner `max-w-7xl` content box to `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/Page.tsx`, so page content remains visually bounded while the surrounding `main` area still belongs to the full pane.
+- Applied `box-border` to the shared `max-w-7xl` wrappers in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/Page.tsx` and `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx` so the horizontal padding stays inside the 7xl cap instead of making the rendered box wider than intended.
+- Extended `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/Page.tsx` with an optional inner content wrapper override.
+- Narrowed the Dashboard page in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Dashboard.tsx` from the shared 7xl default to `max-w-6xl`, which reduces the dashboard content width without affecting the full-width scroll surface.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/styles.css` so the document scrollbar is hidden globally while scroll behavior remains active.
+- Added a full document-edge reset in `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/styles.css` (`body { margin: 0 }` plus full-width root wrappers) so the app shell is flush with the viewport instead of inheriting browser default page insets.
+- Removed the last shared inner content wrapper from `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/AppShell.tsx`; `main` now renders route content directly.
+- Moved standard page padding into `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/Page.tsx` so spacing is applied by pages rather than by a nested shell container.
+- Updated `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/ui-kit/components/DataTable.tsx` so shared tables no longer create their own vertical scroll regions by default; they now grow with page content and only keep horizontal overflow handling.
+- Simplified `/Users/ryneschroder/Developer/git/edgewatch-telemetry/web/src/pages/Devices.tsx` to remove the special full-height/overflow-hidden table layout that forced the fleet table into an inner scroll container.
+
+### Why it changed
+
+- The dashboard map was intercepting wheel events, which caused the page scroll to pause on the map and zoom the map instead.
+- The app shell was still using a fixed-height application frame, which meant scroll behavior stayed inside a nested region even after widening `main`.
+- Moving scrolling back to the viewport is what places scroll interaction on the full visible page area and aligns the effective scrollbar with the browser edge instead of an internal container.
+- The right structure is a full-width `main` with page-owned constrained content. That keeps the scrollbar behavior associated with the full pane while preserving centered content margins.
+- Tailwind `max-w-7xl` only caps the content box by default, so shared padding on the same element can make the rendered box wider than 7xl unless the wrapper uses border-box sizing.
+- After fixing the layout structure, the remaining issue on Dashboard was simply that `7xl` still looked too wide for that page, so Dashboard now opts into a slightly narrower bound.
+- Browser default body margins can still leave the entire app inset from the viewport edge even after the shell is full width, so the root page chrome now explicitly resets that default.
+- Even with the shell widened, a nested content wrapper inside `main` still made the rendered page tree look like an inset column in devtools, so that wrapper has been removed.
+- Shared tables were still using fixed heights plus `overflow-y-auto`, so on data-heavy pages the effective scroll target remained the centered table area rather than the page itself.
+
+### Validation
+
+- `python scripts/harness.py lint`
+- `python scripts/harness.py typecheck`
+- `python scripts/harness.py test`
+
+### Risks / rollout notes
+
+- This changes the shared shell from pane-scrolling to viewport-scrolling, so any page that relied on the old fixed-height inner scroll region could need a follow-up adjustment.
+- Long tables now contribute to page height instead of staying inside fixed-height cards, so some admin/detail pages will scroll more as a whole page than before.
+
 ## Summary metric cap + local env drift fixes (2026-04-04)
 
 ### What changed
@@ -3465,3 +5233,497 @@ Files:
 
 - [ ] Add initial `backend.hcl` + `terraform.tfvars` objects to each env prefix under `edgewatch/*`.
 - [ ] Run `Terraform plan (GCP)` for `dev` after setting environment variables.
+
+## Notification events added to operator feeds (2026-04-17)
+
+### What changed
+
+- Extended the unified operator event surfaces so notification delivery audit now flows through:
+  - `GET /api/v1/operator-events`
+  - `GET /api/v1/event-stream`
+- Notification delivery rows are now covered by the shared operator event schema, Live page defaults, and CLI default source-kind sets.
+- Added route-level regression coverage in:
+  - `tests/test_operator_tools_routes.py`
+
+### Why it changed
+
+- Notification delivery was searchable, but it was still missing from the main mixed operator history and live-stream workflows.
+- That left delivery audit as a second-class operator surface compared with alerts, device events, procedures, and rollout events.
+
+### How it was validated
+
+- Added route tests covering notification events in both paged operator history and SSE replay/filter behavior.
+
+### Risks / rollout notes
+
+- Notification delivery audit remains admin-scoped by design because it includes delivery metadata and downstream channel details.
+
+## Paged admin notification audit with delivery filters (2026-04-17)
+
+### What changed
+
+- Added filterable, total-aware notification audit paging on the admin surface:
+  - `GET /api/v1/admin/notifications-page`
+- Extended the existing notification list route to support shared delivery filters:
+  - `source_kind`
+  - `channel`
+  - `decision`
+  - `delivered`
+- Updated the Admin notifications tab to use the paged route with previous/next controls and real delivery filters.
+- Expanded the operator CLI with:
+  - richer `admin notifications` filters
+  - new `admin notifications-page`
+
+### Why it changed
+
+- Notification audit had become the odd admin lane out: fixed-size, device-only filtered, and missing totals.
+- Operators need to isolate delivery failures and blocked notifications with the same level of precision already available on other audit surfaces.
+
+### How it was validated
+
+- Added backend regression coverage in `tests/test_admin_deployments.py`.
+- Added CLI request-shape coverage in `tests/test_operator_cli.py`.
+
+### Risks / rollout notes
+
+- The original `admin notifications` list route remains for compatibility, while the Admin UI now prefers the paged route.
+
+## Paged admin ingestion and drift audit lanes (2026-04-17)
+
+### What changed
+
+- Added total-aware paging for the remaining list-shaped admin audit lanes:
+  - `GET /api/v1/admin/ingestions-page`
+  - `GET /api/v1/admin/drift-events-page`
+- Updated the Admin UI to use those paged routes for the Ingestions and Drift tabs, with previous/next controls and real totals.
+- Expanded the operator CLI with:
+  - `admin ingestions-page`
+  - `admin drift-events-page`
+
+### Why it changed
+
+- Ingestions and drift were still capped lists while admin events and notifications had already moved to paged audit workflows.
+- This keeps the admin audit surfaces consistent and prevents larger histories from being silently truncated in the UI.
+
+### How it was validated
+
+- Added backend regression coverage in `tests/test_admin_deployments.py`.
+- Added CLI request-shape coverage in `tests/test_operator_cli.py`.
+
+### Risks / rollout notes
+
+- The original list endpoints remain in place for compatibility; the Admin UI now prefers the paged routes.
+
+## Paged admin export audit lane (2026-04-17)
+
+### What changed
+
+- Added `GET /api/v1/admin/exports-page` with `status_filter`, `limit`, and `offset`.
+- Updated the Admin Exports tab to use the paged route with total-aware previous/next controls.
+- Expanded the operator CLI with `admin exports-page`.
+
+### Why it changed
+
+- Exports was the last remaining admin audit lane still using a capped list instead of a total-aware workflow.
+- This makes the full Admin audit surface consistent across events, ingestions, drift, notifications, and exports.
+
+### How it was validated
+
+- Added backend regression coverage in `tests/test_admin_deployments.py`.
+- Added CLI request-shape coverage in `tests/test_operator_cli.py`.
+
+### Risks / rollout notes
+
+- The original `admin exports` list route remains for compatibility while the Admin UI now prefers the paged route.
+
+## Admin deep links carry richer filter state (2026-04-17)
+
+### What changed
+
+- Extended `/admin` route search state to carry notification-specific filters:
+  - `sourceKind`
+  - `channel`
+  - `decision`
+  - `delivered`
+- Updated the System search page so notification-event and export-batch hits open the relevant Admin tab with more of the right filter context already applied.
+
+### Why it changed
+
+- Search results were landing on the correct Admin tab, but they were still too generic and forced operators to re-enter common filters manually.
+- This reduces friction when moving from global discovery into focused audit investigation.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the route-search wiring changes.
+
+### Risks / rollout notes
+
+- Admin route-search hydration intentionally only applies provided values; opening `/admin` without those search params preserves the existing in-page filter state behavior.
+
+## Notification search deep links carry full delivery context (2026-04-17)
+
+### What changed
+
+- Extended unified-search notification-event metadata to include:
+  - `source_kind`
+  - `delivered`
+- Updated the System search page so notification-event hits now pass those fields through to the Admin notifications tab.
+
+### Why it changed
+
+- Notification search hits already carried `channel` and `decision`, but they still dropped enough context to force extra operator filtering after navigation.
+- This makes notification delivery search results land closer to the exact audit slice the operator was looking for.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for notification-event search metadata.
+
+### Risks / rollout notes
+
+- This only affects unified-search metadata and Admin deep-link behavior; it does not change notification storage or delivery semantics.
+
+## Ingestion and drift are now first-class search entities (2026-04-17)
+
+### What changed
+
+- Extended unified search with admin-only entities for:
+  - `ingestion_batch`
+  - `drift_event`
+- Updated the System page default entity filter set and deep links so those hits open directly into the Admin Ingestions and Drift tabs.
+
+### Why it changed
+
+- Operators could page through ingestions and drift in Admin, but they still could not discover those records from the global search surface.
+- This closes another practical discovery gap in the audit workflow.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing both ingestion batches and drift events.
+
+### Risks / rollout notes
+
+- These search entities are admin-only by design because they expose audit and lineage details not meant for general viewers.
+
+## Notification destinations are now searchable (2026-04-17)
+
+### What changed
+
+- Extended unified search with the admin-only `notification_destination` entity.
+- Updated the System page default entity filter set so notification destinations can be discovered from global search.
+- Search hits for notification destinations now deep-link into Settings.
+
+### Why it changed
+
+- Notification destinations were configurable but still invisible to the main operator search surface.
+- This closes another practical discovery gap in the operator tooling flow.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing notification destinations.
+
+### Risks / rollout notes
+
+- Notification destinations remain admin-only in search results because they expose delivery configuration details.
+
+## Procedure definitions are now searchable (2026-04-17)
+
+### What changed
+
+- Extended unified search with the admin-only `procedure_definition` entity.
+- Updated the System page default entity filter set so procedure definitions can be discovered from global search.
+- Search hits for procedure definitions now deep-link into Admin.
+
+### Why it changed
+
+- Procedure definitions are a first-class device-cloud control surface, but they were still absent from the main operator search workflow.
+- This closes another discovery gap around remote procedure governance.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing procedure definitions.
+
+### Risks / rollout notes
+
+- Procedure definitions remain admin-only in search because they are part of the privileged control plane.
+
+## Settings deep-links can open a notification destination directly (2026-04-17)
+
+### What changed
+
+- Added route-search support on `/settings` for `destinationId`.
+- Updated notification-destination search hits so they open Settings with the matching destination loaded into the existing edit form.
+
+### Why it changed
+
+- Notification destinations were searchable, but the hit still landed on a broad Settings page and forced another manual selection step.
+- This makes global search materially more useful for configuration follow-up workflows.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the route-search and edit-state hydration changes.
+
+### Risks / rollout notes
+
+- Destination deep-link hydration only applies when the destination list is available and the referenced id exists in the current admin-visible result set.
+
+## Notification-destination search hits now land on the webhook section (2026-04-17)
+
+### What changed
+
+- Added a stable `#notification-webhooks` anchor to the Settings webhook-management section.
+- Updated notification-destination search hits so they open the matching destination with both the destination id and the webhook section anchor.
+
+### Why it changed
+
+- Notification-destination search hits already loaded the correct destination into the editor, but still landed operators at the top of a long Settings page.
+- This makes the landing state materially tighter without changing any backend behavior.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link change.
+
+### Risks / rollout notes
+
+- This relies on the Settings page keeping the `notification-webhooks` anchor stable.
+
+## Fleet search hits now open the selected fleet directly (2026-04-17)
+
+### What changed
+
+- Added route-search support on `/fleets` for `fleetId`.
+- Updated the Fleets page to hydrate its existing selected-fleet state from that route search.
+- Fleet search hits from the System page now open the relevant fleet directly instead of the generic fleet list.
+
+### Why it changed
+
+- Fleet entities were searchable, but the result still dropped operators onto a broad page and forced another manual selection step.
+- This makes global search materially more useful for fleet-governance follow-up work.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the route-search wiring changes.
+
+### Risks / rollout notes
+
+- Fleet deep-link hydration only applies when the referenced fleet id is present in the current accessible fleet list.
+
+## Export search hits can prefilter the exact batch (2026-04-17)
+
+### What changed
+
+- Added lightweight `exportId` route-search support on `/admin`.
+- Admin now hydrates a local export-batch id filter from that route state.
+- Export-batch search hits now carry both status and batch id into the Admin Exports tab.
+
+### Why it changed
+
+- Export search hits already landed on the correct Admin tab, but they still only filtered by status, which is often too broad.
+- This makes export-batch follow-up materially more precise without adding backend complexity.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the route-search wiring change.
+
+### Risks / rollout notes
+
+- The export id filter is local to the currently loaded page of export results; it is not a backend-filtered export lookup surface.
+
+## Alert search hits now open a filtered alert feed (2026-04-17)
+
+### What changed
+
+- Updated System search alert hits so they open `/alerts` with the existing alert feed query-string filters already applied.
+- Search hits now carry the matching alert type and device into the destination feed instead of landing on the generic Alerts page.
+
+### Why it changed
+
+- Alert entities were searchable, but the result still forced another manual filtering step in the alert feed.
+- This makes global search materially more useful for alert follow-up workflows.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the alert deep-link wiring change.
+
+### Risks / rollout notes
+
+- This uses the existing alert-feed URL contract instead of a new route-search surface, so it depends on the alert page continuing to honor those query-string filters.
+
+## Device event and procedure hits now open the relevant device tab (2026-04-17)
+
+### What changed
+
+- Device Detail now honors a lightweight `?tab=` query string for existing tabs.
+- Updated System search hits for:
+  - `device_event`
+  - `procedure_invocation`
+- Updated Live view event links for:
+  - `device_event`
+  - `procedure_invocation`
+- Those links now open the relevant device directly on the `Events` or `Procedures` tab instead of the generic Live stream.
+
+### Why it changed
+
+- Device events and procedure invocations are device-scoped records, so sending operators to the generic Live stream was a weaker navigation outcome than the device’s own focused workflow.
+- This makes search and live-history follow-up materially more direct.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the device-tab query-string wiring change.
+
+### Risks / rollout notes
+
+- The `?tab=` support is intentionally lightweight and local to the page; it does not currently synchronize tab changes back into the URL after the page loads.
+
+## Deployment deep-links can prefilter rollout targets by device (2026-04-17)
+
+### What changed
+
+- Extended `/releases` route-search support with `targetDeviceId`.
+- Releases now hydrates its existing rollout target search box from that route-search value.
+- Deployment links from System search and Live events now carry the target device through when it is known.
+
+### Why it changed
+
+- Deployment results already opened the right rollout, but operators still had to re-enter the target device to inspect the relevant rollout row.
+- This makes deployment-focused follow-up work materially tighter.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the route-search wiring change.
+
+### Risks / rollout notes
+
+- This only preloads the existing rollout target search; it does not add any new target selection state beyond what the page already supports.
+
+## Live alert rows now open a filtered alert feed (2026-04-17)
+
+### What changed
+
+- Updated Live alert links to use the existing alert-feed URL filter contract instead of linking to the generic Alerts page.
+- Live alert rows now carry the current alert type, device id, and severity into the destination alert feed.
+
+### Why it changed
+
+- System search hits for alerts already landed on a filtered alert feed, but Live alert rows still forced an extra manual filtering step.
+- This brings those two alert follow-up workflows into alignment.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the alert-link change.
+
+### Risks / rollout notes
+
+- This relies on the Alerts page continuing to honor the current query-string filter contract.
+
+## Ingestion and drift search hits can prefilter by batch id (2026-04-17)
+
+### What changed
+
+- Added lightweight `batchId` route-search support on `/admin`.
+- Admin now hydrates a local batch-id filter for the Ingestions and Drift tabs from that route state.
+- Ingestion-batch and drift-event search hits now carry the relevant batch id into the destination tab.
+
+### Why it changed
+
+- Ingestion and drift search hits already landed on the correct Admin tab, but they still lacked enough context to isolate the exact batch of interest.
+- This makes audit follow-up materially tighter without adding backend complexity.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the route-search wiring change.
+
+### Risks / rollout notes
+
+- The batch-id filter is local to the currently loaded page of ingestion/drift results, not a backend-filtered batch lookup surface.
+
+## Admin deep-links now target the right results section (2026-04-17)
+
+### What changed
+
+- Added stable anchors for the Admin results sections:
+  - `#admin-events`
+  - `#admin-ingestions`
+  - `#admin-drift`
+  - `#admin-notifications`
+  - `#admin-exports`
+- Updated System search hits and Live admin-oriented links to target those anchors when they open the relevant Admin tab.
+
+### Why it changed
+
+- Admin-oriented links already chose the right tab, but still landed operators at the top of a long page.
+- This tightens landing state without changing backend contracts or page structure.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link changes.
+
+### Risks / rollout notes
+
+- This depends on those Admin section anchors remaining stable.
+
+## Procedure-definition search hits now anchor into the right Admin section (2026-04-17)
+
+### What changed
+
+- Added a stable `#procedure-definitions` anchor around the Admin procedure-definition section.
+- Updated procedure-definition search hits so they open `/admin` with the existing procedure filter plus that section anchor.
+
+### Why it changed
+
+- Procedure-definition hits already prefilled the right filter, but still landed operators at the top of a long Admin page.
+- This makes the landing state materially tighter without adding any new backend or router surface.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link change.
+
+### Risks / rollout notes
+
+- This relies on the browser’s normal hash navigation and the Admin page keeping the `procedure-definitions` anchor stable.
+
+## Releases links now land on the relevant section (2026-04-17)
+
+### What changed
+
+- Added stable anchors for the main Releases sections:
+  - `#releases-publish-manifest`
+  - `#releases-launch-deployment`
+  - `#releases-manifests`
+  - `#releases-deployments`
+  - `#releases-deployment-inspector`
+- Updated System search and Live release-oriented links so:
+  - deployment hits land on the deployment inspector
+  - release-manifest hits land on the manifest section
+
+### Why it changed
+
+- Release-oriented links already picked the right ids, but still dropped operators at the top of a long page.
+- This tightens rollout follow-up work without changing backend contracts.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link changes.
+
+### Risks / rollout notes
+
+- This depends on the Releases page keeping those section anchors stable.
+
+## Fleet search hits now land on the fleet devices section (2026-04-17)
+
+### What changed
+
+- Added a stable `#fleet-devices` anchor to the Fleets page device-membership section.
+- Updated fleet search hits so they open the selected fleet plus that section anchor.
+
+### Why it changed
+
+- Fleet search hits already selected the correct fleet, but still landed operators at the top of the page.
+- This makes fleet-governance follow-up work tighter without changing backend behavior.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link change.
+
+### Risks / rollout notes
+
+- This depends on the Fleets page keeping the `fleet-devices` anchor stable.

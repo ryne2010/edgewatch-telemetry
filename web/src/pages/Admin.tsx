@@ -1,18 +1,18 @@
 import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Link } from '@tanstack/react-router'
+import { Link, useSearch } from '@tanstack/react-router'
 import { useDebouncedValue } from '@tanstack/react-pacer/debouncer'
 import {
   api,
   type AdminEventOut,
-  type DeploymentDetailOut,
+  type DeviceProcedureDefinitionOut,
   type DeviceAccessGrantOut,
   type DriftEventOut,
   type ExportBatchOut,
+  type FleetOut,
   type IngestionBatchOut,
   type NotificationEventOut,
-  type ReleaseManifestOut,
 } from '../api'
 import { useAppSettings } from '../app/settings'
 import { useAdminAccess } from '../hooks/useAdminAccess'
@@ -47,6 +47,7 @@ function Callout(props: { title: string; children: React.ReactNode; tone?: 'defa
 }
 
 export function AdminPage() {
+  const routeSearch = useSearch({ from: '/admin' })
   const { adminKey } = useAppSettings()
   const healthQ = useQuery({
     queryKey: ['health'],
@@ -92,28 +93,20 @@ export function AdminPage() {
   const [shutdownDeviceId, setShutdownDeviceId] = React.useState('')
   const [shutdownReason, setShutdownReason] = React.useState('seasonal intermission')
   const [shutdownGraceS, setShutdownGraceS] = React.useState('30')
-  const [manifestGitTag, setManifestGitTag] = React.useState('')
-  const [manifestCommitSha, setManifestCommitSha] = React.useState('')
-  const [manifestSignature, setManifestSignature] = React.useState('')
-  const [manifestSignatureKeyId, setManifestSignatureKeyId] = React.useState('ops-key-1')
-  const [manifestConstraints, setManifestConstraints] = React.useState('{}')
-  const [manifestStatus, setManifestStatus] = React.useState('active')
-  const [deploymentManifestId, setDeploymentManifestId] = React.useState('')
-  const [deploymentSelectorMode, setDeploymentSelectorMode] = React.useState<
-    'all' | 'cohort' | 'labels' | 'explicit_ids'
-  >('all')
-  const [deploymentSelectorCohort, setDeploymentSelectorCohort] = React.useState('')
-  const [deploymentSelectorLabels, setDeploymentSelectorLabels] = React.useState('{}')
-  const [deploymentSelectorIds, setDeploymentSelectorIds] = React.useState('')
-  const [deploymentRolloutStages, setDeploymentRolloutStages] = React.useState('1,10,50,100')
-  const [deploymentFailureRateThreshold, setDeploymentFailureRateThreshold] = React.useState('0.2')
-  const [deploymentNoQuorumTimeoutS, setDeploymentNoQuorumTimeoutS] = React.useState('1800')
-  const [deploymentHealthTimeoutS, setDeploymentHealthTimeoutS] = React.useState('300')
-  const [deploymentCommandTtlS, setDeploymentCommandTtlS] = React.useState(String(180 * 24 * 3600))
-  const [deploymentPowerGuardRequired, setDeploymentPowerGuardRequired] = React.useState(true)
-  const [deploymentRollbackToTag, setDeploymentRollbackToTag] = React.useState('')
-  const [deploymentLookupId, setDeploymentLookupId] = React.useState('')
-  const [deploymentAbortReason, setDeploymentAbortReason] = React.useState('manual abort')
+  const [fleetName, setFleetName] = React.useState('')
+  const [fleetDescription, setFleetDescription] = React.useState('')
+  const [fleetDefaultChannel, setFleetDefaultChannel] = React.useState('stable')
+  const [fleetSelectedId, setFleetSelectedId] = React.useState('')
+  const [fleetDeviceId, setFleetDeviceId] = React.useState('')
+  const [fleetAccessEmail, setFleetAccessEmail] = React.useState('')
+  const [fleetAccessRole, setFleetAccessRole] = React.useState<'viewer' | 'operator' | 'owner'>('viewer')
+  const [procedureName, setProcedureName] = React.useState('')
+  const [procedureDescription, setProcedureDescription] = React.useState('')
+  const [procedureTimeoutS, setProcedureTimeoutS] = React.useState('300')
+  const [procedureRequestSchema, setProcedureRequestSchema] = React.useState('{}')
+  const [procedureResponseSchema, setProcedureResponseSchema] = React.useState('{}')
+  const [procedureFilterRaw, setProcedureFilterRaw] = React.useState('')
+  const [procedureFilter] = useDebouncedValue(procedureFilterRaw.trim(), { wait: 250 })
 
   const upsertMutation = useMutation({
     mutationFn: async () => {
@@ -188,49 +181,203 @@ export function AdminPage() {
   const [deviceRaw, setDeviceRaw] = React.useState('')
   const [deviceId] = useDebouncedValue(deviceRaw.trim(), { wait: 250 })
 
+  const [batchIdRaw, setBatchIdRaw] = React.useState('')
+  const [batchIdFilter] = useDebouncedValue(batchIdRaw.trim(), { wait: 250 })
   const [statusRaw, setStatusRaw] = React.useState('')
   const [statusFilter] = useDebouncedValue(statusRaw.trim(), { wait: 250 })
+  const [exportIdRaw, setExportIdRaw] = React.useState('')
+  const [exportIdFilter] = useDebouncedValue(exportIdRaw.trim(), { wait: 250 })
+  const [eventActionRaw, setEventActionRaw] = React.useState('')
+  const [eventActionFilter] = useDebouncedValue(eventActionRaw.trim(), { wait: 250 })
+  const [eventTargetTypeRaw, setEventTargetTypeRaw] = React.useState('')
+  const [eventTargetTypeFilter] = useDebouncedValue(eventTargetTypeRaw.trim(), { wait: 250 })
+  const [notificationSourceKindRaw, setNotificationSourceKindRaw] = React.useState('')
+  const [notificationSourceKindFilter] = useDebouncedValue(notificationSourceKindRaw.trim(), { wait: 250 })
+  const [notificationChannelRaw, setNotificationChannelRaw] = React.useState('')
+  const [notificationChannelFilter] = useDebouncedValue(notificationChannelRaw.trim(), { wait: 250 })
+  const [notificationDecisionRaw, setNotificationDecisionRaw] = React.useState('')
+  const [notificationDecisionFilter] = useDebouncedValue(notificationDecisionRaw.trim(), { wait: 250 })
+  const [notificationDeliveredOnly, setNotificationDeliveredOnly] = React.useState(false)
+  const [notificationFailedOnly, setNotificationFailedOnly] = React.useState(false)
+  const [eventOffset, setEventOffset] = React.useState(0)
+  const eventLimit = 100
+  const [ingestionOffset, setIngestionOffset] = React.useState(0)
+  const ingestionLimit = 100
+  const [driftOffset, setDriftOffset] = React.useState(0)
+  const driftLimit = 100
+  const [notificationOffset, setNotificationOffset] = React.useState(0)
+  const notificationLimit = 100
+  const [exportOffset, setExportOffset] = React.useState(0)
+  const exportLimit = 100
+
+  React.useEffect(() => {
+    if (routeSearch.tab === 'events' || routeSearch.tab === 'ingestions' || routeSearch.tab === 'drift' || routeSearch.tab === 'notifications' || routeSearch.tab === 'exports') {
+      setTab(routeSearch.tab)
+    }
+    if (routeSearch.deviceId) setDeviceRaw(routeSearch.deviceId)
+    if (routeSearch.batchId) setBatchIdRaw(routeSearch.batchId)
+    if (routeSearch.status) setStatusRaw(routeSearch.status)
+    if (routeSearch.exportId) setExportIdRaw(routeSearch.exportId)
+    if (routeSearch.action) setEventActionRaw(routeSearch.action)
+    if (routeSearch.targetType) setEventTargetTypeRaw(routeSearch.targetType)
+    if (routeSearch.procedureName) setProcedureFilterRaw(routeSearch.procedureName)
+    if (routeSearch.sourceKind) setNotificationSourceKindRaw(routeSearch.sourceKind)
+    if (routeSearch.channel) setNotificationChannelRaw(routeSearch.channel)
+    if (routeSearch.decision) setNotificationDecisionRaw(routeSearch.decision)
+    if (routeSearch.delivered === 'true') {
+      setNotificationDeliveredOnly(true)
+      setNotificationFailedOnly(false)
+    } else if (routeSearch.delivered === 'false') {
+      setNotificationFailedOnly(true)
+      setNotificationDeliveredOnly(false)
+    }
+  }, [
+    routeSearch.action,
+    routeSearch.channel,
+    routeSearch.decision,
+    routeSearch.delivered,
+    routeSearch.batchId,
+    routeSearch.deviceId,
+    routeSearch.exportId,
+    routeSearch.procedureName,
+    routeSearch.sourceKind,
+    routeSearch.status,
+    routeSearch.tab,
+    routeSearch.targetType,
+  ])
 
   const ingestionsQ = useQuery({
-    queryKey: ['admin', 'ingestions', deviceId],
-    queryFn: () => api.admin.ingestions(adminCred, { device_id: deviceId || undefined, limit: 300 }),
+    queryKey: ['admin', 'ingestionsPage', deviceId, ingestionOffset],
+    queryFn: () =>
+      api.admin.ingestionsPage(adminCred, {
+        device_id: deviceId || undefined,
+        limit: ingestionLimit,
+        offset: ingestionOffset,
+      }),
     enabled: tab === 'ingestions' && adminAccess,
   })
 
   const driftQ = useQuery({
-    queryKey: ['admin', 'drift', deviceId],
-    queryFn: () => api.admin.driftEvents(adminCred, { device_id: deviceId || undefined, limit: 300 }),
+    queryKey: ['admin', 'driftPage', deviceId, driftOffset],
+    queryFn: () =>
+      api.admin.driftEventsPage(adminCred, {
+        device_id: deviceId || undefined,
+        limit: driftLimit,
+        offset: driftOffset,
+      }),
     enabled: tab === 'drift' && adminAccess,
   })
 
   const notificationsQ = useQuery({
-    queryKey: ['admin', 'notifications', deviceId],
-    queryFn: () => api.admin.notifications(adminCred, { device_id: deviceId || undefined, limit: 300 }),
+    queryKey: [
+      'admin',
+      'notificationsPage',
+      deviceId,
+      notificationSourceKindFilter,
+      notificationChannelFilter,
+      notificationDecisionFilter,
+      notificationDeliveredOnly,
+      notificationFailedOnly,
+      notificationOffset,
+    ],
+    queryFn: () =>
+      api.admin.notificationsPage(adminCred, {
+        device_id: deviceId || undefined,
+        source_kind: notificationSourceKindFilter || undefined,
+        channel: notificationChannelFilter || undefined,
+        decision: notificationDecisionFilter || undefined,
+        delivered: notificationFailedOnly ? false : notificationDeliveredOnly ? true : undefined,
+        limit: notificationLimit,
+        offset: notificationOffset,
+      }),
     enabled: tab === 'notifications' && adminAccess,
   })
 
   const eventsQ = useQuery({
-    queryKey: ['admin', 'events'],
-    queryFn: () => api.admin.events(adminCred, { limit: 300 }),
+    queryKey: ['admin', 'eventsPage', deviceId, eventActionFilter, eventTargetTypeFilter, eventOffset],
+    queryFn: () =>
+      api.admin.eventsPage(adminCred, {
+        limit: eventLimit,
+        offset: eventOffset,
+        device_id: deviceId || undefined,
+        action: eventActionFilter || undefined,
+        target_type: eventTargetTypeFilter || undefined,
+      }),
     enabled: tab === 'events' && adminAccess,
   })
 
+  React.useEffect(() => {
+    setEventOffset(0)
+  }, [deviceId, eventActionFilter, eventTargetTypeFilter])
+
+  React.useEffect(() => {
+    setIngestionOffset(0)
+    setDriftOffset(0)
+  }, [deviceId, batchIdFilter])
+
+  React.useEffect(() => {
+    setNotificationOffset(0)
+  }, [
+    deviceId,
+    notificationSourceKindFilter,
+    notificationChannelFilter,
+    notificationDecisionFilter,
+    notificationDeliveredOnly,
+    notificationFailedOnly,
+  ])
+
   const exportsQ = useQuery({
-    queryKey: ['admin', 'exports', statusFilter],
-    queryFn: () => api.admin.exports(adminCred, { status: statusFilter || undefined, limit: 300 }),
+    queryKey: ['admin', 'exportsPage', statusFilter, exportOffset],
+    queryFn: () =>
+      api.admin.exportsPage(adminCred, {
+        status: statusFilter || undefined,
+        limit: exportLimit,
+        offset: exportOffset,
+      }),
     enabled: tab === 'exports' && adminAccess,
   })
 
-  const releaseManifestsQ = useQuery({
-    queryKey: ['admin', 'releaseManifests'],
-    queryFn: () => api.admin.releaseManifests(adminCred, { limit: 200 }),
-    enabled: adminAccess && otaUpdatesEnabled,
+  React.useEffect(() => {
+    setExportOffset(0)
+  }, [statusFilter, exportIdFilter])
+
+  const filteredExports = React.useMemo(() => {
+    const rows = exportsQ.data?.items ?? []
+    const q = exportIdFilter.toLowerCase()
+    if (!q) return rows
+    return rows.filter((row) => row.id.toLowerCase().includes(q))
+  }, [exportsQ.data?.items, exportIdFilter])
+
+  const filteredIngestions = React.useMemo(() => {
+    const rows = ingestionsQ.data?.items ?? []
+    const q = batchIdFilter.toLowerCase()
+    if (!q) return rows
+    return rows.filter((row) => row.id.toLowerCase().includes(q))
+  }, [batchIdFilter, ingestionsQ.data?.items])
+
+  const filteredDrift = React.useMemo(() => {
+    const rows = driftQ.data?.items ?? []
+    const q = batchIdFilter.toLowerCase()
+    if (!q) return rows
+    return rows.filter((row) => row.batch_id.toLowerCase().includes(q))
+  }, [batchIdFilter, driftQ.data?.items])
+
+  const fleetsQ = useQuery({
+    queryKey: ['admin', 'fleets'],
+    queryFn: () => api.admin.fleets(adminCred),
+    enabled: adminAccess,
   })
 
-  const deploymentDetailQ = useQuery({
-    queryKey: ['admin', 'deploymentDetail', deploymentLookupId.trim()],
-    queryFn: () => api.admin.deployment(adminCred, deploymentLookupId.trim()),
-    enabled: adminAccess && otaUpdatesEnabled && Boolean(deploymentLookupId.trim()),
+  const fleetAccessQ = useQuery({
+    queryKey: ['admin', 'fleetAccess', fleetSelectedId.trim()],
+    queryFn: () => api.admin.fleetAccess.list(adminCred, fleetSelectedId.trim()),
+    enabled: adminAccess && Boolean(fleetSelectedId.trim()),
+  })
+
+  const procedureDefinitionsQ = useQuery({
+    queryKey: ['admin', 'procedureDefinitions'],
+    queryFn: () => api.admin.procedureDefinitions(adminCred),
+    enabled: adminAccess,
   })
 
   const accessDevice = accessDeviceId.trim()
@@ -287,6 +434,102 @@ export function AdminPage() {
     },
   })
 
+  const createFleetMutation = useMutation({
+    mutationFn: async () => {
+      const name = fleetName.trim()
+      const default_ota_channel = fleetDefaultChannel.trim()
+      if (!name) throw new Error('Fleet name is required.')
+      if (!default_ota_channel) throw new Error('Default OTA channel is required.')
+      return api.admin.createFleet(adminCred, {
+        name,
+        description: fleetDescription.trim() || null,
+        default_ota_channel,
+      })
+    },
+    onSuccess: (fleet) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'fleets'] })
+      setFleetSelectedId(fleet.id)
+      setFleetName('')
+      setFleetDescription('')
+      toast({ title: 'Fleet created', description: fleet.name, variant: 'success' })
+    },
+    onError: (error) => {
+      toast({ title: 'Unable to create fleet', description: (error as Error).message, variant: 'error' })
+    },
+  })
+
+  const addFleetDeviceMutation = useMutation({
+    mutationFn: async () => {
+      const fleetId = fleetSelectedId.trim()
+      const deviceIdValue = fleetDeviceId.trim()
+      if (!fleetId) throw new Error('Fleet ID is required.')
+      if (!deviceIdValue) throw new Error('Device ID is required.')
+      return api.admin.addFleetDevice(adminCred, fleetId, deviceIdValue)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'fleets'] })
+      setFleetDeviceId('')
+      toast({ title: 'Device added to fleet', variant: 'success' })
+    },
+    onError: (error) => {
+      toast({ title: 'Unable to add device to fleet', description: (error as Error).message, variant: 'error' })
+    },
+  })
+
+  const putFleetAccessMutation = useMutation({
+    mutationFn: async () => {
+      const fleetId = fleetSelectedId.trim()
+      const email = fleetAccessEmail.trim().toLowerCase()
+      if (!fleetId) throw new Error('Fleet ID is required.')
+      if (!email || !email.includes('@')) throw new Error('Principal email is required.')
+      return api.admin.fleetAccess.put(adminCred, fleetId, email, { access_role: fleetAccessRole })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'fleetAccess', fleetSelectedId.trim()] })
+      setFleetAccessEmail('')
+      toast({ title: 'Fleet access saved', variant: 'success' })
+    },
+    onError: (error) => {
+      toast({ title: 'Unable to save fleet access', description: (error as Error).message, variant: 'error' })
+    },
+  })
+
+  const createProcedureDefinitionMutation = useMutation({
+    mutationFn: async () => {
+      const name = procedureName.trim()
+      const timeout_s = Number.parseInt(procedureTimeoutS, 10)
+      if (!name) throw new Error('Procedure name is required.')
+      if (!Number.isFinite(timeout_s) || timeout_s <= 0) throw new Error('Timeout must be a positive number.')
+      let request_schema: Record<string, unknown> = {}
+      let response_schema: Record<string, unknown> = {}
+      try {
+        request_schema = JSON.parse(procedureRequestSchema.trim() || '{}')
+        response_schema = JSON.parse(procedureResponseSchema.trim() || '{}')
+      } catch {
+        throw new Error('Procedure schemas must be valid JSON.')
+      }
+      return api.admin.createProcedureDefinition(adminCred, {
+        name,
+        description: procedureDescription.trim() || null,
+        request_schema,
+        response_schema,
+        timeout_s,
+        enabled: true,
+      })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'procedureDefinitions'] })
+      setProcedureName('')
+      setProcedureDescription('')
+      setProcedureRequestSchema('{}')
+      setProcedureResponseSchema('{}')
+      toast({ title: 'Procedure definition created', variant: 'success' })
+    },
+    onError: (error) => {
+      toast({ title: 'Unable to create procedure definition', description: (error as Error).message, variant: 'error' })
+    },
+  })
+
   const shutdownMutation = useMutation({
     mutationFn: async () => {
       const deviceIdValue = shutdownDeviceId.trim()
@@ -322,180 +565,6 @@ export function AdminPage() {
     },
   })
 
-  const createManifestMutation = useMutation({
-    mutationFn: async () => {
-      const gitTag = manifestGitTag.trim()
-      const commitSha = manifestCommitSha.trim()
-      const signature = manifestSignature.trim()
-      const signatureKeyId = manifestSignatureKeyId.trim()
-      if (!gitTag) throw new Error('Git tag is required.')
-      if (!commitSha) throw new Error('Commit SHA is required.')
-      if (!signature) throw new Error('Signature is required.')
-      if (!signatureKeyId) throw new Error('Signature key id is required.')
-      let constraints: Record<string, unknown> = {}
-      if (manifestConstraints.trim()) {
-        try {
-          const parsed = JSON.parse(manifestConstraints)
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('Manifest constraints must be a JSON object.')
-          }
-          constraints = parsed as Record<string, unknown>
-        } catch {
-          throw new Error('Manifest constraints must be valid JSON object.')
-        }
-      }
-      return api.admin.createReleaseManifest(adminCred, {
-        git_tag: gitTag,
-        commit_sha: commitSha,
-        signature,
-        signature_key_id: signatureKeyId,
-        constraints,
-        status: manifestStatus.trim() || 'active',
-      })
-    },
-    onSuccess: (manifest) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'releaseManifests'] })
-      setDeploymentManifestId((prev) => prev || manifest.id)
-      toast({
-        title: 'Release manifest created',
-        description: `${manifest.git_tag} (${manifest.id.slice(0, 8)})`,
-        variant: 'success',
-      })
-    },
-    onError: (error) => {
-      toast({
-        title: 'Unable to create release manifest',
-        description: (error as Error).message,
-        variant: 'error',
-      })
-    },
-  })
-
-  const createDeploymentMutation = useMutation({
-    mutationFn: async () => {
-      const manifestId = deploymentManifestId.trim()
-      if (!manifestId) throw new Error('Manifest ID is required.')
-
-      const targetSelector: {
-        mode: 'all' | 'cohort' | 'labels' | 'explicit_ids'
-        cohort?: string
-        labels?: Record<string, string>
-        device_ids?: string[]
-      } = { mode: deploymentSelectorMode }
-      if (deploymentSelectorMode === 'cohort') {
-        const cohort = deploymentSelectorCohort.trim()
-        if (!cohort) throw new Error('Cohort is required for cohort selector.')
-        targetSelector.cohort = cohort
-      } else if (deploymentSelectorMode === 'labels') {
-        try {
-          const parsed = JSON.parse(deploymentSelectorLabels)
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            throw new Error('Labels must be a JSON object.')
-          }
-          const labels = Object.fromEntries(
-            Object.entries(parsed).map(([k, v]) => [String(k).trim(), String(v).trim()]),
-          )
-          if (!Object.keys(labels).length) throw new Error('At least one label is required.')
-          targetSelector.labels = labels
-        } catch {
-          throw new Error('Labels must be valid JSON object.')
-        }
-      } else if (deploymentSelectorMode === 'explicit_ids') {
-        const ids = Array.from(
-          new Set(
-            deploymentSelectorIds
-              .split(',')
-              .map((v) => v.trim())
-              .filter(Boolean),
-          ),
-        )
-        if (!ids.length) throw new Error('At least one device ID is required for explicit selector.')
-        targetSelector.device_ids = ids
-      }
-
-      const rolloutStages = Array.from(
-        new Set(
-          deploymentRolloutStages
-            .split(',')
-            .map((v) => Number.parseInt(v.trim(), 10))
-            .filter((v) => Number.isFinite(v) && v > 0 && v <= 100),
-        ),
-      ).sort((a, b) => a - b)
-      if (!rolloutStages.length) throw new Error('Rollout stages must include at least one value 1..100.')
-
-      const failureRateThreshold = Number.parseFloat(deploymentFailureRateThreshold)
-      if (!Number.isFinite(failureRateThreshold) || failureRateThreshold < 0 || failureRateThreshold > 1) {
-        throw new Error('Failure threshold must be between 0 and 1.')
-      }
-      const noQuorumTimeoutS = Number.parseInt(deploymentNoQuorumTimeoutS, 10)
-      if (!Number.isFinite(noQuorumTimeoutS) || noQuorumTimeoutS < 60) {
-        throw new Error('No-quorum timeout must be >= 60.')
-      }
-      const healthTimeoutS = Number.parseInt(deploymentHealthTimeoutS, 10)
-      if (!Number.isFinite(healthTimeoutS) || healthTimeoutS < 10) {
-        throw new Error('Health timeout must be >= 10.')
-      }
-      const commandTtlS = Number.parseInt(deploymentCommandTtlS, 10)
-      if (!Number.isFinite(commandTtlS) || commandTtlS < 60) {
-        throw new Error('Command TTL must be >= 60.')
-      }
-
-      return api.admin.createDeployment(adminCred, {
-        manifest_id: manifestId,
-        target_selector: targetSelector,
-        rollout_stages_pct: rolloutStages,
-        failure_rate_threshold: failureRateThreshold,
-        no_quorum_timeout_s: noQuorumTimeoutS,
-        health_timeout_s: healthTimeoutS,
-        command_ttl_s: commandTtlS,
-        power_guard_required: deploymentPowerGuardRequired,
-        rollback_to_tag: deploymentRollbackToTag.trim() || null,
-      })
-    },
-    onSuccess: (deployment) => {
-      setDeploymentLookupId(deployment.id)
-      qc.invalidateQueries({ queryKey: ['admin', 'deploymentDetail', deployment.id] })
-      qc.invalidateQueries({ queryKey: ['admin', 'events'] })
-      toast({
-        title: 'Deployment created',
-        description: `ID ${deployment.id.slice(0, 8)} stage ${deployment.stage}`,
-        variant: 'success',
-      })
-    },
-    onError: (error) => {
-      toast({
-        title: 'Unable to create deployment',
-        description: (error as Error).message,
-        variant: 'error',
-      })
-    },
-  })
-
-  const deploymentActionMutation = useMutation({
-    mutationFn: async (action: 'pause' | 'resume' | 'abort') => {
-      const deploymentId = deploymentLookupId.trim()
-      if (!deploymentId) throw new Error('Deployment ID is required.')
-      if (action === 'pause') return api.admin.pauseDeployment(adminCred, deploymentId)
-      if (action === 'resume') return api.admin.resumeDeployment(adminCred, deploymentId)
-      return api.admin.abortDeployment(adminCred, deploymentId, { reason: deploymentAbortReason.trim() || undefined })
-    },
-    onSuccess: (result) => {
-      qc.invalidateQueries({ queryKey: ['admin', 'deploymentDetail', result.id] })
-      qc.invalidateQueries({ queryKey: ['admin', 'events'] })
-      toast({
-        title: 'Deployment updated',
-        description: `${result.id.slice(0, 8)} → ${result.status}`,
-        variant: result.status === 'aborted' ? 'warning' : 'success',
-      })
-    },
-    onError: (error) => {
-      toast({
-        title: 'Unable to update deployment',
-        description: (error as Error).message,
-        variant: 'error',
-      })
-    },
-  })
 
   const ingestionCols = React.useMemo<ColumnDef<IngestionBatchOut>[]>(() => {
     return [
@@ -534,11 +603,22 @@ export function AdminPage() {
     return [
       { header: 'Device', accessorKey: 'device_id', cell: (i) => <Link to="/devices/$deviceId" params={{ deviceId: String(i.getValue()) }} className="font-mono text-xs">{String(i.getValue())}</Link> },
       { header: 'Created', accessorKey: 'created_at', cell: (i) => <span className="text-muted-foreground">{fmtDateTime(i.getValue() as any)}</span> },
+      { header: 'Source', accessorKey: 'source_kind', cell: (i) => <Badge variant="outline">{String(i.getValue())}</Badge> },
+      { header: 'Source ID', accessorKey: 'source_id', cell: (i) => <span className="font-mono text-xs">{String(i.getValue() ?? '—')}</span> },
       { header: 'Type', accessorKey: 'alert_type' },
       { header: 'Channel', accessorKey: 'channel', cell: (i) => <Badge variant="secondary">{String(i.getValue())}</Badge> },
       { header: 'Decision', accessorKey: 'decision' },
       { header: 'Delivered', accessorKey: 'delivered', cell: (i) => (i.getValue() ? <Badge variant="success">yes</Badge> : <Badge variant="destructive">no</Badge>) },
       { header: 'Reason', accessorKey: 'reason', cell: (i) => <span className="text-muted-foreground">{String(i.getValue())}</span> },
+      {
+        header: 'Payload',
+        cell: (i) => (
+          <details className="text-xs text-muted-foreground">
+            <summary className="cursor-pointer">view</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words">{JSON.stringify(i.row.original.payload, null, 2)}</pre>
+          </details>
+        ),
+      },
     ]
   }, [])
 
@@ -594,6 +674,45 @@ export function AdminPage() {
       },
     ]
   }, [deleteAccessMutation])
+
+  const fleetCols = React.useMemo<ColumnDef<FleetOut>[]>(() => {
+    return [
+      { header: 'Name', accessorKey: 'name' },
+      { header: 'Fleet ID', accessorKey: 'id', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      { header: 'Channel', accessorKey: 'default_ota_channel', cell: (i) => <Badge variant="secondary">{String(i.getValue())}</Badge> },
+      { header: 'Devices', accessorKey: 'device_count', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      { header: 'Description', accessorKey: 'description', cell: (i) => <span className="text-muted-foreground">{String(i.getValue() ?? '—')}</span> },
+    ]
+  }, [])
+
+  const fleetAccessCols = React.useMemo<ColumnDef<any>[]>(() => {
+    return [
+      { header: 'Principal', accessorKey: 'principal_email', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      { header: 'Role', accessorKey: 'access_role', cell: (i) => <Badge variant="secondary">{String(i.getValue())}</Badge> },
+      { header: 'Updated', accessorKey: 'updated_at', cell: (i) => <span className="text-muted-foreground">{fmtDateTime(i.getValue() as any)}</span> },
+    ]
+  }, [])
+
+  const procedureDefinitionCols = React.useMemo<ColumnDef<DeviceProcedureDefinitionOut>[]>(() => {
+    return [
+      { header: 'Name', accessorKey: 'name' },
+      { header: 'Timeout', accessorKey: 'timeout_s', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}s</span> },
+      { header: 'Enabled', accessorKey: 'enabled', cell: (i) => (i.getValue() ? <Badge variant="success">yes</Badge> : <Badge variant="outline">no</Badge>) },
+      { header: 'Created by', accessorKey: 'created_by', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      { header: 'Description', accessorKey: 'description', cell: (i) => <span className="text-muted-foreground">{String(i.getValue() ?? '—')}</span> },
+    ]
+  }, [])
+
+  const filteredProcedureDefinitions = React.useMemo(() => {
+    const q = procedureFilter.toLowerCase()
+    const rows = procedureDefinitionsQ.data ?? []
+    if (!q) return rows
+    return rows.filter((row) => {
+      const name = row.name.toLowerCase()
+      const description = String(row.description ?? '').toLowerCase()
+      return name.includes(q) || description.includes(q)
+    })
+  }, [procedureDefinitionsQ.data, procedureFilter])
 
   const tabs: Array<{ key: AdminTab; label: string }> = [
     { key: 'events', label: 'Events' },
@@ -661,13 +780,13 @@ export function AdminPage() {
         </Callout>
       ) : keyRequired ? (
         <Callout title="Admin key required" tone="warning">
-          Configure an admin key in <Link to="/settings" className="underline">Settings</Link>.
+          Configure an admin key in <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
         </Callout>
       ) : keyValidating ? (
         <Callout title="Validating admin key">Checking admin access…</Callout>
       ) : keyInvalid ? (
         <Callout title="Invalid admin key" tone="warning">
-          The configured key was rejected. Update it in <Link to="/settings" className="underline">Settings</Link>.
+          The configured key was rejected. Update it in <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
         </Callout>
       ) : null}
 
@@ -890,375 +1009,169 @@ export function AdminPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>OTA releases and deployments</CardTitle>
+              <CardTitle>Fleets</CardTitle>
               <CardDescription>
-                Publish signed release manifests and manage staged fleet rollouts.
+                Manage fleet governance scopes, default channels, and fleet-scoped access.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Fleet name</Label>
+                  <Input value={fleetName} onChange={(e) => setFleetName(e.target.value)} placeholder="Pilot West" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Default OTA channel</Label>
+                  <Input value={fleetDefaultChannel} onChange={(e) => setFleetDefaultChannel(e.target.value)} placeholder="stable" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2 lg:col-span-3">
+                  <Label>Description</Label>
+                  <Input value={fleetDescription} onChange={(e) => setFleetDescription(e.target.value)} placeholder="Pilot devices for the west field cluster" disabled={inputsDisabled} />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => createFleetMutation.mutate()} disabled={inputsDisabled || createFleetMutation.isPending}>
+                  {createFleetMutation.isPending ? 'Creating fleet…' : 'Create fleet'}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'fleets'] })} disabled={inputsDisabled}>
+                  Refresh fleets
+                </Button>
+              </div>
+              <DataTable<FleetOut>
+                data={fleetsQ.data ?? []}
+                columns={fleetCols}
+                emptyState="No fleets yet."
+                onRowClick={(row) => setFleetSelectedId(row.id)}
+              />
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Selected fleet ID</Label>
+                  <Input value={fleetSelectedId} onChange={(e) => setFleetSelectedId(e.target.value)} placeholder="fleet UUID" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Device ID</Label>
+                  <Input value={fleetDeviceId} onChange={(e) => setFleetDeviceId(e.target.value)} placeholder="well-001" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label>Fleet access principal</Label>
+                  <Input value={fleetAccessEmail} onChange={(e) => setFleetAccessEmail(e.target.value)} placeholder="operator@example.com" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Fleet access role</Label>
+                  <select
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={fleetAccessRole}
+                    onChange={(e) => setFleetAccessRole(e.target.value as 'viewer' | 'operator' | 'owner')}
+                    disabled={inputsDisabled}
+                  >
+                    <option value="viewer">viewer</option>
+                    <option value="operator">operator</option>
+                    <option value="owner">owner</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => addFleetDeviceMutation.mutate()} disabled={inputsDisabled || addFleetDeviceMutation.isPending}>
+                  {addFleetDeviceMutation.isPending ? 'Adding device…' : 'Add device to fleet'}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => putFleetAccessMutation.mutate()} disabled={inputsDisabled || putFleetAccessMutation.isPending}>
+                  {putFleetAccessMutation.isPending ? 'Saving access…' : 'Grant fleet access'}
+                </Button>
+              </div>
+              <DataTable<any>
+                data={fleetAccessQ.data ?? []}
+                columns={fleetAccessCols}
+                emptyState={fleetSelectedId.trim() ? 'No fleet access grants yet.' : 'Select or enter a fleet ID to manage access.'}
+              />
+            </CardContent>
+          </Card>
+
+          <div id="procedure-definitions">
+          <Card>
+            <CardHeader>
+              <CardTitle>Procedure definitions</CardTitle>
+              <CardDescription>
+                Create predeclared typed procedures for device-side invocation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Filter definitions</Label>
+                <Input
+                  value={procedureFilterRaw}
+                  onChange={(e) => setProcedureFilterRaw(e.target.value)}
+                  placeholder="capture_snapshot"
+                  disabled={inputsDisabled}
+                />
+              </div>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>Name</Label>
+                  <Input value={procedureName} onChange={(e) => setProcedureName(e.target.value)} placeholder="capture_snapshot" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Timeout seconds</Label>
+                  <Input value={procedureTimeoutS} onChange={(e) => setProcedureTimeoutS(e.target.value)} placeholder="300" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2 lg:col-span-3">
+                  <Label>Description</Label>
+                  <Input value={procedureDescription} onChange={(e) => setProcedureDescription(e.target.value)} placeholder="Capture a diagnostic snapshot from the selected camera" disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2 lg:col-span-3">
+                  <Label>Request schema JSON</Label>
+                  <textarea className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono" value={procedureRequestSchema} onChange={(e) => setProcedureRequestSchema(e.target.value)} disabled={inputsDisabled} />
+                </div>
+                <div className="space-y-2 lg:col-span-3">
+                  <Label>Response schema JSON</Label>
+                  <textarea className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono" value={procedureResponseSchema} onChange={(e) => setProcedureResponseSchema(e.target.value)} disabled={inputsDisabled} />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={() => createProcedureDefinitionMutation.mutate()} disabled={inputsDisabled || createProcedureDefinitionMutation.isPending}>
+                  {createProcedureDefinitionMutation.isPending ? 'Creating procedure…' : 'Create procedure definition'}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'procedureDefinitions'] })} disabled={inputsDisabled}>
+                  Refresh procedures
+                </Button>
+              </div>
+              <DataTable<DeviceProcedureDefinitionOut>
+                data={filteredProcedureDefinitions}
+                columns={procedureDefinitionCols}
+                emptyState="No procedure definitions yet."
+              />
+            </CardContent>
+          </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Releases Workspace</CardTitle>
+              <CardDescription>
+                Release publishing and rollout control now live in the dedicated Releases workspace.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               {!otaUpdatesEnabled ? (
                 <Callout title="OTA routes disabled">
-                  Enable <span className="font-mono">ENABLE_OTA_UPDATES=1</span> on the API service to use
-                  manifest/deployment controls.
+                  Enable <span className="font-mono">ENABLE_OTA_UPDATES=1</span> on the API service to use release and deployment controls.
                 </Callout>
               ) : null}
-
-              <div className="grid gap-4 lg:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Git tag</Label>
-                  <Input
-                    value={manifestGitTag}
-                    onChange={(e) => setManifestGitTag(e.target.value)}
-                    placeholder="v1.4.0"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
+              <div className="space-y-3">
+                <div className="text-sm text-muted-foreground">
+                  Release publishing, rollout creation, lifecycle control, and target inspection now live in the dedicated
+                  Releases workspace.
                 </div>
-                <div className="space-y-2">
-                  <Label>Commit SHA</Label>
-                  <Input
-                    value={manifestCommitSha}
-                    onChange={(e) => setManifestCommitSha(e.target.value)}
-                    placeholder="abc123..."
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Signature key ID</Label>
-                  <Input
-                    value={manifestSignatureKeyId}
-                    onChange={(e) => setManifestSignatureKeyId(e.target.value)}
-                    placeholder="ops-key-1"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Status</Label>
-                  <Input
-                    value={manifestStatus}
-                    onChange={(e) => setManifestStatus(e.target.value)}
-                    placeholder="active"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2 lg:col-span-2">
-                  <Label>Signature</Label>
-                  <Input
-                    value={manifestSignature}
-                    onChange={(e) => setManifestSignature(e.target.value)}
-                    placeholder="base64-signature"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2 lg:col-span-2">
-                  <Label>Constraints JSON</Label>
-                  <textarea
-                    className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-                    value={manifestConstraints}
-                    onChange={(e) => setManifestConstraints(e.target.value)}
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => createManifestMutation.mutate()}
-                  disabled={inputsDisabled || !otaUpdatesEnabled || createManifestMutation.isPending}
-                >
-                  {createManifestMutation.isPending ? 'Creating manifest…' : 'Create manifest'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => qc.invalidateQueries({ queryKey: ['admin', 'releaseManifests'] })}
-                  disabled={inputsDisabled || !otaUpdatesEnabled}
-                >
-                  Refresh manifests
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Manifests</Label>
-                {releaseManifestsQ.isError ? (
-                  <div className="text-sm text-destructive">Error: {(releaseManifestsQ.error as Error).message}</div>
-                ) : null}
-                {(releaseManifestsQ.data ?? []).length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No manifests found.</div>
-                ) : (
-                  <div className="max-h-56 overflow-auto rounded-md border">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-muted/40">
-                        <tr>
-                          <th className="px-2 py-2">Tag</th>
-                          <th className="px-2 py-2">Manifest ID</th>
-                          <th className="px-2 py-2">Status</th>
-                          <th className="px-2 py-2">Created</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(releaseManifestsQ.data ?? []).map((row: ReleaseManifestOut) => (
-                          <tr
-                            key={row.id}
-                            className="cursor-pointer border-t hover:bg-muted/20"
-                            onClick={() => setDeploymentManifestId(row.id)}
-                          >
-                            <td className="px-2 py-2 font-mono">{row.git_tag}</td>
-                            <td className="px-2 py-2 font-mono">{row.id}</td>
-                            <td className="px-2 py-2">
-                              <Badge variant="secondary">{row.status}</Badge>
-                            </td>
-                            <td className="px-2 py-2 text-muted-foreground">{fmtDateTime(row.created_at)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <div className="grid gap-4 lg:grid-cols-3">
-                <div className="space-y-2 lg:col-span-2">
-                  <Label>Manifest ID</Label>
-                  <Input
-                    value={deploymentManifestId}
-                    onChange={(e) => setDeploymentManifestId(e.target.value)}
-                    placeholder="manifest UUID"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Selector mode</Label>
-                  <select
-                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                    value={deploymentSelectorMode}
-                    onChange={(e) =>
-                      setDeploymentSelectorMode(
-                        e.target.value as 'all' | 'cohort' | 'labels' | 'explicit_ids',
-                      )
-                    }
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    to="/releases"
+                    search={{ deploymentId: '', manifestId: '', targetDeviceId: '' }}
+                    className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-muted/40"
                   >
-                    <option value="all">all</option>
-                    <option value="cohort">cohort</option>
-                    <option value="labels">labels</option>
-                    <option value="explicit_ids">explicit_ids</option>
-                  </select>
-                </div>
-                {deploymentSelectorMode === 'cohort' ? (
-                  <div className="space-y-2">
-                    <Label>Cohort</Label>
-                    <Input
-                      value={deploymentSelectorCohort}
-                      onChange={(e) => setDeploymentSelectorCohort(e.target.value)}
-                      placeholder="pilot-west"
-                      disabled={inputsDisabled || !otaUpdatesEnabled}
-                    />
-                  </div>
-                ) : null}
-                {deploymentSelectorMode === 'labels' ? (
-                  <div className="space-y-2 lg:col-span-2">
-                    <Label>Labels JSON</Label>
-                    <textarea
-                      className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono"
-                      value={deploymentSelectorLabels}
-                      onChange={(e) => setDeploymentSelectorLabels(e.target.value)}
-                      disabled={inputsDisabled || !otaUpdatesEnabled}
-                    />
-                  </div>
-                ) : null}
-                {deploymentSelectorMode === 'explicit_ids' ? (
-                  <div className="space-y-2 lg:col-span-2">
-                    <Label>Device IDs (comma-separated)</Label>
-                    <Input
-                      value={deploymentSelectorIds}
-                      onChange={(e) => setDeploymentSelectorIds(e.target.value)}
-                      placeholder="well-001, well-002"
-                      disabled={inputsDisabled || !otaUpdatesEnabled}
-                    />
-                  </div>
-                ) : null}
-                <div className="space-y-2">
-                  <Label>Rollout stages</Label>
-                  <Input
-                    value={deploymentRolloutStages}
-                    onChange={(e) => setDeploymentRolloutStages(e.target.value)}
-                    placeholder="1,10,50,100"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Failure threshold</Label>
-                  <Input
-                    value={deploymentFailureRateThreshold}
-                    onChange={(e) => setDeploymentFailureRateThreshold(e.target.value)}
-                    placeholder="0.2"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>No-quorum timeout (s)</Label>
-                  <Input
-                    value={deploymentNoQuorumTimeoutS}
-                    onChange={(e) => setDeploymentNoQuorumTimeoutS(e.target.value)}
-                    placeholder="1800"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Health timeout (s)</Label>
-                  <Input
-                    value={deploymentHealthTimeoutS}
-                    onChange={(e) => setDeploymentHealthTimeoutS(e.target.value)}
-                    placeholder="300"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Command TTL (s)</Label>
-                  <Input
-                    value={deploymentCommandTtlS}
-                    onChange={(e) => setDeploymentCommandTtlS(e.target.value)}
-                    placeholder="15552000"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Rollback tag (optional)</Label>
-                  <Input
-                    value={deploymentRollbackToTag}
-                    onChange={(e) => setDeploymentRollbackToTag(e.target.value)}
-                    placeholder="v1.3.9"
-                    disabled={inputsDisabled || !otaUpdatesEnabled}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Power guard required</Label>
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      checked={deploymentPowerGuardRequired}
-                      onChange={(e) => setDeploymentPowerGuardRequired(e.target.checked)}
-                      disabled={inputsDisabled || !otaUpdatesEnabled}
-                    />
-                    <span className="text-sm text-muted-foreground">defer when power is unstable</span>
-                  </div>
+                    Open Releases workspace
+                  </Link>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  onClick={() => createDeploymentMutation.mutate()}
-                  disabled={inputsDisabled || !otaUpdatesEnabled || createDeploymentMutation.isPending}
-                >
-                  {createDeploymentMutation.isPending ? 'Creating deployment…' : 'Create deployment'}
-                </Button>
-                <Input
-                  value={deploymentLookupId}
-                  onChange={(e) => setDeploymentLookupId(e.target.value)}
-                  placeholder="deployment UUID"
-                  disabled={inputsDisabled || !otaUpdatesEnabled}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    qc.invalidateQueries({
-                      queryKey: ['admin', 'deploymentDetail', deploymentLookupId.trim()],
-                    })
-                  }
-                  disabled={inputsDisabled || !otaUpdatesEnabled || !deploymentLookupId.trim()}
-                >
-                  Refresh deployment
-                </Button>
-              </div>
-
-              {deploymentDetailQ.isError ? (
-                <div className="text-sm text-destructive">
-                  Error: {(deploymentDetailQ.error as Error).message}
-                </div>
-              ) : null}
-              {deploymentDetailQ.data ? (
-                <div className="space-y-3 rounded-md border p-3 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary">{deploymentDetailQ.data.status}</Badge>
-                    <span className="font-mono text-xs">stage {deploymentDetailQ.data.stage}</span>
-                    <span className="font-mono text-xs">targets {deploymentDetailQ.data.total_targets}</span>
-                    <span className="font-mono text-xs">healthy {deploymentDetailQ.data.healthy_targets}</span>
-                    <span className="font-mono text-xs">failed {deploymentDetailQ.data.failed_targets}</span>
-                    <span className="font-mono text-xs">deferred {deploymentDetailQ.data.deferred_targets}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Deployment: <span className="font-mono">{deploymentDetailQ.data.id}</span>
-                    {' · '}
-                    Manifest tag: <span className="font-mono">{deploymentDetailQ.data.manifest.git_tag}</span>
-                    {' · '}
-                    Updated: <span className="font-mono">{fmtDateTime(deploymentDetailQ.data.updated_at)}</span>
-                  </div>
-                  {deploymentDetailQ.data.halt_reason ? (
-                    <div className="text-xs text-destructive">
-                      Halt reason: {deploymentDetailQ.data.halt_reason}
-                    </div>
-                  ) : null}
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => deploymentActionMutation.mutate('pause')}
-                      disabled={
-                        inputsDisabled ||
-                        !otaUpdatesEnabled ||
-                        deploymentActionMutation.isPending ||
-                        deploymentDetailQ.data.status !== 'active'
-                      }
-                    >
-                      Pause
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => deploymentActionMutation.mutate('resume')}
-                      disabled={
-                        inputsDisabled ||
-                        !otaUpdatesEnabled ||
-                        deploymentActionMutation.isPending ||
-                        deploymentDetailQ.data.status !== 'paused'
-                      }
-                    >
-                      Resume
-                    </Button>
-                    <Input
-                      value={deploymentAbortReason}
-                      onChange={(e) => setDeploymentAbortReason(e.target.value)}
-                      placeholder="abort reason"
-                      disabled={inputsDisabled || !otaUpdatesEnabled}
-                    />
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      onClick={() => deploymentActionMutation.mutate('abort')}
-                      disabled={
-                        inputsDisabled ||
-                        !otaUpdatesEnabled ||
-                        deploymentActionMutation.isPending ||
-                        deploymentDetailQ.data.status === 'aborted' ||
-                        deploymentDetailQ.data.status === 'completed'
-                      }
-                    >
-                      Abort
-                    </Button>
-                  </div>
-                  <details className="text-xs text-muted-foreground">
-                    <summary className="cursor-pointer">Recent deployment events</summary>
-                    <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words">
-                      {JSON.stringify(
-                        (deploymentDetailQ.data as DeploymentDetailOut).events.slice(0, 30),
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  </details>
-                </div>
-              ) : null}
             </CardContent>
           </Card>
         </>
@@ -1281,6 +1194,17 @@ export function AdminPage() {
                   disabled={inputsDisabled}
                 />
               </div>
+              {tab === 'ingestions' || tab === 'drift' ? (
+                <div className="space-y-2">
+                  <Label>Batch ID</Label>
+                  <Input
+                    value={batchIdRaw}
+                    onChange={(e) => setBatchIdRaw(e.target.value)}
+                    placeholder="Optional batch id…"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <Label>Status (exports tab)</Label>
                 <Input
@@ -1290,12 +1214,89 @@ export function AdminPage() {
                   disabled={inputsDisabled}
                 />
               </div>
+              {tab === 'exports' ? (
+                <div className="space-y-2">
+                  <Label>Export batch ID</Label>
+                  <Input
+                    value={exportIdRaw}
+                    onChange={(e) => setExportIdRaw(e.target.value)}
+                    placeholder="Optional export batch id…"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+              ) : (
               <div className="space-y-2">
                 <Label>Notes</Label>
                 <div className="text-xs text-muted-foreground">
-                  Ingestions/drift/notifications support a device filter. Exports support a status filter.
+                  Ingestions/drift support a device filter. Notifications support device plus delivery filters. Exports support a status filter.
                 </div>
               </div>
+              )}
+              {tab === 'exports' ? (
+                <div className="space-y-2">
+                  <Label>Notes</Label>
+                  <div className="text-xs text-muted-foreground">
+                    Exports support status filtering plus a local export batch id filter for exact landing-state navigation.
+                  </div>
+                </div>
+              ) : null}
+              {tab === 'notifications' ? (
+                <>
+                  <div className="space-y-2">
+                    <Label>Source kind</Label>
+                    <Input
+                      value={notificationSourceKindRaw}
+                      onChange={(e) => setNotificationSourceKindRaw(e.target.value)}
+                      placeholder="alert | device_event | deployment_event"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Channel</Label>
+                    <Input
+                      value={notificationChannelRaw}
+                      onChange={(e) => setNotificationChannelRaw(e.target.value)}
+                      placeholder="webhook"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Decision</Label>
+                    <Input
+                      value={notificationDecisionRaw}
+                      onChange={(e) => setNotificationDecisionRaw(e.target.value)}
+                      placeholder="delivered | blocked | filtered"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="flex items-center gap-3 lg:col-span-3">
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={notificationDeliveredOnly}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                          setNotificationDeliveredOnly(next)
+                          if (next) setNotificationFailedOnly(false)
+                        }}
+                        disabled={inputsDisabled}
+                      />
+                      Delivered only
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={notificationFailedOnly}
+                        onChange={(e) => {
+                          const next = e.target.checked
+                          setNotificationFailedOnly(next)
+                          if (next) setNotificationDeliveredOnly(false)
+                        }}
+                        disabled={inputsDisabled}
+                      />
+                      Undelivered only
+                    </label>
+                  </div>
+                </>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -1323,54 +1324,176 @@ export function AdminPage() {
                 <Callout title="Access guidance">{activeAccessHint}</Callout>
               ) : null}
               {tab === 'ingestions' ? (
-                <DataTable<IngestionBatchOut>
-                  data={ingestionsQ.data ?? []}
-                  columns={ingestionCols}
-                  height={560}
-                  enableSorting
-                  initialSorting={[{ id: 'received_at', desc: true }]}
-                  emptyState="No batches found."
-                />
+                <div id="admin-ingestions" className="space-y-3">
+                  {ingestionsQ.data ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Showing {Math.min(ingestionsQ.data.total, ingestionOffset + 1)}-{Math.min(ingestionsQ.data.total, ingestionOffset + ingestionsQ.data.items.length)} of {ingestionsQ.data.total}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={() => setIngestionOffset((current) => Math.max(0, current - ingestionLimit))} disabled={ingestionOffset <= 0}>
+                          Previous page
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setIngestionOffset((current) => current + ingestionLimit)}
+                          disabled={(ingestionsQ.data.offset + ingestionsQ.data.limit) >= ingestionsQ.data.total}
+                        >
+                          Next page
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <DataTable<IngestionBatchOut>
+                    data={filteredIngestions}
+                    columns={ingestionCols}
+                    height={560}
+                    enableSorting
+                    initialSorting={[{ id: 'received_at', desc: true }]}
+                    emptyState="No batches found."
+                  />
+                </div>
               ) : null}
               {tab === 'events' ? (
-                <DataTable<AdminEventOut>
-                  data={eventsQ.data ?? []}
-                  columns={eventCols}
-                  height={560}
-                  enableSorting
-                  initialSorting={[{ id: 'created_at', desc: true }]}
-                  emptyState="No admin events found."
-                />
+                <div id="admin-events" className="space-y-3">
+                  <div className="grid gap-3 lg:grid-cols-3">
+                    <Input
+                      value={deviceRaw}
+                      onChange={(e) => setDeviceRaw(e.target.value)}
+                      placeholder="Optional device id filter…"
+                    />
+                    <Input
+                      value={eventActionRaw}
+                      onChange={(e) => setEventActionRaw(e.target.value)}
+                      placeholder="Optional action filter…"
+                    />
+                    <Input
+                      value={eventTargetTypeRaw}
+                      onChange={(e) => setEventTargetTypeRaw(e.target.value)}
+                      placeholder="Optional target type filter…"
+                    />
+                  </div>
+                  {eventsQ.data ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Showing {Math.min(eventsQ.data.total, eventOffset + 1)}-{Math.min(eventsQ.data.total, eventOffset + eventsQ.data.items.length)} of {eventsQ.data.total}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={() => setEventOffset((current) => Math.max(0, current - eventLimit))} disabled={eventOffset <= 0}>
+                          Previous page
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setEventOffset((current) => current + eventLimit)}
+                          disabled={(eventsQ.data.offset + eventsQ.data.limit) >= eventsQ.data.total}
+                        >
+                          Next page
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <DataTable<AdminEventOut>
+                    data={eventsQ.data?.items ?? []}
+                    columns={eventCols}
+                    height={560}
+                    enableSorting
+                    initialSorting={[{ id: 'created_at', desc: true }]}
+                    emptyState="No admin events found."
+                  />
+                </div>
               ) : null}
               {tab === 'drift' ? (
-                <DataTable<DriftEventOut>
-                  data={driftQ.data ?? []}
-                  columns={driftCols}
-                  height={560}
-                  enableSorting
-                  initialSorting={[{ id: 'created_at', desc: true }]}
-                  emptyState="No drift events found."
-                />
+                <div id="admin-drift" className="space-y-3">
+                  {driftQ.data ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Showing {Math.min(driftQ.data.total, driftOffset + 1)}-{Math.min(driftQ.data.total, driftOffset + driftQ.data.items.length)} of {driftQ.data.total}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={() => setDriftOffset((current) => Math.max(0, current - driftLimit))} disabled={driftOffset <= 0}>
+                          Previous page
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setDriftOffset((current) => current + driftLimit)}
+                          disabled={(driftQ.data.offset + driftQ.data.limit) >= driftQ.data.total}
+                        >
+                          Next page
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <DataTable<DriftEventOut>
+                    data={filteredDrift}
+                    columns={driftCols}
+                    height={560}
+                    enableSorting
+                    initialSorting={[{ id: 'created_at', desc: true }]}
+                    emptyState="No drift events found."
+                  />
+                </div>
               ) : null}
               {tab === 'notifications' ? (
-                <DataTable<NotificationEventOut>
-                  data={notificationsQ.data ?? []}
-                  columns={notificationCols}
-                  height={560}
-                  enableSorting
-                  initialSorting={[{ id: 'created_at', desc: true }]}
-                  emptyState="No notification events found."
-                />
+                <div id="admin-notifications" className="space-y-3">
+                  {notificationsQ.data ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Showing {Math.min(notificationsQ.data.total, notificationOffset + 1)}-{Math.min(notificationsQ.data.total, notificationOffset + notificationsQ.data.items.length)} of {notificationsQ.data.total}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={() => setNotificationOffset((current) => Math.max(0, current - notificationLimit))} disabled={notificationOffset <= 0}>
+                          Previous page
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setNotificationOffset((current) => current + notificationLimit)}
+                          disabled={(notificationsQ.data.offset + notificationsQ.data.limit) >= notificationsQ.data.total}
+                        >
+                          Next page
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <DataTable<NotificationEventOut>
+                    data={notificationsQ.data?.items ?? []}
+                    columns={notificationCols}
+                    height={560}
+                    enableSorting
+                    initialSorting={[{ id: 'created_at', desc: true }]}
+                    emptyState="No notification events found."
+                  />
+                </div>
               ) : null}
               {tab === 'exports' ? (
-                <DataTable<ExportBatchOut>
-                  data={exportsQ.data ?? []}
-                  columns={exportCols}
-                  height={560}
-                  enableSorting
-                  initialSorting={[{ id: 'started_at', desc: true }]}
-                  emptyState="No export batches found."
-                />
+                <div id="admin-exports" className="space-y-3">
+                  {exportsQ.data ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Showing {filteredExports.length ? Math.min(exportsQ.data.total, exportOffset + 1) : 0}-{Math.min(exportsQ.data.total, exportOffset + filteredExports.length)} of {exportsQ.data.total}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" onClick={() => setExportOffset((current) => Math.max(0, current - exportLimit))} disabled={exportOffset <= 0}>
+                          Previous page
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setExportOffset((current) => current + exportLimit)}
+                          disabled={(exportsQ.data.offset + exportsQ.data.limit) >= exportsQ.data.total}
+                        >
+                          Next page
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <DataTable<ExportBatchOut>
+                    data={filteredExports}
+                    columns={exportCols}
+                    height={560}
+                    enableSorting
+                    initialSorting={[{ id: 'started_at', desc: true }]}
+                    emptyState="No export batches found."
+                  />
+                </div>
               ) : null}
             </CardContent>
           </Card>

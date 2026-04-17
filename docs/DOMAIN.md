@@ -84,6 +84,20 @@ These are the rules that must always hold (and should be enforced mechanically).
 - Control changes are enqueued as durable per-device commands (default TTL 180 days) and applied by agents
   on next policy fetch; devices ack application.
 
+6b) **Typed remote procedures**
+- Operators can invoke pre-declared typed procedures against devices.
+- Procedure delivery is durable and device-auth result reporting is explicit.
+- Procedures are distinct from telemetry and from owner/control mode changes.
+
+6c) **Device state and events**
+- Devices can report latest state/variables as snapshots.
+- Devices can publish append-only operational events for operator visibility and integrations.
+
+6d) **Fleet governance**
+- Devices can belong to fleets that act as governance and release scope boundaries.
+- Fleet access grants expand operator visibility/control across the devices in a fleet.
+- Fleets are not customer/tenant abstractions; they are operational groupings.
+
 7) **Fleet OTA deployments**
 - Admins publish release manifests (tag + commit + signature metadata).
 - Admins start staged deployments (`1% -> 10% -> 50% -> 100%`) for target selectors (`all|cohort|labels|explicit_ids`).

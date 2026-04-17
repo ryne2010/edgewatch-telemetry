@@ -71,9 +71,23 @@
     color-scheme: dark;
   }
 
+  html,
+  body,
+  #root {
+    width: 100%;
+    min-height: 100%;
+  }
+
   body {
     @apply bg-background text-foreground;
+    margin: 0;
     font-feature-settings: 'rlig' 1, 'calt' 1;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  body::-webkit-scrollbar {
+    display: none;
   }
 
   a {
