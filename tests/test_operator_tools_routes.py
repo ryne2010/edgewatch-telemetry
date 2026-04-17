@@ -18,13 +18,17 @@ from api.app.models import (
     Deployment,
     DeploymentEvent,
     Device,
+    DeviceAccessGrant,
     DeviceEvent,
     DeviceProcedureDefinition,
     DeviceProcedureInvocation,
+    DeviceReportedState,
     DriftEvent,
     ExportBatch,
     Fleet,
+    FleetAccessGrant,
     IngestionBatch,
+    MediaObject,
     NotificationDestination,
     NotificationEvent,
     ReleaseManifest,
@@ -127,6 +131,29 @@ def test_operator_search_returns_mixed_results(tmp_path: Path, monkeypatch) -> N
             )
         )
         session.add(
+            DeviceReportedState(
+                device_id=device.device_id,
+                key="pilot_state_key",
+                value_json={"status": "ok"},
+                schema_type="string",
+            )
+        )
+        session.add(
+            MediaObject(
+                device_id=device.device_id,
+                camera_id="cam1",
+                message_id="pilot-media-msg",
+                captured_at=operator_tools_routes._utcnow(),
+                reason="manual",
+                sha256="e" * 64,
+                bytes=1024,
+                mime_type="image/jpeg",
+                object_path="media/pilot/cam1.jpg",
+                gcs_uri=None,
+                local_path=None,
+            )
+        )
+        session.add(
             DeviceProcedureInvocation(
                 device_id=device.device_id,
                 definition_id=definition.id,
@@ -152,6 +179,17 @@ def test_operator_search_returns_mixed_results(tmp_path: Path, monkeypatch) -> N
                 power_guard_required=True,
                 health_timeout_s=300,
                 target_selector={"mode": "all"},
+            )
+        )
+        session.flush()
+        deployment = session.query(Deployment).filter(Deployment.manifest_id == "manifest-1").one()
+        session.add(
+            DeploymentEvent(
+                deployment_id=deployment.id,
+                event_type="pilot.stage_advanced",
+                device_id=device.device_id,
+                details={"note": "Pilot deployment event"},
+                created_at=operator_tools_routes._utcnow(),
             )
         )
         session.add(
@@ -184,6 +222,17 @@ def test_operator_search_returns_mixed_results(tmp_path: Path, monkeypatch) -> N
             )
         )
         session.add(
+            AdminEvent(
+                actor_email="admin@example.com",
+                actor_subject=None,
+                action="release_manifest.promote",
+                target_type="release_manifest",
+                target_device_id=None,
+                details={"manifest_id": "manifest-1", "git_tag": "Pilot Release"},
+                created_at=operator_tools_routes._utcnow(),
+            )
+        )
+        session.add(
             NotificationEvent(
                 alert_id=None,
                 device_id=device.device_id,
@@ -207,6 +256,20 @@ def test_operator_search_returns_mixed_results(tmp_path: Path, monkeypatch) -> N
                 event_types=["BATTERY_LOW"],
                 enabled=True,
                 webhook_url="https://example.com/pilot-webhook",
+            )
+        )
+        session.add(
+            DeviceAccessGrant(
+                device_id=device.device_id,
+                principal_email="pilot-operator@example.com",
+                access_role="operator",
+            )
+        )
+        session.add(
+            FleetAccessGrant(
+                fleet_id=fleet.id,
+                principal_email="pilot-owner@example.com",
+                access_role="owner",
             )
         )
         session.add(
@@ -237,10 +300,16 @@ def test_operator_search_returns_mixed_results(tmp_path: Path, monkeypatch) -> N
     assert "alert" in entity_types
     assert "ingestion_batch" in entity_types
     assert "drift_event" in entity_types
+    assert "device_state" in entity_types
     assert "procedure_definition" in entity_types
+    assert "media_object" in entity_types
     assert "notification_event" in entity_types
     assert "notification_destination" in entity_types
+    assert "device_access_grant" in entity_types
+    assert "fleet_access_grant" in entity_types
+    assert "deployment_event" in entity_types
     assert "release_manifest" in entity_types
+    assert "release_manifest_event" in entity_types
     assert "admin_event" in entity_types
     assert "notification_event" in entity_types
     assert "export_batch" in entity_types

@@ -216,6 +216,8 @@ export function AdminPage() {
     }
     if (routeSearch.deviceId) setDeviceRaw(routeSearch.deviceId)
     if (routeSearch.batchId) setBatchIdRaw(routeSearch.batchId)
+    if (routeSearch.accessDeviceId) setAccessDeviceId(routeSearch.accessDeviceId)
+    if (routeSearch.fleetId) setFleetSelectedId(routeSearch.fleetId)
     if (routeSearch.status) setStatusRaw(routeSearch.status)
     if (routeSearch.exportId) setExportIdRaw(routeSearch.exportId)
     if (routeSearch.action) setEventActionRaw(routeSearch.action)
@@ -236,9 +238,11 @@ export function AdminPage() {
     routeSearch.channel,
     routeSearch.decision,
     routeSearch.delivered,
+    routeSearch.accessDeviceId,
     routeSearch.batchId,
     routeSearch.deviceId,
     routeSearch.exportId,
+    routeSearch.fleetId,
     routeSearch.procedureName,
     routeSearch.sourceKind,
     routeSearch.status,
@@ -780,13 +784,13 @@ export function AdminPage() {
         </Callout>
       ) : keyRequired ? (
         <Callout title="Admin key required" tone="warning">
-          Configure an admin key in <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
+          <a href="/settings#admin-access" className="underline">Configure an admin key in Settings</a>.
         </Callout>
       ) : keyValidating ? (
         <Callout title="Validating admin key">Checking admin access…</Callout>
       ) : keyInvalid ? (
         <Callout title="Invalid admin key" tone="warning">
-          The configured key was rejected. Update it in <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
+          <a href="/settings#admin-access" className="underline">Update the configured key in Settings</a>.
         </Callout>
       ) : null}
 
@@ -884,7 +888,7 @@ export function AdminPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card id="device-access">
             <CardHeader>
               <CardTitle>Device ownership access</CardTitle>
               <CardDescription>
@@ -1007,7 +1011,7 @@ export function AdminPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card id="fleet-governance">
             <CardHeader>
               <CardTitle>Fleets</CardTitle>
               <CardDescription>

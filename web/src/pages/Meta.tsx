@@ -16,7 +16,7 @@ function KeyValue(props: { k: string; v: React.ReactNode }) {
 
 export function MetaPage() {
   const [search, setSearch] = React.useState('')
-  const [entityTypesInput, setEntityTypesInput] = React.useState('device,fleet,alert,ingestion_batch,drift_event,device_event,procedure_definition,procedure_invocation,deployment,release_manifest,admin_event,notification_event,notification_destination,export_batch')
+  const [entityTypesInput, setEntityTypesInput] = React.useState('device,fleet,alert,ingestion_batch,drift_event,device_state,device_event,media_object,procedure_definition,procedure_invocation,deployment,deployment_event,release_manifest,release_manifest_event,admin_event,notification_event,notification_destination,device_access_grant,fleet_access_grant,export_batch')
   const [searchOffset, setSearchOffset] = React.useState(0)
   const searchLimit = 25
   const healthQ = useQuery({ queryKey: ['health'], queryFn: api.health, refetchInterval: 60_000 })
@@ -31,7 +31,7 @@ export function MetaPage() {
         entityTypes: entityTypesInput
           .split(',')
           .map((value) => value.trim())
-          .filter(Boolean) as Array<'device' | 'fleet' | 'alert' | 'ingestion_batch' | 'drift_event' | 'device_event' | 'procedure_definition' | 'procedure_invocation' | 'deployment' | 'release_manifest' | 'admin_event' | 'notification_event' | 'notification_destination' | 'export_batch'>,
+          .filter(Boolean) as Array<'device' | 'fleet' | 'alert' | 'ingestion_batch' | 'drift_event' | 'device_state' | 'device_event' | 'media_object' | 'procedure_definition' | 'procedure_invocation' | 'deployment' | 'deployment_event' | 'release_manifest' | 'release_manifest_event' | 'admin_event' | 'notification_event' | 'notification_destination' | 'device_access_grant' | 'fleet_access_grant' | 'export_batch'>,
       }),
     enabled: search.trim().length > 0,
   })
@@ -80,7 +80,7 @@ export function MetaPage() {
         }),
       )
       return (
-        <a href={href} className="underline">
+        <a href={`${href}#alerts-feed`} className="underline">
           open
         </a>
       )
@@ -151,9 +151,30 @@ export function MetaPage() {
         </a>
       )
     }
+    if (row.entity_type === 'device_state') {
+      const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=state&stateKey=${encodeURIComponent(row.title)}#device-state`
+      return (
+        <a href={href} className="underline">
+          open
+        </a>
+      )
+    }
     if (row.entity_type === 'deployment') {
       const params = new URLSearchParams({
         deploymentId: row.entity_id,
+        manifestId: '',
+        targetDeviceId: row.device_id ?? '',
+      })
+      const href = `${buildHref('/releases', params.toString())}#releases-deployment-inspector`
+      return (
+        <a href={href} className="underline">
+          open
+        </a>
+      )
+    }
+    if (row.entity_type === 'deployment_event') {
+      const params = new URLSearchParams({
+        deploymentId: typeof row.metadata?.deployment_id === 'string' ? row.metadata.deployment_id : row.subtitle ?? '',
         manifestId: '',
         targetDeviceId: row.device_id ?? '',
       })
@@ -168,6 +189,19 @@ export function MetaPage() {
       const params = new URLSearchParams({
         deploymentId: '',
         manifestId: row.entity_id,
+        targetDeviceId: '',
+      })
+      const href = `${buildHref('/releases', params.toString())}#releases-manifests`
+      return (
+        <a href={href} className="underline">
+          open
+        </a>
+      )
+    }
+    if (row.entity_type === 'release_manifest_event') {
+      const params = new URLSearchParams({
+        deploymentId: '',
+        manifestId: typeof row.metadata?.manifest_id === 'string' ? row.metadata.manifest_id : '',
         targetDeviceId: '',
       })
       const href = `${buildHref('/releases', params.toString())}#releases-manifests`
@@ -229,6 +263,54 @@ export function MetaPage() {
         </a>
       )
     }
+    if (row.entity_type === 'device_access_grant') {
+      const params = new URLSearchParams({
+        tab: '',
+        deviceId: '',
+        batchId: '',
+        accessDeviceId: row.device_id ?? '',
+        fleetId: '',
+        status: '',
+        exportId: '',
+        action: '',
+        targetType: '',
+        sourceKind: '',
+        channel: '',
+        decision: '',
+        delivered: '',
+        procedureName: '',
+      })
+      const href = `${buildHref('/admin', params.toString())}#device-access`
+      return (
+        <a href={href} className="underline">
+          open
+        </a>
+      )
+    }
+    if (row.entity_type === 'fleet_access_grant') {
+      const params = new URLSearchParams({
+        tab: '',
+        deviceId: '',
+        batchId: '',
+        accessDeviceId: '',
+        fleetId: typeof row.metadata?.fleet_id === 'string' ? row.metadata.fleet_id : '',
+        status: '',
+        exportId: '',
+        action: '',
+        targetType: '',
+        sourceKind: '',
+        channel: '',
+        decision: '',
+        delivered: '',
+        procedureName: '',
+      })
+      const href = `${buildHref('/admin', params.toString())}#fleet-governance`
+      return (
+        <a href={href} className="underline">
+          open
+        </a>
+      )
+    }
     if (row.entity_type === 'export_batch') {
       const params = new URLSearchParams({
         tab: 'exports',
@@ -252,7 +334,15 @@ export function MetaPage() {
       )
     }
     if (row.entity_type === 'device_event') {
-      const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=events`
+      const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=events#device-events`
+      return (
+        <a href={href} className="underline">
+          open
+        </a>
+      )
+    }
+    if (row.entity_type === 'media_object') {
+      const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=media&mediaCamera=${encodeURIComponent(row.title)}#device-media`
       return (
         <a href={href} className="underline">
           open
@@ -260,7 +350,7 @@ export function MetaPage() {
       )
     }
     if (row.entity_type === 'procedure_invocation') {
-      const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=procedures`
+      const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=procedures#device-procedures`
       return (
         <a href={href} className="underline">
           open

@@ -5486,6 +5486,26 @@ Files:
 
 - This relies on the Settings page keeping the `notification-webhooks` anchor stable.
 
+## Admin-required help links now land on the Settings admin-access section (2026-04-17)
+
+### What changed
+
+- Added a stable `#admin-access` anchor to the Settings admin-access card.
+- Updated existing Admin and Device Detail help links so they land directly on that section instead of the top of Settings.
+
+### Why it changed
+
+- Several recovery and guidance flows already pointed operators to Settings, but still dropped them at the top of a long page.
+- This tightens common admin-key remediation flows without changing any backend behavior.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link changes.
+
+### Risks / rollout notes
+
+- This depends on the Settings page keeping the `admin-access` anchor stable.
+
 ## Fleet search hits now open the selected fleet directly (2026-04-17)
 
 ### What changed
@@ -5615,6 +5635,26 @@ Files:
 
 - This relies on the Alerts page continuing to honor the current query-string filter contract.
 
+## Alert links now land on the feed section (2026-04-17)
+
+### What changed
+
+- Added a stable `#alerts-feed` anchor to the Alerts feed section.
+- Updated both System search hits and Live alert links to target that anchor after applying the existing alert filters.
+
+### Why it changed
+
+- Alert links already carried the right filter state, but still dropped operators at the top of the Alerts page.
+- This removes another unnecessary scroll step from alert follow-up workflows.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link change.
+
+### Risks / rollout notes
+
+- This depends on the Alerts page keeping the `alerts-feed` anchor stable.
+
 ## Ingestion and drift search hits can prefilter by batch id (2026-04-17)
 
 ### What changed
@@ -5727,3 +5767,158 @@ Files:
 ### Risks / rollout notes
 
 - This depends on the Fleets page keeping the `fleet-devices` anchor stable.
+
+## Device reported state is now searchable (2026-04-17)
+
+### What changed
+
+- Extended unified search with the `device_state` entity.
+- Updated the System page default search entity set to include device-reported state.
+- Device Detail state tab now supports a lightweight key filter, and device-state search hits use it via `?tab=state&stateKey=...`.
+
+### Why it changed
+
+- Reported state was a first-class device-cloud surface, but it was still invisible to global search and lacked a direct landing state.
+- This closes another practical gap around viewer-facing device-state discoverability.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing device state.
+- Web typecheck/build and full harness verification after the search and device-tab filter wiring changes.
+
+### Risks / rollout notes
+
+- The state-key filter is local to the loaded state tab data, not a backend-filtered state lookup surface.
+
+## Device-detail links now land on the right section (2026-04-17)
+
+### What changed
+
+- Added stable anchors for the key Device Detail sections:
+  - `#device-state`
+  - `#device-procedures`
+  - `#device-events`
+- Updated System search hits and Live links so device state, device events, and procedure invocations land on the relevant tab and section.
+
+### Why it changed
+
+- Those links already chose the right tab, but still landed operators at the top of a long device page.
+- This tightens device-scoped follow-up work without changing backend behavior.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor/deep-link changes.
+
+### Risks / rollout notes
+
+- This depends on the Device Detail page keeping those section anchors stable.
+
+## Media objects are now searchable (2026-04-17)
+
+### What changed
+
+- Extended unified search with the `media_object` entity.
+- Updated the System page default search entity set to include media objects.
+- Device Detail media tab now accepts a lightweight `mediaCamera` landing-state parameter, and media-object search hits use it.
+
+### Why it changed
+
+- Media is a first-class device surface, but it was still invisible to the main operator search workflow.
+- This closes another practical discovery gap around device media follow-up.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing media objects.
+- Web typecheck/build and full harness verification after the search and media-tab wiring changes.
+
+### Risks / rollout notes
+
+- Media metadata is searchable, but actually opening media still depends on the existing per-device token flow in Device Detail.
+
+## Deployment events are now searchable (2026-04-17)
+
+### What changed
+
+- Extended unified search with the admin-only `deployment_event` entity.
+- Updated the System page default search entity set to include deployment events.
+- Deployment-event search hits now land on the Releases deployment inspector with the deployment and target device preloaded.
+
+### Why it changed
+
+- Deployment events were visible in live/history, but still absent from the main operator search workflow.
+- This closes another practical discovery gap in rollout investigation.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing deployment events.
+- Web typecheck/build and full harness verification after the search wiring change.
+
+### Risks / rollout notes
+
+- Deployment-event search remains admin-only because it exposes rollout audit details.
+
+## Release-manifest lifecycle events are now searchable (2026-04-17)
+
+### What changed
+
+- Extended unified search with the admin-only `release_manifest_event` entity.
+- Updated the System page default search entity set to include release-manifest lifecycle events.
+- Release-manifest-event search hits now land on the Releases manifest section with the relevant manifest id preloaded when available.
+
+### Why it changed
+
+- Manifest lifecycle changes were visible in event feeds, but still absent from the main operator search workflow.
+- This closes another practical discovery gap in release governance investigation.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing release-manifest events.
+- Web typecheck/build and full harness verification after the search wiring change.
+
+### Risks / rollout notes
+
+- Release-manifest-event search remains admin-only because it exposes privileged release audit details.
+
+## Access grants are now searchable (2026-04-17)
+
+### What changed
+
+- Extended unified search with the admin-only entities:
+  - `device_access_grant`
+  - `fleet_access_grant`
+- Updated the System page default search entity set to include both grant types.
+- Added lightweight Admin route-state hydration so those hits can preselect the relevant device or fleet and land on the right governance section.
+
+### Why it changed
+
+- Device and fleet access grants are core governance surfaces, but they were still absent from the main operator search workflow.
+- This closes another practical discovery gap in access-management follow-up work.
+
+### How it was validated
+
+- Added regression coverage in `tests/test_operator_tools_routes.py` for mixed search results containing access grants.
+- Web typecheck/build and full harness verification after the search and landing-state wiring changes.
+
+### Risks / rollout notes
+
+- Access-grant search remains admin-only because it exposes privileged governance details.
+
+## Media-object search hits now land on the media section (2026-04-17)
+
+### What changed
+
+- Added a stable `#device-media` anchor to the Device Detail media section.
+- Media-object search hits already carried that anchor; they now land on a real target instead of the top of the page.
+
+### Why it changed
+
+- Media-object search hits already opened the correct device and camera filter, but they still landed operators above the media section itself.
+- This removes another unnecessary scroll step from device-media follow-up workflows.
+
+### How it was validated
+
+- Web typecheck/build and full harness verification after the anchor fix.
+
+### Risks / rollout notes
+
+- This depends on the Device Detail page keeping the `device-media` anchor stable.

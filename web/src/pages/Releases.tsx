@@ -460,6 +460,8 @@ export function ReleasesPage() {
               tab: '',
               deviceId: '',
               batchId: '',
+              accessDeviceId: '',
+              fleetId: '',
               status: '',
               exportId: '',
               action: '',

@@ -52,6 +52,8 @@ const adminRoute = createRoute({
     tab: typeof search.tab === 'string' ? search.tab : '',
     deviceId: typeof search.deviceId === 'string' ? search.deviceId : '',
     batchId: typeof search.batchId === 'string' ? search.batchId : '',
+    accessDeviceId: typeof search.accessDeviceId === 'string' ? search.accessDeviceId : '',
+    fleetId: typeof search.fleetId === 'string' ? search.fleetId : '',
     status: typeof search.status === 'string' ? search.status : '',
     exportId: typeof search.exportId === 'string' ? search.exportId : '',
     action: typeof search.action === 'string' ? search.action : '',

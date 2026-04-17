@@ -19,13 +19,17 @@ from ..models import (
     Deployment,
     DeploymentEvent,
     Device,
+    DeviceAccessGrant,
     DeviceEvent,
     DeviceProcedureDefinition,
     DeviceProcedureInvocation,
+    DeviceReportedState,
     DriftEvent,
     Fleet,
+    FleetAccessGrant,
     ExportBatch,
     IngestionBatch,
+    MediaObject,
     NotificationDestination,
     NotificationEvent,
     ReleaseManifest,
@@ -294,8 +298,6 @@ def operator_search(
             if principal.role == "admin":
                 fleets_q = session.query(Fleet)
             else:
-                from ..models import FleetAccessGrant
-
                 fleets_q = (
                     session.query(Fleet)
                     .join(FleetAccessGrant, FleetAccessGrant.fleet_id == Fleet.id)
@@ -403,6 +405,66 @@ def operator_search(
                 for row in drift_events
             )
 
+        if not requested_types or "device_state" in requested_types:
+            device_state_q = session.query(DeviceReportedState)
+            if accessible_ids is not None:
+                device_state_q = device_state_q.filter(DeviceReportedState.device_id.in_(accessible_ids))
+            device_state_rows = (
+                device_state_q.filter(
+                    or_(
+                        DeviceReportedState.device_id.ilike(pattern),
+                        DeviceReportedState.key.ilike(pattern),
+                        cast(DeviceReportedState.value_json, Text).ilike(pattern),
+                    )
+                )
+                .order_by(DeviceReportedState.updated_at.desc())
+                .limit(fetch_limit)
+                .all()
+            )
+            out.extend(
+                OperatorSearchResultOut(
+                    entity_type="device_state",
+                    entity_id=f"{row.device_id}:{row.key}",
+                    title=row.key,
+                    subtitle=row.schema_type,
+                    device_id=row.device_id,
+                    created_at=row.updated_at,
+                    metadata={"schema_type": row.schema_type},
+                )
+                for row in device_state_rows
+            )
+
+        if not requested_types or "media_object" in requested_types:
+            media_q = session.query(MediaObject)
+            if accessible_ids is not None:
+                media_q = media_q.filter(MediaObject.device_id.in_(accessible_ids))
+            media_rows = (
+                media_q.filter(
+                    or_(
+                        MediaObject.device_id.ilike(pattern),
+                        MediaObject.camera_id.ilike(pattern),
+                        MediaObject.message_id.ilike(pattern),
+                        MediaObject.object_path.ilike(pattern),
+                        MediaObject.sha256.ilike(pattern),
+                    )
+                )
+                .order_by(MediaObject.captured_at.desc())
+                .limit(fetch_limit)
+                .all()
+            )
+            out.extend(
+                OperatorSearchResultOut(
+                    entity_type="media_object",
+                    entity_id=row.id,
+                    title=row.camera_id,
+                    subtitle=row.reason,
+                    device_id=row.device_id,
+                    created_at=row.captured_at,
+                    metadata={"mime_type": row.mime_type, "message_id": row.message_id},
+                )
+                for row in media_rows
+            )
+
         if principal.role == "admin" and (not requested_types or "procedure_definition" in requested_types):
             procedure_definitions = (
                 session.query(DeviceProcedureDefinition)
@@ -426,6 +488,87 @@ def operator_search(
                     metadata={"enabled": row.enabled, "timeout_s": row.timeout_s},
                 )
                 for row in procedure_definitions
+            )
+
+        if principal.role == "admin" and (not requested_types or "deployment_event" in requested_types):
+            deployment_events = (
+                session.query(DeploymentEvent)
+                .filter(
+                    or_(
+                        DeploymentEvent.deployment_id.ilike(pattern),
+                        DeploymentEvent.device_id.ilike(pattern),
+                        DeploymentEvent.event_type.ilike(pattern),
+                        cast(DeploymentEvent.details, Text).ilike(pattern),
+                    )
+                )
+                .order_by(DeploymentEvent.created_at.desc())
+                .limit(fetch_limit)
+                .all()
+            )
+            out.extend(
+                OperatorSearchResultOut(
+                    entity_type="deployment_event",
+                    entity_id=row.id,
+                    title=row.event_type,
+                    subtitle=row.deployment_id,
+                    device_id=row.device_id,
+                    created_at=row.created_at,
+                    metadata={"deployment_id": row.deployment_id},
+                )
+                for row in deployment_events
+            )
+
+        if principal.role == "admin" and (not requested_types or "device_access_grant" in requested_types):
+            device_access_grants = (
+                session.query(DeviceAccessGrant)
+                .filter(
+                    or_(
+                        DeviceAccessGrant.device_id.ilike(pattern),
+                        DeviceAccessGrant.principal_email.ilike(pattern),
+                        DeviceAccessGrant.access_role.ilike(pattern),
+                    )
+                )
+                .order_by(DeviceAccessGrant.updated_at.desc())
+                .limit(fetch_limit)
+                .all()
+            )
+            out.extend(
+                OperatorSearchResultOut(
+                    entity_type="device_access_grant",
+                    entity_id=row.id,
+                    title=row.principal_email,
+                    subtitle=row.access_role,
+                    device_id=row.device_id,
+                    created_at=row.updated_at,
+                    metadata={"device_id": row.device_id},
+                )
+                for row in device_access_grants
+            )
+
+        if principal.role == "admin" and (not requested_types or "fleet_access_grant" in requested_types):
+            fleet_access_grants = (
+                session.query(FleetAccessGrant)
+                .filter(
+                    or_(
+                        FleetAccessGrant.fleet_id.ilike(pattern),
+                        FleetAccessGrant.principal_email.ilike(pattern),
+                        FleetAccessGrant.access_role.ilike(pattern),
+                    )
+                )
+                .order_by(FleetAccessGrant.updated_at.desc())
+                .limit(fetch_limit)
+                .all()
+            )
+            out.extend(
+                OperatorSearchResultOut(
+                    entity_type="fleet_access_grant",
+                    entity_id=row.id,
+                    title=row.principal_email,
+                    subtitle=row.access_role,
+                    created_at=row.updated_at,
+                    metadata={"fleet_id": row.fleet_id},
+                )
+                for row in fleet_access_grants
             )
 
         if not requested_types or "device_event" in requested_types:
@@ -533,15 +676,42 @@ def operator_search(
                 for row in manifests
             )
 
+        if principal.role == "admin" and (not requested_types or "release_manifest_event" in requested_types):
+            release_manifest_events = (
+                session.query(AdminEvent)
+                .filter(
+                    AdminEvent.target_type == "release_manifest",
+                    or_(
+                        AdminEvent.action.ilike(pattern),
+                        cast(AdminEvent.details, Text).ilike(pattern),
+                    ),
+                )
+                .order_by(AdminEvent.created_at.desc())
+                .limit(fetch_limit)
+                .all()
+            )
+            out.extend(
+                OperatorSearchResultOut(
+                    entity_type="release_manifest_event",
+                    entity_id=row.id,
+                    title=row.action,
+                    subtitle="release_manifest",
+                    created_at=row.created_at,
+                    metadata={"request_id": row.request_id, **dict(row.details or {})},
+                )
+                for row in release_manifest_events
+            )
+
         if principal.role == "admin" and (not requested_types or "admin_event" in requested_types):
             admin_events = (
                 session.query(AdminEvent)
                 .filter(
+                    AdminEvent.target_type != "release_manifest",
                     or_(
                         AdminEvent.action.ilike(pattern),
                         AdminEvent.target_type.ilike(pattern),
                         cast(AdminEvent.details, Text).ilike(pattern),
-                    )
+                    ),
                 )
                 .order_by(AdminEvent.created_at.desc())
                 .limit(fetch_limit)

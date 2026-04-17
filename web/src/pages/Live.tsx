@@ -31,7 +31,7 @@ function eventLink(sourceKind: string, row: { device_id?: string | null; event_n
       }),
     )
     return (
-      <a href={href} className="underline text-xs">
+      <a href={`${href}#alerts-feed`} className="underline text-xs">
         alerts
       </a>
     )
@@ -107,7 +107,7 @@ function eventLink(sourceKind: string, row: { device_id?: string | null; event_n
     )
   }
   if (sourceKind === 'device_event' || sourceKind === 'procedure_invocation') {
-    const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=${sourceKind === 'device_event' ? 'events' : 'procedures'}`
+    const href = `/devices/${encodeURIComponent(row.device_id ?? '')}?tab=${sourceKind === 'device_event' ? 'events' : 'procedures'}#${sourceKind === 'device_event' ? 'device-events' : 'device-procedures'}`
     return (
       <a href={href} className="underline text-xs">
         live

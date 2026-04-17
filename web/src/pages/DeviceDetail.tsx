@@ -2,6 +2,7 @@ import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Link, useLocation, useParams } from '@tanstack/react-router'
+import { useDebouncedValue } from '@tanstack/react-pacer/debouncer'
 import {
   api,
   type DeviceEventOut,
@@ -354,6 +355,8 @@ export function DeviceDetailPage() {
   }, [qc, adminAuthMode, adminKey])
 
   const [tab, setTab] = React.useState<TabKey>('overview')
+  const [stateFilterRaw, setStateFilterRaw] = React.useState('')
+  const [stateFilter] = useDebouncedValue(stateFilterRaw.trim(), { wait: 250 })
   const [bucket, setBucket] = React.useState<Bucket>('minute')
   const [metric, setMetric] = React.useState<string>('water_pressure_psi')
   const [rawLimit, setRawLimit] = React.useState(100)
@@ -943,6 +946,8 @@ export function DeviceDetailPage() {
   React.useEffect(() => {
     const params = new URLSearchParams(searchStr.startsWith('?') ? searchStr.slice(1) : searchStr)
     const requestedTab = params.get('tab')
+    const requestedStateKey = params.get('stateKey')
+    const requestedMediaCamera = params.get('mediaCamera')
     if (
       requestedTab === 'overview' ||
       requestedTab === 'telemetry' ||
@@ -956,7 +961,16 @@ export function DeviceDetailPage() {
     ) {
       setTab(requestedTab)
     }
+    if (requestedStateKey) setStateFilterRaw(requestedStateKey)
+    if (requestedMediaCamera) setMediaFilter(requestedMediaCamera)
   }, [searchStr])
+
+  const filteredState = React.useMemo(() => {
+    const rows = stateQ.data ?? []
+    const q = stateFilter.toLowerCase()
+    if (!q) return rows
+    return rows.filter((row) => row.key.toLowerCase().includes(q))
+  }, [stateFilter, stateQ.data])
 
   React.useEffect(() => {
     // Avoid clobbering deep links until we know whether the backend enabled admin routes.
@@ -1750,17 +1764,25 @@ export function DeviceDetailPage() {
       ) : null}
 
       {tab === 'state' ? (
-        <div className="space-y-6">
+        <div id="device-state" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Reported state</CardTitle>
               <CardDescription>Latest device-reported variables and state snapshots.</CardDescription>
             </CardHeader>
             <CardContent>
+              <div className="mb-4 space-y-2">
+                <Label>Filter state keys</Label>
+                <Input
+                  value={stateFilterRaw}
+                  onChange={(e) => setStateFilterRaw(e.target.value)}
+                  placeholder="camera_status"
+                />
+              </div>
               {stateQ.isLoading ? <div className="text-sm text-muted-foreground">Loading…</div> : null}
               {stateQ.isError ? <div className="text-sm text-destructive">Error: {(stateQ.error as Error).message}</div> : null}
               <DataTable<DeviceReportedStateItemOut>
-                data={stateQ.data ?? []}
+                data={filteredState}
                 columns={stateCols}
                 height={420}
                 enableSorting
@@ -1773,7 +1795,7 @@ export function DeviceDetailPage() {
       ) : null}
 
       {tab === 'procedures' ? (
-        <div className="space-y-6">
+        <div id="device-procedures" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Procedures</CardTitle>
@@ -1828,7 +1850,7 @@ export function DeviceDetailPage() {
       ) : null}
 
       {tab === 'events' ? (
-        <div className="space-y-6">
+        <div id="device-events" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Device events</CardTitle>
@@ -1859,7 +1881,7 @@ export function DeviceDetailPage() {
               ) : (
                 <>
                   To view ingestion audit trails, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
-                  <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
+                  <a href="/settings#admin-access" className="underline">Settings</a>.
                 </>
               )}
             </Callout>
@@ -1898,7 +1920,7 @@ export function DeviceDetailPage() {
               ) : (
                 <>
                   To view drift events, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
-                  <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
+                  <a href="/settings#admin-access" className="underline">Settings</a>.
                 </>
               )}
             </Callout>
@@ -1937,7 +1959,7 @@ export function DeviceDetailPage() {
               ) : (
                 <>
                   To view notification audit trails, {keyRequired ? 'configure' : 'fix'} an admin key in{' '}
-                  <Link to="/settings" search={{ destinationId: '' }} className="underline">Settings</Link>.
+                  <a href="/settings#admin-access" className="underline">Settings</a>.
                 </>
               )}
             </Callout>
@@ -1968,7 +1990,7 @@ export function DeviceDetailPage() {
       ) : null}
 
       {tab === 'media' ? (
-        <div className="space-y-6">
+        <div id="device-media" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle>Media</CardTitle>

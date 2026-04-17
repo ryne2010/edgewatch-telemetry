@@ -425,7 +425,7 @@ export function AlertsPage() {
         </CardContent>
       </Card>
 
-      <div ref={feedRef}>
+      <div ref={feedRef} id="alerts-feed">
         <Card>
           <CardHeader>
             <CardTitle>Feed</CardTitle>

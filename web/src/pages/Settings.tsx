@@ -654,7 +654,7 @@ export function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card id="admin-access">
             <CardHeader>
               <CardTitle>Admin access</CardTitle>
               <CardDescription>
