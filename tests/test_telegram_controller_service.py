@@ -774,20 +774,23 @@ def test_telegram_errors_do_not_expose_control_bot_secret() -> None:
 
 def test_slow_dispatcher_never_blocks_update_acceptance(tmp_path: Path) -> None:
     class SlowDispatcher:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def dispatch(self, envelope):
             del envelope
+            self.calls += 1
             time.sleep(0.25)
             return DispatchResult(True, "ok")
 
     config = _config(tmp_path)
     store = ControllerStore(config.database_path)
-    service = ControllerService(config, store, SlowDispatcher(), clock=lambda: 100)
+    dispatcher = SlowDispatcher()
+    service = ControllerService(config, store, dispatcher, clock=lambda: 100)
 
-    started = time.monotonic()
     assert service.handle_update(_update(1, 10, "/device a status"))
-    elapsed = time.monotonic() - started
 
-    assert elapsed < 0.1
+    assert dispatcher.calls == 0
     command = store.get_command_by_update(1)
     assert command is not None and command["status"] == "accepted"
     assert "queued" in store.pending_replies()[-1]["text"]
