@@ -14,6 +14,7 @@ from .backends import (
     CompositeSensorBackend,
     DerivedOilLifeBackend,
     MockSensorBackend,
+    NoneSensorBackend,
     PlaceholderSensorBackend,
     RpiAdcSensorBackend,
     RpiI2CSensorBackend,
@@ -21,7 +22,16 @@ from .backends import (
     RpiPowerI2CSensorBackend,
 )
 
-_VALID_BACKENDS = {"mock", "rpi_i2c", "rpi_adc", "rpi_power_i2c", "rpi_microphone", "derived", "composite"}
+_VALID_BACKENDS = {
+    "none",
+    "mock",
+    "rpi_i2c",
+    "rpi_adc",
+    "rpi_power_i2c",
+    "rpi_microphone",
+    "derived",
+    "composite",
+}
 _METRIC_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ALLOWED_UNITS = {"pct", "psi", "c", "v", "a", "w", "dbm", "gpm", "db", "bool"}
 _ADC_KINDS = {"current_4_20ma", "voltage"}
@@ -122,6 +132,9 @@ def build_sensor_backend(*, device_id: str, config: SensorConfig) -> SafeSensorB
 
 
 def _build_backend(*, device_id: str, config: SensorConfig) -> SensorBackend:
+    if config.backend == "none":
+        return NoneSensorBackend()
+
     if config.backend == "mock":
         return MockSensorBackend(device_id=device_id)
 

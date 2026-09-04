@@ -86,6 +86,28 @@ def test_ring_buffer_removes_orphan_sidecars(tmp_path: Path) -> None:
     assert not orphan_sidecar.exists()
 
 
+@pytest.mark.parametrize("field,value", (("bytes", 8.5), ("sha256", "G" * 64)))
+def test_ring_buffer_removes_malformed_integrity_metadata(
+    field: str,
+    value: object,
+    tmp_path: Path,
+) -> None:
+    ring = MediaRingBuffer(tmp_path / "media", max_bytes=5_000_000)
+    stored = ring.store_photo(
+        device_id="demo-well-001",
+        camera_id="cam1",
+        photo_bytes=b"jpeg",
+        reason="manual",
+    )
+    sidecar = json.loads(stored.sidecar_path.read_text(encoding="utf-8"))
+    sidecar[field] = value
+    stored.sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    assert ring.list_assets_oldest_first() == []
+    assert not stored.asset_path.exists()
+    assert not stored.sidecar_path.exists()
+
+
 def test_capture_lock_rejects_reentrant_acquire() -> None:
     lock = CaptureLock()
     with lock.hold(timeout_s=0.1):

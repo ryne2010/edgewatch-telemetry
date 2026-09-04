@@ -14,15 +14,13 @@ See `docs/DEV_MAC.md` for full install notes.
 ## Setup
 
 ```bash
-# Python deps (uses uv.lock)
-uv sync --locked
-
-# Node deps
-corepack enable
-pnpm install --frozen-lockfile
+make doctor
+make setup
 ```
 
-Or use the Makefile wrapper for Node deps:
+`make setup` creates missing local environment files without overwriting existing values and installs the locked dependencies. The underlying package-manager commands remain available for troubleshooting.
+
+For UI dependencies only:
 
 ```bash
 make web-install
@@ -37,12 +35,14 @@ make lock
 ## Run stack
 
 ```bash
-make up
+make run
 ```
 
 This boots the **Docker Compose lane**:
 - Postgres on `localhost:5435`
 - API (+ built UI) on `http://localhost:8082`
+
+`make up` remains a compatibility alias for `make run`.
 
 If you want the fastest edit → reload loop, use the **host dev lane** instead:
 
@@ -99,5 +99,7 @@ EDGEWATCH_API_URL=http://localhost:8080 make simulate
 Run the same checks CI runs:
 
 ```bash
-make harness
+make check
 ```
+
+`make check` is non-mutating. Use `make logs` to inspect the Compose lane, `make stop` to stop it (`make down` is a compatibility alias), and `make help` to discover advanced targets.

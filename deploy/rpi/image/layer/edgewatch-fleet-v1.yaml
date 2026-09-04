@@ -1,0 +1,48 @@
+# METABEGIN
+# X-Env-Layer-Name: edgewatch-fleet-v1
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Category: application
+# X-Env-Layer-Desc: EdgeWatch fleet runtime and zero-touch first-boot services.
+# X-Env-Layer-Requires: systemd-min,openssh-server
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - alsa-utils
+    - ca-certificates
+    - i2c-tools
+    - modemmanager
+    - network-manager
+    - openssl
+    - python3
+    - python3-dotenv
+    - python3-requests
+    - python3-smbus2
+    - python3-venv
+    - python3-yaml
+  customize-hooks:
+    - |
+      set -eu
+      install -d -m 0755 "$1/opt/edgewatch/app"
+      tar -xf edgewatch-app.tar -C "$1/opt/edgewatch/app" --strip-components=1
+      chroot "$1" python3 -m venv --system-site-packages /opt/edgewatch/app/.venv
+      install -m 0755 "$1/opt/edgewatch/app/scripts/rpi_bootstrap.py" \
+        "$1/usr/local/sbin/edgewatch-bootstrap"
+      install -m 0644 edgewatch-firstboot.service \
+        "$1/etc/systemd/system/edgewatch-firstboot.service"
+      install -m 0644 edgewatch-firstboot-identity.service \
+        "$1/etc/systemd/system/edgewatch-firstboot-identity.service"
+      install -m 0644 edgewatch-image-release \
+        "$1/etc/edgewatch-image-release"
+      install -d -m 0755 "$1/usr/share/edgewatch"
+      install -m 0644 90-edgewatch-watchdog.conf.disabled \
+        "$1/usr/share/edgewatch/90-edgewatch-watchdog.conf.disabled"
+      install -d -m 0755 "$1/boot/firmware/edgewatch"
+      install -d -m 0755 "$1/var/lib/edgewatch"
+    - |
+      set -eu
+      : > "$1/etc/machine-id"
+      rm -f "$1/var/lib/dbus/machine-id"
+      rm -f "$1"/etc/ssh/ssh_host_*
+      rm -f "$1/var/lib/systemd/random-seed"
+    - $BDEBSTRAP_HOOKS/enable-units "$1" edgewatch-firstboot-identity edgewatch-firstboot NetworkManager ModemManager

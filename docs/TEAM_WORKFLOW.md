@@ -7,7 +7,7 @@ This doc standardizes the "happy path" for local development and the optional GC
 ```bash
 make doctor
 make hygiene
-make up
+make run
 ```
 
 If you update the schema:

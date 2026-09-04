@@ -1,0 +1,23 @@
+[Unit]
+Description=Consume EdgeWatch satellite request and schedule clean Linux poweroff
+ConditionPathExists=/run/edgewatch-camera-satellite/poweroff.request
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rm -f /run/edgewatch-camera-satellite/poweroff.request
+ExecStart=/usr/bin/systemctl poweroff --no-wall
+TimeoutStartSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/run/edgewatch-camera-satellite
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+LockPersonality=true

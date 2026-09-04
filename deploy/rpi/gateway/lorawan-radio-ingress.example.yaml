@@ -1,0 +1,17 @@
+# Install as /etc/edgewatch-controller/lorawan-radio-ingress.yaml with mode 0600.
+# This repository does not ship the adapter executable. Do not enable the
+# gateway until a reviewed SX1302/SX1303 adapter has been installed and its
+# exact SHA-256 recorded below. The adapter must drive the concentrator, bridge
+# packets to the local ChirpStack MQTT endpoint, and atomically refresh the
+# strict status document required by `python -m agent.lorawan.radio_cli`.
+schema_version: 1
+gateway_id: "aabbccddeeff0011"
+region: US915
+concentrator: sx1302
+adapter_executable: /usr/local/libexec/edgewatch-sx1302-ingress
+adapter_sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+adapter_config_file: /etc/edgewatch-controller/sx1302-us915.yaml
+status_file: /var/lib/edgewatch-gateway/lorawan-radio-status.json
+instance_file: /run/edgewatch-lorawan-radio/instance.json
+status_max_age_s: 30
+startup_timeout_s: 90

@@ -12,6 +12,7 @@
 # - Clear Make targets + discoverable docs
 
 SHELL := /bin/bash
+.DEFAULT_GOAL := help
 
 # -----------------------------
 # Local stack
@@ -25,6 +26,46 @@ EDGEWATCH_DEVICE_NAME ?= $(EDGEWATCH_DEVICE_ID)
 EDGEWATCH_DEVICE_TOKEN ?= dev-device-token-001
 ADMIN_API_KEY ?= dev-admin-key
 SIMULATE_FLEET_SIZE ?= 11
+
+# Raspberry Pi fleet image/provisioning overrides. Empty values preserve the
+# underlying tools' defaults instead of emitting incomplete command flags.
+RPI_DEVICE ?=
+RPI_IMAGE_VERSION ?=
+RPI_PROFILE ?=
+DEVICE_ID ?=
+TELEGRAM_CHAT_ID ?=
+TELEGRAM_BOT_TOKEN_FILE ?=
+SSH_PUBLIC_KEY_FILE ?=
+CONTROL_SSH_PUBLIC_KEY_FILE ?=
+OTA_PUBLIC_KEY_FILE ?=
+OTA_KEY_ID ?= edgewatch-release
+OUTPUT_DIR ?=
+POWER_PROFILE ?=
+CONTROL_BOT_TOKEN_FILE ?=
+GATEWAY_DEVICE_ID ?=
+TELEGRAM_CONTROL_CONFIG ?= /etc/edgewatch-controller/controller.yaml
+TELEGRAM_CONTROL_STATE_DIR ?= /var/lib/edgewatch-controller
+TELEGRAM_CONTROL_PYTHON ?= $(CURDIR)/.venv/bin/python
+MODEL_SOURCE_DIR ?=
+MODEL_PRIVATE_KEY_FILE ?=
+MODEL_KEY_ID ?= edgewatch-models
+MODEL_ARTIFACT_URI ?=
+MODEL_VERSION ?=
+GATEWAY_ENERGY_INPUT ?=
+GATEWAY_ENERGY_REPORT ?=
+GATEWAY_ENERGY_MINIMUM_DAYS ?= 7
+CAMERA_QUALIFICATION_INPUT ?=
+CAMERA_QUALIFICATION_REPORT ?=
+LORAWAN_GATEWAY_CONFIG_FILE ?=
+LORAWAN_REGISTRY_FILE ?=
+LORAWAN_RADIO_INGRESS_FILE ?=
+LORAWAN_VENDOR_CONFIG_FILE ?=
+GATEWAY_POWER_ENV_FILE ?=
+CAMERA_RUNTIME_ENV_FILE ?=
+CAMERA_CREDENTIALS_FILE ?=
+MODEL_PUBLIC_KEY_FILE ?=
+INITIAL_MODEL_BUNDLE_FILE ?=
+OTA_GATEWAY_CACHE_URL ?=
 
 # Fast host-dev lane defaults (used by `make dev`)
 DEV_API_URL ?= http://localhost:8080
@@ -91,9 +132,11 @@ endef
 	doctor doctor-dev doctor-gcp \
 	buildx-init docker-login-gcp build-multiarch deploy-gcp-safe-multiarch \
 	clean \
-	db-up db-down api-dev web-install web-dev dev \
+	setup run dev stop check \
+	db-up db-down api-dev web-install web-dev \
 	up down reset logs db-migrate db-revision \
 	demo-device devices alerts simulate retention \
+	rpi-image rpi-provision telegram-control-init model-release gateway-energy-report camera-qualification-report \
 	bootstrap-state-gcp tf-config-bucket-gcp tf-config-pull-gcp tf-config-push-gcp tf-config-print-gcp tf-init-gcp infra-gcp plan-gcp apply-gcp grant-cloudbuild-gcp build-gcp \
 	deploy-gcp deploy-gcp-safe deploy-gcp-safe-multiarch \
 	url-gcp url-gcp-admin url-gcp-dashboard verify-gcp verify-gcp-ready logs-gcp \
@@ -111,30 +154,50 @@ endef
 	dist
 
 help:
-	@echo "Local targets:"
-	@echo "  init             One-time setup for GCP deploys (persist gcloud project/region)"
-	@echo "  auth             Authenticate gcloud user + ADC (interactive)"
-	@echo "  doctor           Check local Docker prerequisites"
-	@echo "  doctor-dev       Check full local toolchain (uv/node/pnpm)"
-	@echo "  db-up            Start ONLY the local Postgres container (fast dev lane)"
-	@echo "  db-down          Stop ONLY the local Postgres container"
-	@echo "  api-dev          Run FastAPI on the host with hot reload (port 8080)"
-	@echo "  web-install      Install UI deps (pnpm workspace)"
-	@echo "  web-dev          Run UI dev server (Vite) on the host (port 5173)"
-	@echo "  dev              One-command host dev lane: db + api-dev + web-dev (+simulate by default)"
-	@echo "  up               Start local stack"
-	@echo "  down             Stop local stack"
-	@echo "  reset            Remove volumes and reset local data"
-	@echo "  logs             Tail local logs"
-	@echo "  db-migrate       Apply Alembic migrations (docker compose migrate)"
-	@echo "  db-revision      Create new Alembic revision (msg=...)"
-	@echo "  demo-device      Create a demo device via admin API"
+	@echo "EdgeWatch commands:"
+	@echo "  doctor           Report readiness for the container and host-dev lanes"
+	@echo "  setup            Create local env files and install locked dependencies"
+	@echo "  run              Run the production-like Docker Compose stack"
+	@echo "  dev              Run DB + hot-reload API/UI + simulator fleet"
+	@echo "  stop             Stop the Docker Compose stack"
+	@echo "  logs             Tail Docker Compose logs"
+	@echo "  reset            Remove containers and local database volumes (destructive)"
+	@echo "  check            Run non-mutating lint, typecheck, test, and build gates"
+	@echo "  help             Show this command reference (also the default target)"
+	@echo ""
+	@echo "Demo helpers:"
+	@echo "  demo-device      Create or update the local demo device"
 	@echo "  simulate         Run the edge simulator fleet (11 by default)"
-	@echo "  retention        Run DB retention/compaction (deletes old telemetry)"
 	@echo "  devices          List devices"
 	@echo "  alerts           List recent alerts"
 	@echo ""
+	@echo "Raspberry Pi fleet targets:"
+	@echo "  rpi-image        Build secret-free image (optional RPI_DEVICE/RPI_PROFILE/RPI_IMAGE_VERSION)"
+	@echo "  rpi-provision    Generate role-aware per-device boot files (RPI_PROFILE=standalone|gateway|camera-satellite)"
+	@echo "  telegram-control-init  Register the private control group and install its gateway service"
+	@echo "  model-release    Build a reproducible signed camera model artifact and OTA catalog"
+	@echo "  gateway-energy-report  Validate meter evidence and calculate battery/solar sizing"
+	@echo "  camera-qualification-report  Validate outdoor camera pilot evidence"
+	@echo ""
+	@echo "Advanced local targets:"
+	@echo "  up / down        Compatibility aliases for run / stop"
+	@echo "  doctor-dev       Require the full host-dev toolchain"
+	@echo "  db-up / db-down  Start or stop only local Postgres"
+	@echo "  api-dev          Run FastAPI with hot reload on port 8080"
+	@echo "  web-install      Install UI dependencies"
+	@echo "  web-dev          Run Vite on port 5173"
+	@echo "  db-migrate       Apply Alembic migrations"
+	@echo "  db-revision      Create an Alembic revision (msg=...)"
+	@echo "  fmt              Apply source formatting (mutates files)"
+	@echo "  lint/typecheck/test/build  Run an individual quality gate"
+	@echo "  harness          Compatibility alias for check"
+	@echo "  hygiene          Run repository portability checks"
+	@echo "  retention        Run DB retention/compaction (deletes old telemetry)"
+	@echo ""
 	@echo "GCP targets (optional):"
+	@echo "  init             Configure persistent gcloud project/region defaults"
+	@echo "  auth             Authenticate gcloud user + ADC (interactive)"
+	@echo "  doctor-gcp       Check the GCP deployment toolchain and configuration"
 	@echo "  deploy-gcp       Deploy to Cloud Run (defaults to private IAM-only)"
 	@echo "  deploy-gcp-safe  Deploy + migrate + readiness verify"
 	@echo "  deploy-gcp-demo  Deploy the public demo profile"
@@ -183,6 +246,114 @@ clean:
 	rm -f ./edgewatch_policy_cache_*.json ./agent/edgewatch_policy_cache_*.json; \
 	find . -name ".DS_Store" -type f -delete; \
 	echo "Cleaned caches/artifacts."
+
+# Build the pinned official rpi-image-gen lane on a capable native ARM64 Linux
+# builder. Optional variables are appended only when they contain a value.
+rpi-image:
+	@set -euo pipefail; \
+	args=(); \
+	if [ -n "$(RPI_DEVICE)" ]; then args+=(--device "$(RPI_DEVICE)"); fi; \
+	if [ -n "$(RPI_PROFILE)" ]; then args+=(--profile "$(RPI_PROFILE)"); fi; \
+	if [ -n "$(RPI_IMAGE_VERSION)" ]; then args+=(--image-version "$(RPI_IMAGE_VERSION)"); fi; \
+	deploy/rpi/image/build.sh "$${args[@]}"
+
+# Generate the exact edgewatch/ subtree to copy onto a flashed boot partition.
+rpi-provision:
+	@set -euo pipefail; \
+	if [ -z "$(DEVICE_ID)" ]; then echo "ERROR: DEVICE_ID is required" >&2; exit 2; fi; \
+	if [ -z "$(OTA_PUBLIC_KEY_FILE)" ]; then echo "ERROR: OTA_PUBLIC_KEY_FILE is required" >&2; exit 2; fi; \
+	if [ -z "$(OUTPUT_DIR)" ]; then echo "ERROR: OUTPUT_DIR is required" >&2; exit 2; fi; \
+	profile="$(RPI_PROFILE)"; \
+	if [ -z "$$profile" ]; then profile="standalone"; fi; \
+	args=( \
+	  --device-id "$(DEVICE_ID)" \
+	  --profile "$$profile" \
+	  --ota-public-key-file "$(OTA_PUBLIC_KEY_FILE)" \
+	  --ota-key-id "$(OTA_KEY_ID)" \
+	  --output-dir "$(OUTPUT_DIR)" \
+	); \
+	case "$$profile" in \
+	  standalone) \
+	    if [ -z "$(TELEGRAM_CHAT_ID)" ]; then echo "ERROR: TELEGRAM_CHAT_ID is required for standalone" >&2; exit 2; fi; \
+	    if [ -z "$(TELEGRAM_BOT_TOKEN_FILE)" ]; then echo "ERROR: TELEGRAM_BOT_TOKEN_FILE is required for standalone" >&2; exit 2; fi; \
+	    if [ -z "$(SSH_PUBLIC_KEY_FILE)" ]; then echo "ERROR: SSH_PUBLIC_KEY_FILE is required for standalone" >&2; exit 2; fi; \
+	    if [ -z "$(CONTROL_SSH_PUBLIC_KEY_FILE)" ]; then echo "ERROR: CONTROL_SSH_PUBLIC_KEY_FILE is required for standalone" >&2; exit 2; fi; \
+	    args+=(--telegram-chat-id "$(TELEGRAM_CHAT_ID)" --bot-token-file "$(TELEGRAM_BOT_TOKEN_FILE)" --ssh-public-key-file "$(SSH_PUBLIC_KEY_FILE)" --control-ssh-public-key-file "$(CONTROL_SSH_PUBLIC_KEY_FILE)"); \
+	    ;; \
+	  gateway) \
+	    if [ -z "$(TELEGRAM_CHAT_ID)" ]; then echo "ERROR: TELEGRAM_CHAT_ID is required for gateway" >&2; exit 2; fi; \
+	    if [ -z "$(TELEGRAM_BOT_TOKEN_FILE)" ]; then echo "ERROR: TELEGRAM_BOT_TOKEN_FILE is required for gateway" >&2; exit 2; fi; \
+	    if [ -z "$(SSH_PUBLIC_KEY_FILE)" ]; then echo "ERROR: SSH_PUBLIC_KEY_FILE is required for gateway" >&2; exit 2; fi; \
+	    if [ -z "$(LORAWAN_GATEWAY_CONFIG_FILE)" ]; then echo "ERROR: LORAWAN_GATEWAY_CONFIG_FILE is required for gateway" >&2; exit 2; fi; \
+	    if [ -z "$(LORAWAN_REGISTRY_FILE)" ]; then echo "ERROR: LORAWAN_REGISTRY_FILE is required for gateway" >&2; exit 2; fi; \
+	    if [ -z "$(LORAWAN_RADIO_INGRESS_FILE)" ]; then echo "ERROR: LORAWAN_RADIO_INGRESS_FILE is required for gateway" >&2; exit 2; fi; \
+	    if [ -z "$(LORAWAN_VENDOR_CONFIG_FILE)" ]; then echo "ERROR: LORAWAN_VENDOR_CONFIG_FILE is required for gateway" >&2; exit 2; fi; \
+	    if [ -z "$(GATEWAY_POWER_ENV_FILE)" ]; then echo "ERROR: GATEWAY_POWER_ENV_FILE is required for gateway" >&2; exit 2; fi; \
+	    args+=(--telegram-chat-id "$(TELEGRAM_CHAT_ID)" --bot-token-file "$(TELEGRAM_BOT_TOKEN_FILE)" --ssh-public-key-file "$(SSH_PUBLIC_KEY_FILE)" --lorawan-gateway-config-file "$(LORAWAN_GATEWAY_CONFIG_FILE)" --lorawan-registry-file "$(LORAWAN_REGISTRY_FILE)" --lorawan-radio-ingress-file "$(LORAWAN_RADIO_INGRESS_FILE)" --lorawan-vendor-config-file "$(LORAWAN_VENDOR_CONFIG_FILE)" --gateway-power-env-file "$(GATEWAY_POWER_ENV_FILE)"); \
+	    if [ -n "$(CONTROL_SSH_PUBLIC_KEY_FILE)" ]; then args+=(--control-ssh-public-key-file "$(CONTROL_SSH_PUBLIC_KEY_FILE)"); fi; \
+	    ;; \
+	  camera-satellite) \
+	    if [ -z "$(CONTROL_SSH_PUBLIC_KEY_FILE)" ]; then echo "ERROR: CONTROL_SSH_PUBLIC_KEY_FILE is required for camera-satellite" >&2; exit 2; fi; \
+	    if [ -z "$(CAMERA_RUNTIME_ENV_FILE)" ]; then echo "ERROR: CAMERA_RUNTIME_ENV_FILE is required for camera-satellite" >&2; exit 2; fi; \
+	    if [ -z "$(CAMERA_CREDENTIALS_FILE)" ]; then echo "ERROR: CAMERA_CREDENTIALS_FILE is required for camera-satellite" >&2; exit 2; fi; \
+	    if [ -z "$(MODEL_PUBLIC_KEY_FILE)" ]; then echo "ERROR: MODEL_PUBLIC_KEY_FILE is required for camera-satellite" >&2; exit 2; fi; \
+	    if [ -z "$(INITIAL_MODEL_BUNDLE_FILE)" ]; then echo "ERROR: INITIAL_MODEL_BUNDLE_FILE is required for camera-satellite" >&2; exit 2; fi; \
+	    args+=(--control-ssh-public-key-file "$(CONTROL_SSH_PUBLIC_KEY_FILE)" --camera-runtime-env-file "$(CAMERA_RUNTIME_ENV_FILE)" --camera-credentials-file "$(CAMERA_CREDENTIALS_FILE)" --model-public-key-file "$(MODEL_PUBLIC_KEY_FILE)" --initial-model-bundle-file "$(INITIAL_MODEL_BUNDLE_FILE)"); \
+	    if [ -n "$(SSH_PUBLIC_KEY_FILE)" ]; then args+=(--ssh-public-key-file "$(SSH_PUBLIC_KEY_FILE)"); fi; \
+	    if [ -n "$(OTA_GATEWAY_CACHE_URL)" ]; then args+=(--ota-gateway-cache-url "$(OTA_GATEWAY_CACHE_URL)"); fi; \
+	    ;; \
+	  *) echo "ERROR: RPI_PROFILE must be standalone, gateway, or camera-satellite" >&2; exit 2 ;; \
+	esac; \
+	if [ -n "$(POWER_PROFILE)" ]; then args+=(--power-profile "$(POWER_PROFILE)"); fi; \
+	uv run --locked python scripts/rpi_provision_device.py "$${args[@]}"
+
+# Run on the field gateway. The dedicated control-bot token stays in a root-
+# readable 0600 file and is never accepted as a Make variable.
+telegram-control-init:
+	@set -euo pipefail; \
+	if [ -z "$(CONTROL_BOT_TOKEN_FILE)" ]; then echo "ERROR: CONTROL_BOT_TOKEN_FILE is required" >&2; exit 2; fi; \
+	if [ -z "$(GATEWAY_DEVICE_ID)" ]; then echo "ERROR: GATEWAY_DEVICE_ID is required" >&2; exit 2; fi; \
+	if [ ! -x "$(TELEGRAM_CONTROL_PYTHON)" ]; then echo "ERROR: TELEGRAM_CONTROL_PYTHON is not executable" >&2; exit 2; fi; \
+	prefix=(); \
+	if [ "$$(id -u)" -ne 0 ]; then command -v sudo >/dev/null 2>&1 || { echo "ERROR: sudo is required" >&2; exit 2; }; prefix=(sudo); fi; \
+	"$${prefix[@]}" "$(TELEGRAM_CONTROL_PYTHON)" -m scripts.telegram_control_init \
+	  --token-file "$(CONTROL_BOT_TOKEN_FILE)" \
+	  --config "$(TELEGRAM_CONTROL_CONFIG)" \
+	  --state-dir "$(TELEGRAM_CONTROL_STATE_DIR)" \
+	  --gateway-device-id "$(GATEWAY_DEVICE_ID)" \
+	  --install-service
+
+model-release:
+	@set -euo pipefail; \
+	if [ -z "$(MODEL_SOURCE_DIR)" ]; then echo "ERROR: MODEL_SOURCE_DIR is required" >&2; exit 2; fi; \
+	if [ -z "$(MODEL_PRIVATE_KEY_FILE)" ]; then echo "ERROR: MODEL_PRIVATE_KEY_FILE is required" >&2; exit 2; fi; \
+	if [ -z "$(MODEL_ARTIFACT_URI)" ]; then echo "ERROR: MODEL_ARTIFACT_URI is required" >&2; exit 2; fi; \
+	if [ -z "$(MODEL_VERSION)" ]; then echo "ERROR: MODEL_VERSION is required" >&2; exit 2; fi; \
+	if [ -z "$(OUTPUT_DIR)" ]; then echo "ERROR: OUTPUT_DIR is required" >&2; exit 2; fi; \
+	uv run --locked python -m scripts.build_model_bundle \
+	  --source-dir "$(MODEL_SOURCE_DIR)" \
+	  --private-key "$(MODEL_PRIVATE_KEY_FILE)" \
+	  --key-id "$(MODEL_KEY_ID)" \
+	  --artifact-uri "$(MODEL_ARTIFACT_URI)" \
+	  --version "$(MODEL_VERSION)" \
+	  --output-dir "$(OUTPUT_DIR)"
+
+gateway-energy-report:
+	@set -euo pipefail; \
+	if [ -z "$(GATEWAY_ENERGY_INPUT)" ]; then echo "ERROR: GATEWAY_ENERGY_INPUT is required" >&2; exit 2; fi; \
+	if [ -z "$(GATEWAY_ENERGY_REPORT)" ]; then echo "ERROR: GATEWAY_ENERGY_REPORT is required" >&2; exit 2; fi; \
+	uv run --locked python -m scripts.gateway_energy_report \
+	  --input "$(GATEWAY_ENERGY_INPUT)" \
+	  --output "$(GATEWAY_ENERGY_REPORT)" \
+	  --minimum-daily-samples "$(GATEWAY_ENERGY_MINIMUM_DAYS)"
+
+camera-qualification-report:
+	@set -euo pipefail; \
+	if [ -z "$(CAMERA_QUALIFICATION_INPUT)" ]; then echo "ERROR: CAMERA_QUALIFICATION_INPUT is required" >&2; exit 2; fi; \
+	if [ -z "$(CAMERA_QUALIFICATION_REPORT)" ]; then echo "ERROR: CAMERA_QUALIFICATION_REPORT is required" >&2; exit 2; fi; \
+	uv run --locked python -m scripts.camera_qualify \
+	  --input "$(CAMERA_QUALIFICATION_INPUT)" \
+	  --output "$(CAMERA_QUALIFICATION_REPORT)"
 
 
 
@@ -262,59 +433,91 @@ auth:
 # -----------------------------
 # Doctor (prerequisite checks)
 # -----------------------------
-# Local lane doctor: verifies tools needed to run the local Docker Compose stack and UI dev.
+# Reports readiness for both supported local lanes. Docker-only users can run the
+# Compose lane without installing the host development toolchain.
 doctor:
 	@set -e; \
-	fail=0; \
-	echo "== Doctor: EdgeWatch (local/docker) =="; \
+	run_fail=0; \
+	dev_fail=0; \
+	echo "== Doctor: EdgeWatch local readiness =="; \
 	echo ""; \
-	echo "Required:"; \
+	echo "Run lane (Docker Compose):"; \
 	if command -v docker >/dev/null 2>&1; then \
 	  echo "  ✓ docker: $$(docker --version)"; \
 	  if docker info >/dev/null 2>&1; then \
 	    echo "  ✓ docker daemon: running"; \
 	  else \
 	    echo "  ✗ docker daemon not running (start Docker Desktop)"; \
-	    fail=1; \
+	    run_fail=1; \
 	  fi; \
 	  if docker compose version >/dev/null 2>&1; then \
 	    echo "  ✓ docker compose: $$(docker compose version | head -n1)"; \
 	  else \
 	    echo "  ✗ docker compose not available (install Docker Desktop / Compose v2)"; \
-	    fail=1; \
+	    run_fail=1; \
 	  fi; \
 	else \
 	  echo "  ✗ docker not found (install Docker Desktop)"; \
-	  fail=1; \
+	  run_fail=1; \
 	fi; \
+	echo ""; \
+	echo "Dev lane (host API/UI + Docker DB):"; \
+	if command -v uv >/dev/null 2>&1; then \
+	  echo "  ✓ uv: $$(uv --version)"; \
+	else \
+	  echo "  ✗ uv not found. Install: https://docs.astral.sh/uv/"; \
+	  dev_fail=1; \
+	fi; \
+	if command -v node >/dev/null 2>&1; then \
+	  echo "  ✓ node: $$(node -v)"; \
+	else \
+	  echo "  ✗ node not found. Install: https://nodejs.org/"; \
+	  dev_fail=1; \
+	fi; \
+	if command -v pnpm >/dev/null 2>&1; then \
+	  echo "  ✓ pnpm: $$(pnpm -v)"; \
+	elif command -v corepack >/dev/null 2>&1; then \
+	  echo "  ✗ pnpm not enabled (run: make setup)"; \
+	  dev_fail=1; \
+	else \
+	  echo "  ✗ pnpm/corepack not found. Install a supported Node.js release."; \
+	  dev_fail=1; \
+	fi; \
+	if command -v curl >/dev/null 2>&1; then \
+	  echo "  ✓ curl: $$(curl --version | head -n1)"; \
+	else \
+	  echo "  ✗ curl not found"; \
+	  dev_fail=1; \
+	fi; \
+	echo ""; \
+	echo "Optional:"; \
 	if command -v jq >/dev/null 2>&1; then \
 	  echo "  ✓ jq: $$(jq --version)"; \
 	else \
 	  echo "  ⚠ jq not found (optional; makes curl output pretty). Install: brew install jq"; \
 	fi; \
 	echo ""; \
-	echo "Recommended (for harness tasks + UI dev):"; \
-	if command -v uv >/dev/null 2>&1; then \
-	  echo "  ✓ uv: $$(uv --version)"; \
+	if [ "$$run_fail" -eq 0 ]; then \
+	  echo "  run: READY    (make run)"; \
 	else \
-	  echo "  ⚠ uv not found. Install: https://docs.astral.sh/uv/"; \
+	  echo "  run: NOT READY"; \
 	fi; \
-	if command -v node >/dev/null 2>&1; then \
-	  echo "  ✓ node: $$(node -v)"; \
+	if [ "$$run_fail" -eq 0 ] && [ "$$dev_fail" -eq 0 ]; then \
+	  echo "  dev: READY    (make dev)"; \
 	else \
-	  echo "  ⚠ node not found. Install: https://nodejs.org/"; \
-	fi; \
-	if command -v pnpm >/dev/null 2>&1; then \
-	  echo "  ✓ pnpm: $$(pnpm -v)"; \
-	else \
-	  echo "  ⚠ pnpm not found. Enable corepack: corepack enable"; \
+	  echo "  dev: NOT READY"; \
 	fi; \
 	echo ""; \
-	if [ "$$fail" -ne 0 ]; then \
-	  echo "Doctor failed: fix missing items above, then re-run."; \
-	  exit $$fail; \
+	if [ "$$run_fail" -ne 0 ]; then \
+	  echo "Doctor failed: the required Docker Compose lane is unavailable."; \
+	  exit $$run_fail; \
 	fi; \
-	echo "Doctor OK."
+	if [ "$$dev_fail" -ne 0 ]; then \
+	  echo "Doctor completed: run is ready; install the dev tools above before make dev."; \
+	else \
+	  echo "Doctor OK: both local lanes are ready."; \
+	fi; \
+	true
 
 # Full local dev doctor: verifies toolchain required for harness (uv + Node + pnpm).
 doctor-dev: doctor
@@ -337,7 +540,13 @@ doctor-dev: doctor
 	if command -v pnpm >/dev/null 2>&1; then \
 	  echo "  ✓ pnpm: $$(pnpm -v)"; \
 	else \
-	  echo "  ✗ pnpm not found. Enable corepack: corepack enable"; \
+	  echo "  ✗ pnpm not found. Run: make setup"; \
+	  fail=1; \
+	fi; \
+	if command -v curl >/dev/null 2>&1; then \
+	  echo "  ✓ curl: $$(curl --version | head -n1)"; \
+	else \
+	  echo "  ✗ curl not found"; \
 	  fail=1; \
 	fi; \
 	echo ""; \
@@ -345,8 +554,8 @@ doctor-dev: doctor
 	echo "  EDGEWATCH_API_URL=$(EDGEWATCH_API_URL)"; \
 	echo "  EDGEWATCH_DEVICE_ID=$(EDGEWATCH_DEVICE_ID)"; \
 	echo "  EDGEWATCH_DEVICE_NAME=$(EDGEWATCH_DEVICE_NAME)"; \
-	echo "  EDGEWATCH_DEVICE_TOKEN=$(EDGEWATCH_DEVICE_TOKEN)"; \
-	echo "  ADMIN_API_KEY=$(ADMIN_API_KEY)"; \
+	echo "  EDGEWATCH_DEVICE_TOKEN=<configured>"; \
+	echo "  ADMIN_API_KEY=<configured>"; \
 	echo ""; \
 	if [ "$$fail" -ne 0 ]; then \
 	  echo "Doctor-dev failed: fix missing items above, then re-run."; \
@@ -419,14 +628,52 @@ doctor-gcp:
 	  exit $$fail; \
 	fi; \
 	echo "Doctor OK."
-up: doctor
+
+# Idempotent project bootstrap. System tools are diagnosed by `make doctor`;
+# this target creates local config without overwriting it and installs the
+# repository's locked Python and Node dependencies.
+setup:
+	@set -euo pipefail; \
+	command -v uv >/dev/null 2>&1 || { echo "Missing dependency: uv (https://docs.astral.sh/uv/)"; exit 1; }; \
+	command -v node >/dev/null 2>&1 || { echo "Missing dependency: node (https://nodejs.org/)"; exit 1; }; \
+	if ! command -v pnpm >/dev/null 2>&1; then \
+	  command -v corepack >/dev/null 2>&1 || { echo "Missing dependency: pnpm/corepack"; exit 1; }; \
+	  echo "Enabling pnpm through corepack"; \
+	  corepack enable; \
+	  hash -r; \
+	fi; \
+	if [ ! -e .env ]; then cp .env.example .env; fi; \
+	if [ ! -e agent/.env ]; then cp agent/.env.example agent/.env; fi; \
+	echo "Installing locked Python dependencies"; \
+	uv sync --locked; \
+	echo "Installing locked Node dependencies"; \
+	pnpm install --frozen-lockfile; \
+	uv run --locked python scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
+	  DEMO_FLEET_SIZE DEMO_DEVICE_ID DEMO_DEVICE_NAME DEMO_DEVICE_TOKEN; \
+	uv run --locked python scripts/check_demo_env_sync.py --example agent/.env.example --current agent/.env --label agent/.env --keys \
+	  EDGEWATCH_DEVICE_ID EDGEWATCH_DEVICE_TOKEN; \
+	echo "Setup complete. Next: make doctor, then make run or make dev."
+
+# Canonical production-like local lane. `up` remains a compatibility alias.
+run: doctor
 	cp -n .env.example .env || true
-	@python scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
-	  DEMO_FLEET_SIZE DEMO_DEVICE_ID DEMO_DEVICE_NAME DEMO_DEVICE_TOKEN
+	@if command -v python >/dev/null 2>&1; then \
+	  python scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
+	    DEMO_FLEET_SIZE DEMO_DEVICE_ID DEMO_DEVICE_NAME DEMO_DEVICE_TOKEN; \
+	elif command -v python3 >/dev/null 2>&1; then \
+	  python3 scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
+	    DEMO_FLEET_SIZE DEMO_DEVICE_ID DEMO_DEVICE_NAME DEMO_DEVICE_TOKEN; \
+	else \
+	  echo "NOTE: Python is unavailable; skipping the optional demo env drift check."; \
+	fi
 	$(COMPOSE) up --build
 
-down:
+up: run
+
+stop:
 	$(COMPOSE) down
+
+down: stop
 
 reset:
 	$(COMPOSE) down -v
@@ -475,9 +722,9 @@ web-dev: doctor-dev
 dev: doctor-dev db-up
 	cp -n .env.example .env || true
 	cp -n agent/.env.example agent/.env || true
-	@python scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
+	@uv run --locked python scripts/check_demo_env_sync.py --example .env.example --current .env --label .env --keys \
 	  DEMO_FLEET_SIZE DEMO_DEVICE_ID DEMO_DEVICE_NAME DEMO_DEVICE_TOKEN
-	@python scripts/check_demo_env_sync.py --example agent/.env.example --current agent/.env --label agent/.env --keys \
+	@uv run --locked python scripts/check_demo_env_sync.py --example agent/.env.example --current agent/.env --label agent/.env --keys \
 	  EDGEWATCH_DEVICE_ID EDGEWATCH_DEVICE_TOKEN
 	@set -euo pipefail; \
 	pids=""; \
@@ -553,7 +800,7 @@ dev: doctor-dev db-up
 	if [ "$(DEV_START_SIMULATE)" = "1" ]; then \
 	  base_id="$(EDGEWATCH_DEVICE_ID)"; \
 	  base_tok="$(EDGEWATCH_DEVICE_TOKEN)"; \
-	  demo_nth() { python -c 'import sys; from api.app.demo_fleet import derive_nth; print(derive_nth(sys.argv[1], int(sys.argv[2])))' "$$1" "$$2"; }; \
+	  demo_nth() { uv run --locked python -c 'import sys; from api.app.demo_fleet import derive_nth; print(derive_nth(sys.argv[1], int(sys.argv[2])))' "$$1" "$$2"; }; \
 	  echo "Starting $(SIMULATE_FLEET_SIZE) simulator(s) against $(DEV_API_URL) ..."; \
 	  for n in $$(seq 1 "$(SIMULATE_FLEET_SIZE)"); do \
 	    id="$$(demo_nth "$$base_id" "$$n")"; \
@@ -561,7 +808,7 @@ dev: doctor-dev db-up
 	    buf="./edgewatch_buffer_$${id}.sqlite"; \
 	    echo "  - $$id"; \
 	    EDGEWATCH_API_URL="$(DEV_API_URL)" EDGEWATCH_DEVICE_ID="$$id" EDGEWATCH_DEVICE_TOKEN="$$tok" BUFFER_DB_PATH="$$buf" \
-	      uv run python agent/simulator.py & \
+	      uv run --locked python agent/simulator.py & \
 	    pids="$$pids $$!"; \
 	  done; \
 	fi; \
@@ -624,13 +871,13 @@ demo-device:
 # Run the edge simulator (pretends to be an RPi).
 simulate: doctor-dev
 	cp -n agent/.env.example agent/.env || true
-	@python scripts/check_demo_env_sync.py --example agent/.env.example --current agent/.env --label agent/.env --keys \
+	@uv run --locked python scripts/check_demo_env_sync.py --example agent/.env.example --current agent/.env --label agent/.env --keys \
 	  EDGEWATCH_DEVICE_ID EDGEWATCH_DEVICE_TOKEN
 	@set -euo pipefail; \
 	trap 'kill 0' INT TERM EXIT; \
 	base_id="$(EDGEWATCH_DEVICE_ID)"; \
 	base_tok="$(EDGEWATCH_DEVICE_TOKEN)"; \
-	demo_nth() { python -c 'import sys; from api.app.demo_fleet import derive_nth; print(derive_nth(sys.argv[1], int(sys.argv[2])))' "$$1" "$$2"; }; \
+	demo_nth() { uv run --locked python -c 'import sys; from api.app.demo_fleet import derive_nth; print(derive_nth(sys.argv[1], int(sys.argv[2])))' "$$1" "$$2"; }; \
 	echo "Starting $(SIMULATE_FLEET_SIZE) simulators... (Ctrl-C to stop all)"; \
 	for n in $$(seq 1 "$(SIMULATE_FLEET_SIZE)"); do \
 	  id="$$(demo_nth "$$base_id" "$$n")"; \
@@ -638,7 +885,7 @@ simulate: doctor-dev
 	  buf="./edgewatch_buffer_$${id}.sqlite"; \
 	  echo "  - $$id"; \
 	  EDGEWATCH_API_URL="$(EDGEWATCH_API_URL)" EDGEWATCH_DEVICE_ID="$$id" EDGEWATCH_DEVICE_TOKEN="$$tok" BUFFER_DB_PATH="$$buf" \
-	    uv run python agent/simulator.py & \
+	    uv run --locked python agent/simulator.py & \
 	done; \
 	wait
 
@@ -986,7 +1233,7 @@ lock: doctor-dev
 	@echo "Done. Commit uv.lock and pnpm-lock.yaml for team reproducibility."
 
 hygiene:
-	python scripts/repo_hygiene.py
+	uv run --locked python scripts/repo_hygiene.py
 
 
 # -----------------------------------------------------------------------------
@@ -1077,28 +1324,37 @@ tf-check: tf-fmt tf-validate tf-lint tf-sec tf-policy tf-checkov ## Run all Terr
 # Use them for lint/test/typecheck in a consistent way (locally and in CI).
 # -----------------------------------------------------------------------------
 
-.PHONY: fmt lint typecheck test build harness harness-doctor
+.PHONY: fmt lint typecheck test build check harness harness-doctor
 
 fmt:
-	python scripts/harness.py fmt
+	uv run --locked python scripts/harness.py fmt
 
 lint:
-	python scripts/harness.py lint
+	uv run --locked python scripts/harness.py lint
 
 typecheck:
-	python scripts/harness.py typecheck
+	uv run --locked python scripts/harness.py typecheck
 
 test:
-	python scripts/harness.py test
+	uv run --locked python scripts/harness.py test
 
 build:
-	python scripts/harness.py build
+	uv run --locked python scripts/harness.py build
 
-harness:
-	python scripts/harness.py all
+# CI-shaped local gate without formatter or pre-commit hooks that rewrite files.
+# The lint task includes Ruff's format check; the remaining tasks are read-only
+# with respect to source files (build products remain ignored artifacts).
+check:
+	uv run --locked python scripts/harness.py lint --strict --only python,node
+	uv run --locked python scripts/repo_hygiene.py
+	uv run --locked python scripts/harness.py typecheck --strict
+	uv run --locked python scripts/harness.py test --strict
+	uv run --locked python scripts/harness.py build --strict
+
+harness: check
 
 harness-doctor:
-	python scripts/harness.py doctor
+	uv run --locked python scripts/harness.py doctor
 
 # -----------------------------------------------------------------------------
 # Distribution packaging
@@ -1107,13 +1363,13 @@ harness-doctor:
 .PHONY: dist
 
 dist: clean ## Create a clean distribution zip under ./dist/
-	python scripts/package_dist.py
+	uv run --locked python scripts/package_dist.py
 
 
 # Retention / compaction
 retention:
 	@echo "Running retention/compaction job (RETENTION_ENABLED must be true)."
-	RETENTION_ENABLED=true python -m api.app.jobs.retention
+	RETENTION_ENABLED=true uv run --locked python -m api.app.jobs.retention
 
 retention-gcp:
 	$(call require,gcloud)

@@ -46,7 +46,7 @@ Operational consequences:
 Start API + DB lane:
 
 ```bash
-make up
+make run
 ```
 
 Run the agent with media enabled:

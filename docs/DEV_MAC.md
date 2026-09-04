@@ -90,11 +90,9 @@ From repo root:
 
 ```bash
 make doctor
+make setup
 make hygiene
-make up
-
-# For full local toolchain checks (uv/node/pnpm) used by harness + UI dev:
-make doctor-dev
+make run
 ```
 
 Open:
@@ -127,7 +125,7 @@ Notes:
 
 This repo uses **Alembic** migrations (`migrations/`).
 
-- `make up` runs migrations automatically (compose `migrate` service)
+- `make run` runs migrations automatically (compose `migrate` service); `make up` remains a compatibility alias
 - after schema changes, apply migrations with:
 
 ```bash
@@ -157,7 +155,7 @@ make hygiene
 Or:
 
 ```bash
-make harness
+make check
 ```
 
 ---

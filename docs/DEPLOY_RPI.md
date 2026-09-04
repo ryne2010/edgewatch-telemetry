@@ -2,7 +2,7 @@
 
 This guide deploys the **EdgeWatch agent** on a Raspberry Pi as a `systemd` service.
 
-The agent:
+In API mode, the agent:
 
 - Authenticates with the API using a **device token**
 - Fetches **device policy** from `GET /api/v1/device-policy` (ETag + Cache-Control cached)
@@ -16,16 +16,73 @@ The agent:
 - Python 3.10+ (3.11+ preferred)
 - Network access to your API (Cloud Run URL or local dev)
 
-## Zero-touch first boot (preformatted SD)
+In Telegram-exclusive mode, the agent uses local policy and does not require
+EdgeWatch API credentials.
 
-For fastest field startup:
+## Recommended fleet-image-v1 lane
 
-1. Preload SD card with Raspberry Pi OS + agent `.env` + systemd unit.
-2. Set `SENSOR_CONFIG_PATH=./agent/config/rpi.microphone.sensors.yaml`.
-3. Insert SD card, connect 12V-to-5V regulated power path, boot device.
-4. Device fetches policy, applies pending control command (if any), and starts telemetry automatically.
-5. `runtime_power_mode=eco` needs no extra hardware. `deep_sleep` is optional and depends on Pi 5 RTC support or Pi 4 supervisor hardware.
-6. Keep the main enclosure sealed; mount the USB microphone on a short external protected run rather than loose inside the box.
+Use the pinned, secret-free image for repeatable fleet staging:
+
+1. On a capable native ARM64 Linux builder, run
+   `make rpi-image RPI_DEVICE=rpizero2w`. The pinned official
+   `rpi-image-gen` lane emits `*.img.xz`, a SHA-256 file, and a manifest under
+   `dist/rpi-image/`.
+2. Verify and flash the compressed image. It contains the stable application at
+   `/opt/edgewatch/app`, but no device secrets, configuration, machine identity,
+   SSH host keys, or operator public key. The image creates a locked `ryne`
+   account with passwordless sudo and public-key-only SSH; first boot supplies
+   its authorized key.
+3. Generate a unique boot bundle:
+
+   ```bash
+   make rpi-provision \
+     DEVICE_ID=rpi-001 \
+     TELEGRAM_CHAT_ID=-1001234567890 \
+     TELEGRAM_BOT_TOKEN_FILE="$PWD/secrets/telegram_bot_token" \
+     SSH_PUBLIC_KEY_FILE="$HOME/.ssh/id_ed25519.pub" \
+     CONTROL_SSH_PUBLIC_KEY_FILE="$PWD/secrets/controller_ed25519.pub" \
+     OTA_PUBLIC_KEY_FILE="$PWD/secrets/edgewatch-ota-release.pem" \
+     OTA_KEY_ID=edgewatch-release \
+     OUTPUT_DIR="$PWD/dist/rpi-provision/rpi-001"
+   ```
+
+4. Copy the generated `edgewatch/` directory to the flashed boot partition.
+5. Insert the SIM and boot. First boot installs the operator key, installs the
+   different controller key as a forced typed command, installs the OTA public
+   trust anchor, imports the Telegram telemetry token, removes the consumed boot
+   copies, sets the hostname, activates LTE, starts the agent, sends a Telegram
+   provisioning receipt, and writes `/var/lib/edgewatch/bootstrap-report.json`
+   only after the agent, LTE, and Telegram health gates pass. The systemd unit
+   retries failed attempts.
+
+The generated directory contains `bootstrap.env`, `telegram_bot_token`,
+`authorized_key`, `control_authorized_key`,
+`ota_keys/<OTA_KEY_ID>.pem`, and `provisioning-manifest.json`. It never contains
+the controller SSH private key, OTA signing private key, or Telegram control-bot
+token. Operator and controller SSH keys must use different key material.
+
+The FAT boot partition does not enforce the generator's local Unix file modes.
+Treat the flashed card as credential-bearing and keep it physically controlled
+until first boot imports the Telegram token into root-owned storage and durably
+removes the token and public-key staging copies before marking provisioning
+complete.
+
+The generator defaults to the Hologram APN, `SENSOR_BACKEND=none`, continuous
+power, SQLite `synchronous=FULL`, Telegram batching, and a disabled cellular
+watchdog. Use continuous power for bring-up; move to `eco` after a successful
+soak. `deep_sleep` remains hardware-dependent.
+
+See [Raspberry Pi zero-touch fleet bootstrap](TUTORIALS/RPI_ZERO_TOUCH_BOOTSTRAP.md)
+for the full workflow.
+
+Provisioning prepares the device side of API-free control and signed OTA, but
+does not start a controller. Configure the dedicated control bot, numeric
+chat/user RBAC, device inventory, pinned host keys, controller state, release
+catalog, and controller supervisor by following
+[Telegram fleet control](RUNBOOKS/TELEGRAM_FLEET_CONTROL.md).
+
+The manual install below remains available for development and API-connected
+devices.
 
 ## 1) Create the device on the server
 
@@ -196,7 +253,7 @@ cp .env.example .env
 nano .env
 ```
 
-Minimum required values:
+For API transport, configure:
 
 ```bash
 EDGEWATCH_API_URL=https://YOUR-CLOUD-RUN-URL
@@ -204,6 +261,63 @@ EDGEWATCH_DEVICE_ID=rpi-001
 EDGEWATCH_DEVICE_TOKEN=PASTE_DEVICE_TOKEN_HERE
 SENSOR_CONFIG_PATH=./agent/config/rpi.microphone.sensors.yaml
 ```
+
+For Telegram-exclusive bring-up, API URL and device token are not required. The
+bot must be a channel admin with permission to post:
+
+```bash
+EDGEWATCH_TELEMETRY_TRANSPORT=telegram
+EDGEWATCH_DEVICE_ID=rpi-home-001
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_BOT_TOKEN_FILE=/var/lib/edgewatch/telegram_bot_token
+TELEGRAM_BATCH_ENABLED=true
+TELEGRAM_BATCH_MAX_POINTS=100
+TELEGRAM_BATCH_MAX_BYTES=1000000
+TELEGRAM_BATCH_MAX_AGE_S=3600
+SENSOR_BACKEND=none
+MEDIA_ENABLED=false
+BUFFER_MAX_POINTS=10000
+BUFFER_MAX_AGE_S=2592000
+BUFFER_MAX_DB_BYTES=104857600
+```
+
+Create the bot-token file after `/var/lib/edgewatch` exists. Enter the actual
+token locally on the Pi; do not commit it or paste it into service logs:
+
+```bash
+sudo install -d -m 0750 -o "$USER" -g "$USER" /var/lib/edgewatch
+umask 077
+read -rsp 'Telegram bot token: ' edgewatch_telegram_token
+printf '\n'
+printf '%s\n' "$edgewatch_telegram_token" > /var/lib/edgewatch/telegram_bot_token
+unset edgewatch_telegram_token
+chmod 600 /var/lib/edgewatch/telegram_bot_token
+```
+
+In this mode, the local fallback-policy variables below are authoritative. The
+agent makes no EdgeWatch API calls; API policy/control, API OTA
+delivery/reporting, server-side alerts/dashboard storage, and API media uploads
+are unavailable. A separately deployed Telegram fleet controller can still
+provide the repository's allowlisted typed controls and signed
+application-bundle OTA through pinned SSH/Spacebridge. The telemetry bot itself
+does not provide this control path, and the controller is not live until it is
+configured and supervised.
+Routine points are sent oldest-first as gzip JSONL batches. The current startup,
+heartbeat, state/alert transition, or alert snapshot point is durably enqueued
+and sent directly, without first draining older routine rows. Below the routine
+daily cap, one independently bounded backlog request may follow; at the cap,
+only the configured urgent reserve is available. Successful Bot API
+acknowledgement removes included rows from SQLite. Delivery remains at least once.
+The example outbox limits retain up to 30 days/10,000 points subject to the
+100 MB disk cap; oldest undelivered points are evicted if any bound is exceeded.
+Use `BUFFER_SQLITE_SYNCHRONOUS=FULL` on field devices for stronger committed-write
+durability across sudden power loss (at the cost of additional storage I/O).
+
+Telegram does not provide an independent missing-heartbeat alarm: a Pi that
+loses power or connectivity simply stops posting. A shared bot token identifies
+the bot, not the physical sender, so it is not strong per-device provenance.
+Use separate bots per trust boundary and an external heartbeat monitor when
+those properties matter.
 
 Recommended production values:
 
@@ -223,8 +337,27 @@ EDGEWATCH_COMMAND_STATE_PATH=/var/lib/edgewatch/command_state_rpi-001.json
 # Persist durable OTA command/apply state.
 EDGEWATCH_UPDATE_STATE_PATH=/var/lib/edgewatch/update_state_rpi-001.json
 
+# Telegram-controller OTA uses a separate local state file and immutable
+# release/cache/key paths. fleet-image-v1 provisioning sets these automatically.
+EDGEWATCH_LOCAL_OTA_STATE_PATH=/var/lib/edgewatch/local_ota_rpi-001.json
+EDGEWATCH_OTA_CACHE_DIR=/opt/edgewatch/update-cache
+EDGEWATCH_OTA_KEYRING_DIR=/opt/edgewatch/keys
+EDGEWATCH_RELEASES_ROOT=/opt/edgewatch/releases
+EDGEWATCH_CURRENT_SYMLINK=/opt/edgewatch/current
+EDGEWATCH_RUNTIME_DEPENDENCY_PATH=/opt/edgewatch/current/agent/requirements.txt
+EDGEWATCH_OTA_POWER_EVIDENCE_MAX_AGE_S=300
+
 # Persist wake bookkeeping for eco/deep-sleep runtime.
 EDGEWATCH_LOW_POWER_STATE_PATH=/var/lib/edgewatch/low_power_state_rpi-001.json
+
+# Persist actual cellular-interface usage across restarts. When available,
+# wwan transmit totals are preferred for daily byte-budget enforcement.
+CELLULAR_USAGE_STATE_PATH=/var/lib/edgewatch/cellular_usage_rpi-001.json
+
+# Persist daily cap counters and reserve up to 256 KiB/day beyond the routine
+# byte cap for bounded startup/heartbeat/state/alert telemetry.
+EDGEWATCH_COST_CAP_STATE_PATH=/var/lib/edgewatch/cost_caps_rpi-001.json
+EDGEWATCH_COST_CAP_URGENT_RESERVE_BYTES=262144
 
 # Optional runtime power defaults (device policy remains the source of truth).
 # RUNTIME_POWER_MODE=continuous
@@ -234,9 +367,19 @@ EDGEWATCH_LOW_POWER_STATE_PATH=/var/lib/edgewatch/low_power_state_rpi-001.json
 # keep remote OS shutdown disabled unless explicitly approved for this device.
 # EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=0
 
-# OTA apply guard (safe default is dry-run reporting only).
-# Enable after pilot validation.
+# OTA apply guard (safe default is dry-run/stage-only behavior).
+# This flag gates both API-delivered OTA apply and Telegram-controller local
+# application/asset/system-image activation. Enable it only on validated cohorts.
 # EDGEWATCH_ENABLE_OTA_APPLY=0
+
+# Application-bundle OTA currently changes reviewed code only. Its signed
+# requirements fingerprint must match the installed runtime; dependency changes
+# require a new base/system image until dependency-aware activation is qualified.
+
+# Telegram-controller system-image apply remains disabled until real-hardware
+# reboot and rollback qualification. Application bundles are the initial path.
+# EDGEWATCH_ENABLE_SYSTEM_IMAGE_APPLY=0
+# EDGEWATCH_SYSTEM_IMAGE_HARDWARE_QUALIFIED=0
 
 # Optional: write permanently-failed payloads for later inspection
 # EDGEWATCH_DEADLETTER_PATH=/var/lib/edgewatch/deadletter_rpi-001.jsonl
@@ -278,7 +421,8 @@ Low-power deployment tiers:
    - best for pilot bring-up and debugging
 2. `eco`
    - no extra hardware
-   - batches routine network reconnects to heartbeat windows
+   - batches routine application transmissions to heartbeat windows
+   - keeps the LTE bearer attached by default for reliable alert latency
    - recommended first power optimization step on Pi 4 and Pi 5
 3. `deep_sleep`
    - Pi 5: use onboard RTC wakealarm path
@@ -302,9 +446,13 @@ python edgewatch_agent.py
 
 You should see logs for:
 
-- policy fetch (HTTP 200 or 304)
+- selected transport (`api` or `telegram`)
+- API mode: policy fetch (HTTP 200 or 304)
+- Telegram mode: local-policy notice and a successful `sent` line
 - sampling loop
-- batch post to `/api/v1/ingest`
+- API mode: batch post to `/api/v1/ingest`
+- Telegram mode: a gzip JSONL document in the configured channel (urgent
+  startup/alert delivery may contain a partial batch)
 
 Check the UI:
 

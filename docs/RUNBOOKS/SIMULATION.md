@@ -14,7 +14,7 @@ There are two modes:
 Start the stack:
 
 ```bash
-make up
+make run
 ```
 
 Then in another terminal:

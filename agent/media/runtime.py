@@ -4,9 +4,11 @@ import hashlib
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
-from .capture import LibcameraStillBackend, MediaCaptureService, parse_camera_id
+from .capture import CameraBackend, LibcameraStillBackend, MediaCaptureService, parse_camera_id
+from .rtsp import FFmpegRtspBackend, RtspCameraConfig, RtspCaptureLimits, RtspConfigurationError
 from .storage import MediaAssetMetadata, MediaRingBuffer, StoredMediaAsset
 
 
@@ -33,6 +35,7 @@ class MediaConfig:
     backend: str
     capture_timeout_s: float
     lock_timeout_s: float
+    rtsp_cameras: tuple[tuple[str, str, str], ...] = ()
 
 
 class CaptureService(Protocol):
@@ -189,7 +192,12 @@ class MediaRuntime:
     def _next_upload_candidate(self, *, now_s: float) -> StoredMediaAsset | None:
         if self.ring_buffer is None:
             return None
-        assets = self.ring_buffer.list_assets_oldest_first()
+        # Event evidence and daily health stills are intentionally local-only.
+        # They may be retrieved from SD or through an explicit maintenance
+        # workflow, but must never enter the routine API media uploader.
+        assets = [
+            asset for asset in self.ring_buffer.list_assets_oldest_first() if not asset.metadata.local_only
+        ]
         live_keys = {self._asset_key(asset) for asset in assets}
 
         for key in list(self._upload_next_attempt_by_asset):
@@ -380,6 +388,7 @@ def load_media_config_from_env() -> MediaConfig:
             backend="libcamera",
             capture_timeout_s=15.0,
             lock_timeout_s=5.0,
+            rtsp_cameras=(),
         )
 
     camera_ids = _parse_camera_ids(os.getenv("CAMERA_IDS"))
@@ -404,8 +413,19 @@ def load_media_config_from_env() -> MediaConfig:
     if not ring_dir:
         raise MediaConfigError("MEDIA_RING_DIR must be non-empty")
     backend = os.getenv("MEDIA_BACKEND", "libcamera").strip().lower()
-    if backend not in {"libcamera"}:
-        raise MediaConfigError("MEDIA_BACKEND must be 'libcamera' for this stage")
+    if backend not in {"libcamera", "rtsp"}:
+        raise MediaConfigError("MEDIA_BACKEND must be 'libcamera' or 'rtsp'")
+    rtsp_cameras: list[tuple[str, str, str]] = []
+    if backend == "rtsp":
+        for camera_id in camera_ids:
+            prefix = f"MEDIA_RTSP_{camera_id.upper()}"
+            endpoint = (os.getenv(f"{prefix}_URL") or "").strip()
+            credentials_path = (os.getenv(f"{prefix}_CREDENTIALS_FILE") or "").strip()
+            if not endpoint:
+                raise MediaConfigError(f"{prefix}_URL is required for the RTSP backend")
+            if not credentials_path:
+                raise MediaConfigError(f"{prefix}_CREDENTIALS_FILE is required for the RTSP backend")
+            rtsp_cameras.append((camera_id, endpoint, credentials_path))
 
     return MediaConfig(
         enabled=True,
@@ -421,6 +441,7 @@ def load_media_config_from_env() -> MediaConfig:
         backend=backend,
         capture_timeout_s=capture_timeout_s,
         lock_timeout_s=lock_timeout_s,
+        rtsp_cameras=tuple(rtsp_cameras),
     )
 
 
@@ -430,11 +451,31 @@ def build_media_runtime_from_env(*, device_id: str) -> MediaRuntime | None:
         return None
 
     ring_buffer = MediaRingBuffer(config.ring_dir, max_bytes=config.ring_max_bytes)
-    backend = LibcameraStillBackend()
-    if not backend.is_supported():
-        raise MediaConfigError(
-            "libcamera-still not found on PATH; install libcamera tools or set MEDIA_ENABLED=false"
-        )
+    backend: CameraBackend
+    if config.backend == "libcamera":
+        backend = LibcameraStillBackend()
+        if not backend.is_supported():
+            raise MediaConfigError(
+                "libcamera-still not found on PATH; install libcamera tools or set MEDIA_ENABLED=false"
+            )
+    else:
+        try:
+            backend = FFmpegRtspBackend(
+                {
+                    camera_id: RtspCameraConfig(
+                        endpoint=endpoint,
+                        credentials_path=Path(credentials_path),
+                    )
+                    for camera_id, endpoint, credentials_path in config.rtsp_cameras
+                },
+                limits=RtspCaptureLimits(connect_timeout_s=config.capture_timeout_s),
+            )
+        except (RtspConfigurationError, ValueError) as exc:
+            raise MediaConfigError(f"invalid RTSP media configuration: {exc}") from exc
+        if not backend.is_supported():
+            raise MediaConfigError(
+                "ffmpeg and ffprobe are required for MEDIA_BACKEND=rtsp; install them in the base image"
+            )
     capture_service = MediaCaptureService(
         device_id=device_id,
         backend=backend,

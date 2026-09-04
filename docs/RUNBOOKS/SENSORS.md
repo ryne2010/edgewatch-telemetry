@@ -184,7 +184,7 @@ Calibration plan:
 Once sensors are reading locally:
 
 ```bash
-make up
+make run
 make demo-device
 make simulate
 ```

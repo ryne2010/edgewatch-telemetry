@@ -1,0 +1,155 @@
+# EdgeWatch Telegram fleet controller example.
+# Copy to /etc/edgewatch-controller/controller.yaml and replace every example ID/path.
+
+telegram:
+  # Dedicated control bot. Do not reuse the telemetry bot token installed on devices.
+  token_file: /etc/edgewatch-controller/control_bot_token
+  poll_timeout_s: 30
+  request_timeout_s: 40
+
+storage:
+  database_path: /var/lib/edgewatch-controller/controller.sqlite
+
+ssh:
+  # Private half of the controller key whose public half is provisioned on every Pi.
+  device_key_file: /etc/edgewatch-controller/controller_device_ed25519
+  known_hosts_file: /etc/edgewatch-controller/known_hosts
+  username: ryne
+  connect_timeout_s: 10
+  command_timeout_s: 90
+  # Required by devices whose transport is spacebridge. Upload the matching public
+  # key to Hologram as a device-tunneling key.
+  spacebridge_identity_file: /etc/edgewatch-controller/spacebridge_rsa
+  spacebridge_host: tunnel.hologram.io
+  spacebridge_user: htunnel
+  spacebridge_port: 999
+
+authorization:
+  # Telegram IDs are immutable numeric IDs encoded as strings. Usernames are not used.
+  allowed_chats: ["-1001234567890"]
+  users:
+    "111111111": {role: viewer, fleets: [home-lab]}
+    "222222222": {role: operator, fleets: [home-lab]}
+    "333333333": {role: admin, fleets: []}
+
+devices:
+  gateway-001:
+    fleet: home-lab
+    host: localhost
+    transport: local
+    capabilities:
+      - status
+      - health
+      - network
+      - power
+      - queue
+      - version
+      - sample_now
+      - sync_now
+      - set_operation_mode
+      - set_power_mode
+      - alerts_mute
+      - alerts_unmute
+      - agent_restart
+      - reboot
+      - ota
+  rpi-001:
+    fleet: home-lab
+    host: 192.168.1.50
+    transport: direct
+    capabilities:
+      - status
+      - health
+      - network
+      - power
+      - queue
+      - version
+      - sample_now
+      - sync_now
+      - set_operation_mode
+      - set_power_mode
+      - deep_sleep
+      - alerts_mute
+      - alerts_unmute
+      - agent_restart
+      - reboot
+      - ota
+  rpi-002:
+    fleet: home-lab
+    # Hologram Link/Profile ID, not the ICCID or device name.
+    host: link999999
+    transport: spacebridge
+    capabilities:
+      - status
+      - health
+      - network
+      - power
+      - queue
+      - version
+      - sample_now
+      - sync_now
+      - set_operation_mode
+      - set_power_mode
+      - deep_sleep
+      - alerts_mute
+      - alerts_unmute
+      - agent_restart
+      - reboot
+      - ota
+  camera-001:
+    fleet: home-lab
+    # Static address on the powered-on, isolated maintenance WLAN.
+    host: 10.42.0.21
+    transport: maintenance_via_lora
+    metadata:
+      host_key_alias: camera-001-maintenance
+      port: 22
+    capabilities:
+      - status
+      - health
+      - version
+      - ota
+
+fleets:
+  home-lab:
+    devices: [gateway-001, rpi-001, rpi-002, camera-001]
+    # Optional Telegram forum topic ID used as an authorization boundary.
+    topic_id: "77"
+    canaries: [rpi-001]
+
+maintenance:
+  registry_file: /etc/edgewatch-controller/lorawan-registry.yaml
+  gateway_store_path: /var/lib/edgewatch-controller/lorawan-gateway.sqlite
+  readiness_timeout_s: 300
+
+# The controller fetches each release once over LTE. Satellites retrieve the
+# immutable digest object from this private maintenance address, then verify the
+# signed manifest, exact size, SHA-256 digest, and artifact signature locally.
+artifact_cache:
+  directory: /var/lib/edgewatch-controller/artifacts
+  bind_host: 10.42.0.1
+  port: 8091
+  max_artifact_bytes: 536870912
+  max_total_bytes: 2147483648
+  max_objects: 16
+  minimum_free_bytes: 268435456
+  download_timeout_s: 120
+  http_max_connections: 4
+  http_socket_timeout_s: 30
+
+ota:
+  catalog_file: /etc/edgewatch-controller/releases.json
+  rollout_percentages: [10, 50, 100]
+  failure_rate_threshold: 0.10
+  defer_rate_threshold: 0.25
+
+controller:
+  confirmation_ttl_s: 120
+  # Covers an hourly Class-A satellite receive window plus bounded dispatch retries.
+  command_ttl_s: 7200
+  # Fleet previews freeze this bounded worker count into the confirmed dispatch policy.
+  fleet_dispatch_concurrency: 4
+  # Accepted sample/sync requests are polled durably at this bounded interval.
+  accepted_poll_interval_s: 60
+  # Single-device shutdown is excluded until this is explicitly enabled.
+  shutdown_enabled: false

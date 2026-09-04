@@ -10,9 +10,9 @@ This repo prefers **boring, legible engineering** with mechanical validation.
 
 ## Python
 
-- Formatting/linting: **ruff** (`python scripts/harness.py lint`)
-- Typechecking: **pyright** (`python scripts/harness.py typecheck`)
-- Testing: **pytest** (`python scripts/harness.py test`)
+- Formatting/linting: **ruff** (`make lint`)
+- Typechecking: **pyright** (`make typecheck`)
+- Testing: **pytest** (`make test`)
 
 Guidelines:
 - Use timezone-aware datetimes in persisted models.

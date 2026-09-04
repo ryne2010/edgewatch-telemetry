@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,6 +112,14 @@ class PowerManager:
         power_source = _normalize_power_source(metrics.get("power_source"), input_v=input_v)
 
         if not policy.enabled:
+            self._record_evaluation(
+                now_ts=now_ts,
+                power_source=power_source,
+                power_input_out_of_range=False,
+                power_unsustainable=False,
+                power_saver_active=False,
+                evidence=_power_evidence(input_v=input_v, input_w=input_w, battery_v=battery_v),
+            )
             self._save()
             return PowerEvaluation(
                 power_source=power_source,
@@ -161,7 +170,14 @@ class PowerManager:
 
         saver_active = bool(out_of_range or unsustainable)
 
-        self._state["last_power_source"] = power_source
+        self._record_evaluation(
+            now_ts=now_ts,
+            power_source=power_source,
+            power_input_out_of_range=bool(out_of_range),
+            power_unsustainable=bool(unsustainable),
+            power_saver_active=bool(saver_active),
+            evidence=_power_evidence(input_v=input_v, input_w=input_w, battery_v=battery_v),
+        )
         self._save()
         return PowerEvaluation(
             power_source=power_source,
@@ -195,13 +211,59 @@ class PowerManager:
             "power_w_samples": power_samples,
             "battery_v_samples": battery_samples,
             "last_power_source": last_source,
+            "last_evaluation": _coerce_last_evaluation(parsed.get("last_evaluation")),
         }
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(json.dumps(self._state, sort_keys=True), encoding="utf-8")
-        tmp.replace(self.path)
+        fd, raw_tmp = tempfile.mkstemp(
+            dir=self.path.parent,
+            prefix=f".{self.path.name}.",
+            suffix=".tmp",
+        )
+        tmp = Path(raw_tmp)
+        committed = False
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                json.dump(self._state, handle, sort_keys=True, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, self.path)
+            committed = True
+            _fsync_directory(self.path.parent)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if not committed:
+                try:
+                    tmp.unlink()
+                except FileNotFoundError:
+                    pass
+
+    def _record_evaluation(
+        self,
+        *,
+        now_ts: float,
+        power_source: str,
+        power_input_out_of_range: bool,
+        power_unsustainable: bool,
+        power_saver_active: bool,
+        evidence: str,
+    ) -> None:
+        self._state.update(
+            {
+                "last_power_source": power_source,
+                "last_evaluation": {
+                    "ts": float(now_ts),
+                    "power_input_out_of_range": power_input_out_of_range,
+                    "power_unsustainable": power_unsustainable,
+                    "power_saver_active": power_saver_active,
+                    "evidence": evidence,
+                },
+            }
+        )
 
     def _now_ts(self) -> float:
         return self._now_fn().astimezone(timezone.utc).timestamp()
@@ -227,7 +289,52 @@ def _default_state() -> dict[str, Any]:
         "power_w_samples": [],
         "battery_v_samples": [],
         "last_power_source": "unknown",
+        "last_evaluation": None,
     }
+
+
+def _coerce_last_evaluation(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    ts = _as_float(value.get("ts"))
+    flags = (
+        value.get("power_input_out_of_range"),
+        value.get("power_unsustainable"),
+        value.get("power_saver_active"),
+    )
+    evidence = value.get("evidence")
+    if (
+        ts is None
+        or ts < 0
+        or any(not isinstance(flag, bool) for flag in flags)
+        or evidence not in {"input_voltage", "input_power", "battery", "none"}
+    ):
+        return None
+    return {
+        "ts": float(ts),
+        "power_input_out_of_range": flags[0],
+        "power_unsustainable": flags[1],
+        "power_saver_active": flags[2],
+        "evidence": evidence,
+    }
+
+
+def _power_evidence(*, input_v: float | None, input_w: float | None, battery_v: float | None) -> str:
+    if input_v is not None:
+        return "input_voltage"
+    if input_w is not None:
+        return "input_power"
+    if battery_v is not None:
+        return "battery"
+    return "none"
+
+
+def _fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _as_float(value: Any) -> float | None:

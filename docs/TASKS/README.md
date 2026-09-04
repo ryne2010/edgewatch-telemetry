@@ -27,15 +27,15 @@ For each task:
 3) Validate with the harness before finalizing:
 
 ```bash
-make harness
+make check
 ```
 
 For faster inner loops:
 
 ```bash
-python scripts/harness.py lint --only python
-python scripts/harness.py test --only python
-python scripts/harness.py lint --only node
+uv run --locked python scripts/harness.py lint --only python
+uv run --locked python scripts/harness.py test --only python
+uv run --locked python scripts/harness.py lint --only node
 ```
 
 ---

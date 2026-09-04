@@ -109,6 +109,37 @@ def test_should_network_sync_respects_low_power_modes() -> None:
     )
 
 
+def test_telegram_force_immediate_preserves_low_power_network_windows() -> None:
+    assert agent_main._telegram_force_immediate(send_reason="startup") is True
+    assert agent_main._telegram_force_immediate(send_reason="heartbeat") is True
+    assert agent_main._telegram_force_immediate(send_reason="alert_snapshot") is True
+    assert agent_main._telegram_force_immediate(send_reason="delta") is False
+
+
+def test_unchanged_numeric_metrics_do_not_trigger_zero_threshold_delta() -> None:
+    current = {
+        "cellular_bytes_sent_today": 1234,
+        "cellular_rsrp_dbm": -91.0,
+        "custom_metric": 5,
+    }
+
+    assert agent_main._changed_keys(current=current, previous=current, thresholds={}) == []
+
+
+def test_cellular_usage_delta_respects_fleet_threshold() -> None:
+    current = {"cellular_bytes_sent_today": 150_000}
+    previous = {"cellular_bytes_sent_today": 100_000}
+
+    assert (
+        agent_main._changed_keys(
+            current=current,
+            previous=previous,
+            thresholds={"cellular_bytes_sent_today": 262_144},
+        )
+        == []
+    )
+
+
 def test_resolve_applied_runtime_mode_falls_back_to_eco_without_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

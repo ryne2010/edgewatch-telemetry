@@ -1,67 +1,152 @@
-# Tutorial: RPi Zero-Touch Bootstrap (Preformatted SD)
+# Tutorial: Raspberry Pi zero-touch fleet bootstrap
 
-Goal: bring a new Raspberry Pi online with microphone + power telemetry using a preformatted SD card and minimal site work.
+Use this lane to flash the same secret-free `fleet-image-v1` artifact to many
+Raspberry Pis, then add a unique Telegram provisioning bundle to each card.
+The default profile uses the Hologram APN, continuous power, no sensor backend,
+and batched Telegram telemetry.
 
-## 1) Pre-stage assets on the SD card
+See the [provisioning ADR](../DECISIONS/ADR-20260418-rpi-zero-touch-provisioning.md)
+for the image/first-boot boundary.
 
-1. Flash Raspberry Pi OS Lite (64-bit).
-2. Copy agent repo or deployment bundle.
-3. Pre-create `agent/.env` with:
-   - `EDGEWATCH_API_URL`
-   - `EDGEWATCH_DEVICE_ID`
-   - `EDGEWATCH_DEVICE_TOKEN`
-   - `SENSOR_CONFIG_PATH=./agent/config/rpi.microphone.sensors.yaml`
-4. Pre-create persistent paths:
-   - `BUFFER_DB_PATH=/var/lib/edgewatch/telemetry_buffer.sqlite`
-   - `EDGEWATCH_POLICY_CACHE_PATH=/var/lib/edgewatch/policy_cache_<device>.json`
-   - `EDGEWATCH_POWER_STATE_PATH=/var/lib/edgewatch/power_state_<device>.json`
-   - `EDGEWATCH_COMMAND_STATE_PATH=/var/lib/edgewatch/command_state_<device>.json`
-   - `EDGEWATCH_LOW_POWER_STATE_PATH=/var/lib/edgewatch/low_power_state_<device>.json`
-5. Set shutdown guard explicitly:
-   - default safe posture: `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=0`
-6. Choose runtime power posture explicitly:
-   - default safe/debug posture: `RUNTIME_POWER_MODE=continuous`
-   - software-only low-power: `RUNTIME_POWER_MODE=eco`
-   - optional true halt path: `RUNTIME_POWER_MODE=deep_sleep`, `DEEP_SLEEP_BACKEND=auto`
+## 1. Build the reusable image
 
-## 2) Hardware hookup at site
+Build on a capable native ARM64 Debian Bookworm or Raspberry Pi OS host. The
+pinned official `rpi-image-gen` builder needs a private mount namespace and
+`CAP_SYS_ADMIN` or equivalent host capability.
 
-1. Insert SD card.
-2. Connect regulated 5V rail fed from 12V lead-acid/solar chain.
-3. Connect INA219/INA260 on I2C and route the USB microphone to a short external protected mount.
-   - keep the main enclosure sealed
-   - add strain relief and a drip loop on the mic cable
-   - use a small hood or downward-facing sheltered location
-4. Connect USB LTE modem with active data SIM.
-5. Optional low-power hardware:
-   - Pi 5 RTC wakealarm path: no extra supervisor board
-   - Pi 4: add external RTC/power-latch supervisor only if true `deep_sleep` is required
+```bash
+make rpi-image RPI_DEVICE=rpizero2w RPI_IMAGE_VERSION=2026.08.09
+```
 
-## 3) First boot validation
+If the host still needs the builder dependencies, run the underlying command
+once with `--install-deps`:
 
-1. Confirm systemd service is running:
-   - `sudo systemctl status edgewatch-agent`
-2. Confirm policy fetch + ingest logs:
-   - `journalctl -u edgewatch-agent -f`
-3. Confirm device appears in UI with:
-   - `microphone_level_db`
-   - `power_input_v|a|w`
-   - `power_*` flags
-   - `power_runtime_mode`, `power_sleep_backend`, `network_duty_cycled`
+```bash
+deploy/rpi/image/build.sh --install-deps --device rpizero2w
+```
 
-## 4) Remote control sanity check
+`dist/rpi-image/` receives the compressed `*.img.xz`, its
+`*.img.xz.sha256`, and the build `*.manifest.json`. Verify the checksum before
+flashing. The image contains the stable application at `/opt/edgewatch/app`,
+but no device credentials, operator public key, per-device configuration,
+machine identity, or SSH host keys. It creates a locked `ryne` account with
+passwordless sudo and configures SSH for public-key authentication only. First
+boot generates the machine identity and SSH host keys.
 
-1. Set device to `sleep` from UI/API.
-2. Verify agent applies pending command on next policy fetch.
-3. Verify command ack path succeeds and pending count clears.
-4. If testing admin shutdown intent:
-   - keep `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=0` for safety first
-   - confirm command is acknowledged and device remains logically disabled
-   - enable `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=1` only for controlled shutdown tests
+## 2. Generate one device bundle
 
-## 5) Failure handling
+Store the Telegram telemetry-bot token in a local mode-`0600` file. Prepare a
+separate controller SSH public key and the OTA verification public key, then generate
+a clean staging directory:
 
-- If LTE is not attached, agent buffers locally and flushes on reconnect.
-- If power sensor reads fail, power metrics degrade to `None`/`unknown` without crashing ingestion.
-- If control ack fails, agent retries using durable local command state.
-- If shutdown intent is delivered while guard is off, agent logs guarded skip and stays disabled.
+```bash
+make rpi-provision \
+  DEVICE_ID=rpi-001 \
+  TELEGRAM_CHAT_ID=-1001234567890 \
+  TELEGRAM_BOT_TOKEN_FILE="$PWD/secrets/telegram_bot_token" \
+  SSH_PUBLIC_KEY_FILE="$HOME/.ssh/id_ed25519.pub" \
+  CONTROL_SSH_PUBLIC_KEY_FILE="$PWD/secrets/controller_ed25519.pub" \
+  OTA_PUBLIC_KEY_FILE="$PWD/secrets/edgewatch-ota-release.pem" \
+  OTA_KEY_ID=edgewatch-release \
+  OUTPUT_DIR="$PWD/dist/rpi-provision/rpi-001"
+```
+
+The generated `edgewatch/` directory contains `bootstrap.env`, the protected
+Telegram telemetry token, the operator public key as `authorized_key`, the
+separate controller public key as `control_authorized_key`, the OTA verification
+key under `ota_keys/`, and a non-secret manifest containing the public-key hash.
+No private key or control-bot token is copied or baked. Copy that directory to
+the root of the flashed card's boot partition so the device sees:
+
+```text
+/boot/firmware/edgewatch/bootstrap.env
+/boot/firmware/edgewatch/telegram_bot_token
+/boot/firmware/edgewatch/authorized_key
+/boot/firmware/edgewatch/control_authorized_key
+/boot/firmware/edgewatch/ota_keys/edgewatch-release.pem
+/boot/firmware/edgewatch/provisioning-manifest.json
+```
+
+The boot partition is FAT and does not enforce Unix ownership or mode bits, so
+the generator's mode-`0600` staging file is not the credential security
+boundary. Keep the card physically controlled before its first boot. The
+first-boot service imports the token into root-owned persistent storage,
+installs both SSH trust paths and the OTA public key, and durably removes the
+token and public-key staging copies before it writes the completion marker.
+
+The generator defaults to:
+
+- `BOOTSTRAP_REPO_DIR=/opt/edgewatch/app`
+- stable runtime symlink `/opt/edgewatch/current` pointing at the baked app
+- `BOOTSTRAP_SSH_USER=ryne` with separate operator and controller key paths
+- controller SSH constrained to the root-owned typed device-control helper
+- OTA releases under `/opt/edgewatch/releases`, cache under
+  `/opt/edgewatch/update-cache`, and public keys under `/opt/edgewatch/keys`
+- Hologram APN on `wwan0`
+- `RUNTIME_POWER_MODE=continuous`
+- `SENSOR_BACKEND=none`
+- `BUFFER_SQLITE_SYNCHRONOUS=FULL`
+- Telegram gzip JSONL batches of up to 100 points or 1,000,000 bytes; the
+  one-hour age threshold is checked at the next sampling/heartbeat sync
+  opportunity, and the default hourly heartbeat always flushes a partial batch
+- cellular metrics enabled and the link watchdog disabled
+
+Use `POWER_PROFILE=eco` only after the continuous-power bring-up has soaked
+successfully. True `deep_sleep` is hardware-dependent and is not generated by
+this provisioning command.
+
+## 3. Boot and verify
+
+Insert the SIM, connect antennas and stable power, then boot. The first-boot
+service retries failures automatically. On success it:
+
+1. imports the Telegram telemetry token, installs the ordinary operator key,
+   installs the controller key as a forced typed command, and installs the OTA
+   verification public key;
+2. removes the consumed credential and public-key boot copies after successful
+   provisioning;
+3. sets the hostname from `DEVICE_ID`;
+4. installs and starts `edgewatch-agent`;
+5. activates the LTE profile;
+6. verifies the agent, active LTE connection, and Telegram delivery by sending
+   a silent provisioning receipt;
+7. writes `/var/lib/edgewatch/bootstrap-report.json` and the completion marker.
+
+Check the device locally or over an approved operator connection:
+
+```bash
+sudo systemctl status edgewatch-firstboot edgewatch-agent
+sudo journalctl -u edgewatch-firstboot -u edgewatch-agent --no-pager
+sudo cat /var/lib/edgewatch/bootstrap-report.json
+```
+
+Routine telemetry is sent as at-least-once gzip JSONL batches. Startup and alert
+traffic bypasses the normal batching delay. Actual `wwan0` transmit totals are
+persisted through `CELLULAR_USAGE_STATE_PATH` and are preferred for the daily
+byte budget when available.
+
+Telegram-exclusive telemetry makes no EdgeWatch API calls, so API policy,
+server-side alert lifecycle, dashboard storage, API procedures, and API OTA
+reporting remain unavailable. Fleet control and signed application-bundle OTA
+are instead available through the separate external Telegram fleet controller,
+which uses pinned direct SSH at home and Hologram Spacebridge in the field. The
+control bot token and controller SSH private key never belong on a Pi.
+
+Application OTA is code-only until dependency-aware activation is qualified:
+the signed `agent/requirements.txt` fingerprint must equal the installed
+runtime. A dependency change requires a newly qualified base/system image. Pi
+OTA also fails closed unless the latest durable power verdict is fresh and
+healthy; a device without a power sensor must have a clean
+`vcgencmd get_throttled` result of `throttled=0x0`.
+
+This controller is not live until its inventory, numeric chat/user RBAC, pinned
+host keys, credentials, release catalog, and supervised service are configured.
+Complete the [Telegram fleet control runbook](../RUNBOOKS/TELEGRAM_FLEET_CONTROL.md)
+before relying on it.
+
+Telegram telemetry still has no independent missing-heartbeat watcher: if the
+Pi loses power or connectivity, the absence of posts does not itself create an
+alert. A telemetry bot token shared by multiple devices authenticates the bot,
+not the physical device that originated a payload, so use distinct bots per
+trust boundary and retain `device_id` plus `message_id` for operational
+attribution. Add an external heartbeat monitor when that property is required.

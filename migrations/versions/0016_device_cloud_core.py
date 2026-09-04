@@ -18,6 +18,16 @@ branch_labels = None
 depends_on = None
 
 
+def _is_postgres() -> bool:
+    return op.get_bind().dialect.name == "postgresql"
+
+
+def _bool_default(value: bool):
+    if _is_postgres():
+        return sa.text("true" if value else "false")
+    return sa.text("1" if value else "0")
+
+
 def upgrade() -> None:
     op.add_column(
         "devices",
@@ -25,12 +35,12 @@ def upgrade() -> None:
     )
     op.add_column(
         "devices",
-        sa.Column("ota_updates_enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("ota_updates_enabled", sa.Boolean(), nullable=False, server_default=_bool_default(True)),
     )
     op.add_column("devices", sa.Column("ota_busy_reason", sa.String(length=256), nullable=True))
     op.add_column(
         "devices",
-        sa.Column("ota_is_development", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("ota_is_development", sa.Boolean(), nullable=False, server_default=_bool_default(False)),
     )
     op.add_column("devices", sa.Column("ota_locked_manifest_id", sa.String(length=36), nullable=True))
 
@@ -106,7 +116,7 @@ def upgrade() -> None:
         sa.Column("request_schema", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),
         sa.Column("response_schema", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),
         sa.Column("timeout_s", sa.Integer(), nullable=False, server_default=sa.text("300")),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=_bool_default(True)),
         sa.Column("created_by", sa.String(length=320), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),

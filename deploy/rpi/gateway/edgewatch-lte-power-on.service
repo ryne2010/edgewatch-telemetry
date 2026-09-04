@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply the qualified EdgeWatch LTE modem power-on transition
+ConditionPathIsExecutable=/usr/local/libexec/edgewatch-lte-power-on
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/edgewatch-lte-power-on
+TimeoutStartSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

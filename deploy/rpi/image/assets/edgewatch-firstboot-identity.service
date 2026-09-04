@@ -1,0 +1,15 @@
+[Unit]
+Description=Generate unique EdgeWatch host identity on first boot
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=network-pre.target ssh.service edgewatch-firstboot.service
+ConditionFirstBoot=yes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemd-machine-id-setup
+ExecStart=/usr/bin/ssh-keygen -A
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

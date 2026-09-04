@@ -23,6 +23,8 @@ These live under `.github/workflows/`:
   - Path-filtered push-to-`main` lane plus manual safe deploy sequence (build, persist `image_tag`, apply, migrate, readiness verify).
 - `publish-image-multiarch.yml`
   - Manual multi-arch image publish (`linux/amd64` + `linux/arm64`).
+- `publish-release-bundle.yml`
+  - Tag-driven or manual GitHub Release publishing for the shareable EdgeWatch bundle (`make dist` + checksum).
 - `terraform-drift.yml`
   - Scheduled/manual drift detection (`terraform plan -detailed-exitcode`).
 

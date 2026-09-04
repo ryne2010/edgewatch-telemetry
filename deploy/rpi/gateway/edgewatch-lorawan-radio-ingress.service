@@ -1,0 +1,46 @@
+[Unit]
+Description=EdgeWatch pinned SX1302/SX1303 radio and ChirpStack ingress adapter
+After=network-online.target mosquitto.service
+Wants=network-online.target
+Requires=mosquitto.service
+Before=edgewatch-lorawan-gateway.service
+ConditionPathExists=/etc/edgewatch-controller/lorawan-radio-ingress.yaml
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=edgewatch-controller
+Group=edgewatch-controller
+SupplementaryGroups=spi gpio
+WorkingDirectory=/opt/edgewatch/current
+ExecStart=/opt/edgewatch/app/.venv/bin/python -m agent.lorawan.radio_cli run --config /etc/edgewatch-controller/lorawan-radio-ingress.yaml
+ExecStartPost=/opt/edgewatch/app/.venv/bin/python -m agent.lorawan.radio_cli check --config /etc/edgewatch-controller/lorawan-radio-ingress.yaml
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=620
+TimeoutStopSec=30
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+RuntimeDirectory=edgewatch-lorawan-radio
+RuntimeDirectoryMode=0700
+NoNewPrivileges=true
+PrivateDevices=false
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+LockPersonality=true
+DevicePolicy=closed
+DeviceAllow=/dev/spidev0.0 rw
+DeviceAllow=/dev/gpiochip0 rw
+ReadWritePaths=/var/lib/edgewatch-gateway /run/edgewatch-lorawan-radio
+
+[Install]
+WantedBy=multi-user.target

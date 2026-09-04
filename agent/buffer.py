@@ -379,6 +379,18 @@ class SqliteBuffer:
 
         self._run_db(_op, fallback=None)
 
+    def contains(self, message_id: str) -> bool:
+        """Return whether an exact message is currently durable in the outbox."""
+
+        def _op(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                "SELECT 1 FROM queue WHERE message_id = ? LIMIT 1",
+                (message_id,),
+            ).fetchone()
+            return row is not None
+
+        return bool(self._run_db(_op, fallback=False))
+
     def count(self) -> int:
         def _op(conn: sqlite3.Connection) -> int:
             (n,) = conn.execute("SELECT COUNT(*) FROM queue").fetchone()

@@ -27,6 +27,28 @@ profiles:
       - wake_reason
       - network_duty_cycled
 
+  camera_satellite_lorawan_v1:
+    default_active: false
+    description: Gateway-reconstructed v1 telemetry from a camera satellite LoRaWAN uplink.
+    metrics:
+      - lorawan_message_type
+      - lorawan_sequence
+      - lorawan_dev_eui
+      - equipment_state
+      - visual_confidence
+      - audio_anomaly_score
+      - battery_v
+      - power_input_out_of_range
+      - power_unsustainable
+      - low_battery
+      - sentinel_triggered
+      - camera_ok
+      - audio_ok
+      - maintenance_ready
+      - degraded
+      - model_version_digest
+      - maintenance_command_token
+
 metrics:
   water_pressure_psi:
     type: number
@@ -76,6 +98,65 @@ metrics:
     type: number
     unit: volts
     description: Battery voltage.
+
+  lorawan_message_type:
+    type: string
+    description: Camera-satellite LoRaWAN v1 frame type (telemetry|health|event).
+
+  lorawan_sequence:
+    type: number
+    unit: count
+    description: Unsigned satellite sequence number carried by the LoRaWAN v1 frame.
+
+  lorawan_dev_eui:
+    type: string
+    description: Lowercase 16-hex DevEUI mapped to the stable EdgeWatch device identity.
+
+  equipment_state:
+    type: string
+    description: Fused local inference state (running|stopped|fault|unknown).
+
+  visual_confidence:
+    type: number
+    unit: ratio
+    description: Quantized local vision confidence reconstructed to the 0..1 range.
+
+  audio_anomaly_score:
+    type: number
+    unit: ratio
+    description: Quantized local audio anomaly score reconstructed to the 0..1 range.
+
+  low_battery:
+    type: boolean
+    description: True when the satellite reports a low-battery condition.
+
+  sentinel_triggered:
+    type: boolean
+    description: True when the always-on low-power sentinel caused the satellite wake.
+
+  camera_ok:
+    type: boolean
+    description: True when the satellite camera path passed its local health check.
+
+  audio_ok:
+    type: boolean
+    description: True when the satellite audio path passed its local health check.
+
+  maintenance_ready:
+    type: boolean
+    description: True when the satellite reports its switched maintenance WLAN path ready.
+
+  degraded:
+    type: boolean
+    description: True when the satellite can report but one or more local subsystems are degraded.
+
+  model_version_digest:
+    type: string
+    description: First 64 bits of the signed active model-bundle SHA-256, rendered as 16 hex characters.
+
+  maintenance_command_token:
+    type: string
+    description: Exact 64-bit command-token digest echoed only by a correlated maintenance-ready uplink.
 
   power_input_v:
     type: number

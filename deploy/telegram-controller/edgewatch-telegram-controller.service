@@ -1,0 +1,39 @@
+[Unit]
+Description=EdgeWatch Telegram Fleet Controller
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=edgewatch-controller
+Group=edgewatch-controller
+WorkingDirectory=/opt/edgewatch/current
+ExecStart=/opt/edgewatch/app/.venv/bin/python -m scripts.telegram_fleet_controller --config /etc/edgewatch-controller/controller.yaml
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/edgewatch-controller/gateway-power.env
+
+# This service may invoke only the exact root-owned commands admitted by the
+# dedicated sudoers policy (local control helper and optional LTE power units).
+NoNewPrivileges=false
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/edgewatch-controller /var/lib/edgewatch /var/lib/edgewatch-gateway
+
+[Install]
+WantedBy=multi-user.target

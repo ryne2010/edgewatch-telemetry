@@ -1,5 +1,284 @@
 # Change Summary
 
+## Low-power camera sub-fleet (2026-08-09)
+
+### What changed
+
+- Added a guided `make telegram-control-init` flow for a separate private
+  Telegram control group and bot. It discovers the group and registering user
+  IDs from `/register`, grants the first user administrator access, generates a
+  gateway-local Ed25519 controller key, installs the hardened controller
+  service, and runs a typed local-control smoke test. The existing telemetry bot
+  and channel remain unchanged and separate.
+- Added durable fleet control for local, direct-SSH, Spacebridge, and
+  `maintenance_via_lora` devices, with numeric RBAC, confirmations, immutable
+  previews, replay protection, bounded retry, and human-facing status/alert
+  messages using restrained severity and subsystem emoji. Machine-readable
+  telemetry and command envelopes remain emoji-free.
+- Added an optional secret-file dead-man heartbeat client suitable for an
+  external Healthchecks.io check. The gateway reports hourly without blocking
+  its controller loop and keeps LTE powered through the bounded check-in.
+- Added a durable LTE power-window controller with hourly and alert-triggered
+  wake, shared activity holds for commands, telemetry, dead-man checks, and OTA
+  transfers, bounded maximum hold time, crash recovery, and fixed supervised
+  carrier-power service hooks. Added a 100-cycle LTE qualifier and a P95 energy,
+  battery, and solar-sizing report.
+- Added a camera-satellite runtime with credential-safe bounded FFmpeg RTSP
+  video/audio capture, a 30-day local evidence ring, post-trigger clips, daily
+  stills, one-thread fully quantized INT8 LiteRT inference, deterministic
+  vision/audio fusion, an `unknown` safety preference, and a persisted shadow-
+  to-live alert gate requiring at least 95% precision and at most one false
+  alert per device-day.
+- Added a local LoRaWAN sub-fleet data plane: strict compact v1 uplinks, stable
+  canonical telemetry IDs, unique OTAA device registry, ChirpStack MQTT bridge,
+  durable SQLite deduplication/outbox delivery, authenticated expiring wake
+  requests, replay protection, wake-token-correlated maintenance readiness, and
+  crash-recoverable immediate-alert LTE trigger intents.
+  LoRa carries only telemetry, health, alerts, and wake requests—never media,
+  SSH, or OTA artifacts.
+- Added gateway artifact caching so each signed application or model bundle is
+  downloaded over LTE once by digest and then served to satellites over a
+  private maintenance network. The cache has private-address binding, same-
+  origin HTTPS redirects, digest validation, bounded bytes/object count/free
+  space/concurrency/timeouts, safe eviction, and LTE hold integration.
+- Extended signed OTA with camera application and model bundles, immutable
+  manifests, known-answer model tests, one-device canary and 10/50/100 rollout
+  gates, durable activation journals, readiness checks, interrupted-activation
+  recovery, and automatic restoration of the prior application/model. Native
+  LiteRT and FFmpeg remain base/system-image dependencies.
+- Extended the secret-free golden-image and zero-touch provisioning lanes with
+  `standalone`, `gateway`, and `camera-satellite` profiles. Per-device first-boot
+  inputs carry controller authorization, LoRaWAN identity, camera credentials,
+  and OTA/model trust without baking secrets into the shared image. A camera
+  profile now requires an initial signed model bundle so first boot can complete
+  deterministically.
+- Added deployment examples, hardened systemd units, an accepted architecture
+  decision, and the low-power camera sub-fleet runbook covering provisioning,
+  power measurements, camera qualification, LoRa range trials, shadow inference,
+  OTA rollout, and field promotion gates.
+
+### Why it changed
+
+- The continuously awake Pi 4 and registered USB LTE modem consumed too much
+  energy for long-lived field telemetry.
+- The target deployment needs one continuously available LoRaWAN gateway and
+  several inexpensive event-driven camera/audio satellites, while retaining
+  Telegram-only telemetry and control during the pilot.
+- Fleet operation needs repeatable provisioning, local inference, bounded data
+  use, safe maintenance access, and signed rollback-capable updates without
+  sending routine media over LTE.
+
+### How it was validated
+
+- Canonical `make check`: passed — Ruff lint/format, repository hygiene,
+  Pyright with `0` errors and warnings, web typecheck, all `802` tests, and the
+  Vite production build.
+- Focused tests cover Telegram registration/RBAC/presentation, controller
+  durability, local control, dead-man polling, LTE power windows and 100-cycle
+  qualification, energy reporting, LoRa protocol/deduplication/wake handling,
+  artifact-cache bounds, RTSP capture, inference/model validation, camera
+  application/model OTA recovery, role-aware provisioning, systemd deployment
+  contracts, and Make interfaces.
+- The image and release builders enforce pinned versions, exact hashes/signatures,
+  immutable manifests, and secret-free build inputs through contract tests.
+
+### Risks / rollout notes
+
+- Software implementation is complete, but the system is not yet field-
+  qualified. The approved 24-hour energy baseline, 100 LTE power/attach cycles,
+  camera 100-cycle/24-hour recovery trial, one-mile LoRa survey, 14-day shadow
+  inference trial, event-latency trials, OTA interruption/rollback drill, and
+  seven-day battery test still require the physical pilot hardware.
+- The LTE power controller deliberately uses fixed supervised hooks; the
+  carrier-approved load switch and modem-specific on/off implementation are
+  hardware integration work. Generic GPIO switching is not enabled.
+- The LoRa gateway refuses production readiness until a reviewed, SHA-pinned
+  SX1302/SX1303 concentrator adapter and carrier-board configuration prove both
+  concentrator and gateway-bridge health. Wio-E5 and MCU power-latch/HALT_ACK
+  firmware remain manual pilot work.
+- The dead-man client is implemented, but creating the hosted check and storing
+  its secret ping URL requires the operator's external account. Without an
+  outside monitor, a completely dead gateway cannot alert through Telegram.
+- A native ARM64 Linux builder with mount privileges is required to assemble
+  the actual Raspberry Pi images; this macOS validation did not build or boot a
+  physical image.
+- Signed OTA apply remains disabled by default and must be enabled only for a
+  hardware-qualified canary cohort. System-image and MCU/radio firmware updates
+  remain outside the pilot application/model OTA lane.
+
+## Telegram fleet control + signed application OTA (2026-08-09)
+
+### What changed
+
+- Added one API-free Telegram fleet controller with strict YAML inventory,
+  numeric chat/user/topic RBAC, viewer/operator/admin command policy, durable
+  SQLite update/command/confirmation/target/reply/audit state, a separate
+  leased dispatch worker, restart recovery, once-only completion replies, and
+  bounded transport retry.
+- Added pinned direct-SSH dispatch for home bring-up and supervised Hologram
+  Spacebridge tunnels for field dispatch. Both transports send a versioned typed
+  envelope to the fixed device helper; neither exposes an arbitrary shell.
+- Added a root-owned device helper with an on-device replay ledger and typed
+  status, sampling, sync, mode, power, alert, agent, reboot, shutdown-guard, and
+  OTA operations.
+- Split trust material across the telemetry bot, controller-only control bot,
+  ordinary operator SSH key, forced controller SSH key, Spacebridge identity,
+  OTA signing private key, and device-side OTA public key.
+- Extended zero-touch provisioning to require distinct operator/controller SSH
+  public keys and an OTA public trust anchor. First boot installs the control key
+  as a forced command, installs the public trust anchor, and uses
+  `/opt/edgewatch/current` as the stable application runtime symlink.
+- Added reproducible signed application-bundle release tooling and GitHub release
+  artifacts: immutable bundle, detached RSA/SHA-256 signature, and schema-v1
+  catalog.
+- Added manual staged OTA orchestration with frozen targets, explicit canaries,
+  one-tranche promotion, failure/defer gates, durable deployment snapshots, and
+  abort semantics that do not claim to undo already-applied devices.
+- Made fleet previews immutable and complete across Telegram-safe pages,
+  including persisted target/exclusion/canary identity, expiries, hash, and the
+  bounded dispatch policy used after confirmation.
+- Chained multipart preview replies durably so the confirmation page cannot be
+  delivered until every preceding review page is marked sent, including after
+  retry or controller restart.
+- Froze a calculated dispatch policy for every fleet command, including
+  read-only work. The expiry budget includes bounded waves and, for Spacebridge,
+  tunnel connection, device command, cleanup, and retry-backoff time.
+- Added durable accepted-versus-applied handling for sample/sync requests and
+  restart recovery for accepted controller targets.
+- Added bounded same-command-ID retry for explicit transient OTA failures without
+  committing those failures to either device replay ledger.
+- Made canonical manifest signatures mandatory, closed compatibility to the
+  exact nine-field schema, enforced production HTTPS artifacts, and kept
+  generated catalog release keys equal to the exact Git tag unless an alias is
+  separately reviewed.
+- Froze the complete signed OTA manifest and immutable identity into the stage
+  preview and command, displayed its release/tag/commit/digests, and removed
+  live-catalog alias resolution from confirmed dispatch and snapshot recovery.
+- Bound direct release builds to the exact annotated/lightweight Git tag,
+  supplied commit, and source `HEAD`. Added a mandatory signed
+  `runtime_dependency_sha256` so application OTA remains code-only when the
+  installed dependency baseline matches; dependency changes require a new base
+  image.
+- Added application activation through an atomic symlink change, agent restart,
+  fresh readiness/stability check, and restoration of the prior release on
+  failure. A durable apply journal preserves the original and intended targets
+  across process or power loss until active state and command outcome commit.
+  Staged release trees are fsynced around their atomic rename, and Pi stable-
+  power checks require fresh durable evidence plus a clean throttling result
+  when no sensor evidence exists.
+- Added the Telegram fleet-control runbook and updated the domain, design,
+  contracts, Raspberry Pi deployment, zero-touch, image, OTA, and top-level
+  operator documentation.
+
+### Why it changed
+
+- The initial field fleet must use Telegram exclusively because the EdgeWatch
+  API cannot currently be hosted.
+- Fleet provisioning needs a small repeatable per-device step without placing
+  shared control credentials or signing private keys on devices.
+- Control and OTA need explicit authorization, confirmation, provenance,
+  idempotency, and rollout safety even when SSH/Spacebridge is the interim
+  transport.
+
+### How it was validated
+
+- Focused controller, parser/RBAC, SQLite, SSH dispatch, local-control, local
+  OTA, release-tooling, provisioning, and first-boot tests cover the new
+  boundaries.
+- Documentation links, required provisioning variable names, stale
+  Telegram-without-control/OTA claims, and Markdown structure were checked.
+- Focused controller, device-control, OTA, power, provisioning, and image
+  contract suite: `234 passed`.
+- Canonical `make check`: passed — Ruff lint/format, repository hygiene,
+  Pyright, web typecheck, all `602` tests, and the production web build.
+
+### Risks / rollout notes
+
+- The controller is implemented but is not live until its dedicated control bot,
+  numeric RBAC, inventory, controller/Spacebridge keys, pinned known-hosts,
+  catalog, writable state path, and supervisor are configured on an
+  operator-controlled host.
+- Device telemetry continues when the controller is offline; control and OTA do
+  not. Only one controller may consume a control bot's update stream.
+- Application-bundle stage/apply/rollback must pass on the home network and then
+  over Spacebridge before fleet expansion.
+- Application bundles cannot change Python dependencies. A change to
+  `agent/requirements.txt` requires a new base/system image; the current
+  system-image OTA path is still unqualified.
+- OTA apply remains disabled by default. System-image application is unqualified
+  for production and remains disabled pending real Raspberry Pi reboot,
+  boot-health, and bad-release rollback qualification.
+- Telegram still has no independent missing-heartbeat detector; a separate
+  watcher is required for loss-of-contact alerts.
+
+## fleet-image-v1 zero-touch Raspberry Pi provisioning (2026-08-09)
+
+### What changed
+
+- Added a pinned, official `rpi-image-gen` ARM64 Bookworm lane for a reusable,
+  secret-free image with the stable app baked at `/opt/edgewatch/app`.
+- Added a per-device generator for the boot `edgewatch/` directory. It defaults
+  to the Hologram APN, continuous power, no sensor, SQLite `synchronous=FULL`,
+  Telegram batching, and a disabled cellular watchdog. Each bundle also carries
+  one validated operator SSH public key for the image's locked `ryne` account;
+  no private key or authorized key is baked into the reusable image.
+- Hardened first boot with protected token import/removal, hostname assignment,
+  retryable service execution, agent-owned readiness + LTE-bound + Telegram
+  health gates, a Telegram provisioning receipt, rollback-safe optional bundle
+  activation, and completion-marker-last durability.
+- Added deterministic gzip JSONL Telegram batches with point, byte, and age
+  limits. Startup, heartbeat, and alert traffic flushes immediately; delivery
+  remains at least once through the SQLite outbox.
+- Persisted actual cellular-interface usage and preferred observed `wwan` TX
+  totals for daily byte-budget reconciliation. Telegram requests reserve a
+  conservative application-level send estimate before network I/O, with a
+  separately bounded urgent-health reserve.
+- Added `make rpi-image` and `make rpi-provision` plus concise fleet build,
+  staging, power, and transport documentation.
+
+### Why it changed
+
+- Fleet staging needs one reproducible image without shared credentials and a
+  small, auditable per-card identity step.
+- Telegram batching and actual interface accounting reduce LTE overhead while
+  preserving durable at-least-once delivery and trustworthy budget enforcement.
+
+### Validation
+
+- Canonical `make check`: passed.
+- Ruff lint and format checks: passed.
+- Python and web type checks: passed.
+- Hermetic repository test suite: `439 passed`.
+- Repository hygiene and production web build: passed.
+- Focused fleet verifier: `107 passed`; final bootstrap signature regression
+  suite: `44 passed`.
+- Image build script syntax and Make target dry runs: passed.
+
+### Risks / rollout notes
+
+- The image build requires a capable native ARM64 Linux builder with the mount
+  privileges required by upstream `rpi-image-gen`; no assembled image artifact
+  was produced or hardware-boot-tested on this macOS workstation.
+- Telegram delivery is at least once; a timeout after acceptance can duplicate
+  envelopes with the same `message_id` values.
+- The byte budget is an application send budget, not a guaranteed carrier/SIM
+  hard cap. Persisted kernel interface totals reconcile later; use a carrier
+  quota when hard billing enforcement is required.
+- The outbox is bounded for device safety; configured age, count, or disk limits
+  can evict the oldest undelivered telemetry and must be sized for field outages.
+- Telegram-exclusive mode intentionally has no EdgeWatch API policy/control,
+  API OTA reporting, server-side alert lifecycle, dashboard, API media upload,
+  or independent missing-heartbeat alarm. The separately configured external
+  controller provides only the narrower typed control and signed application
+  OTA path.
+- A shared bot token authenticates the bot rather than the originating device;
+  use separate trust boundaries or an external verifier where provenance matters.
+- The bot token must remain in a mode-`0600` file and must never be committed.
+- Begin field bring-up on continuous power and move to `eco` only after a soak;
+  `deep_sleep` depends on supported RTC or supervisor hardware.
+- The hardware and cellular link watchdogs remain disabled by default and need
+  cohort-specific validation before enablement.
+
 ## OTA governance operator UX (2026-04-17)
 
 ### What changed
@@ -5922,3 +6201,52 @@ Files:
 ### Risks / rollout notes
 
 - This depends on the Device Detail page keeping the `device-media` anchor stable.
+
+## Canonical local Make command surface (2026-08-03)
+
+### What changed
+
+- Added canonical `make run`, `make setup`, `make stop`, and `make check` targets while retaining
+  `make up`, `make down`, and `make harness` as compatibility aliases.
+- Made bare `make` show `make help`, and reorganized help output around the routine local workflow.
+- Expanded `make doctor` to report Docker Compose and host-dev readiness separately; `doctor-dev`
+  continues to enforce the complete host toolchain.
+- Kept `make check` source-safe by running format checks, lint, repository hygiene, typecheck, tests,
+  and build without invoking mutating formatter/pre-commit tasks.
+- Routed local Python tooling through `uv run --locked python` so the commands work on systems that
+  provide `python3`/uv but no bare `python` launcher.
+- Redacted token/key/password-like values from demo environment drift messages.
+- Updated onboarding, workflow, development, and local runbook documentation to use the canonical
+  command surface and describe the compatibility aliases.
+- Added regression coverage for command presence, aliases, default help behavior, setup idempotency,
+  Compose wrappers, uv-managed Python, doctor output, and secret redaction.
+
+### Why it changed
+
+- New contributors needed one discoverable, consistent interface for production-like local runs,
+  hot-reload development, prerequisites, setup, shutdown, diagnostics, and validation.
+- The prior `up`/`down`/`harness` vocabulary was less approachable, and direct Python invocations
+  were not portable to supported macOS environments without a `python` executable.
+
+### How it was validated
+
+- `make setup` completed repeatedly with locked Python and Node dependencies.
+- `make doctor` reported both local lanes ready.
+- `make help` and dry runs of `run`, `dev`, `stop`, and the compatibility aliases resolved to the
+  intended recipes.
+- `make check` passed: Ruff/format checks, repo hygiene, Pyright, web typecheck, 310 tests, and the
+  production web build.
+- `make check` also passed with a restricted PATH containing no bare `python` launcher.
+- `python scripts/harness.py lint`, `python scripts/harness.py typecheck`, and
+  `python scripts/harness.py test` passed during final integration.
+- `docker compose config --quiet` passed and the already-running Compose stack returned
+  `{"ready": true}` from `/readyz`.
+- Final independent review found no remaining actionable issues.
+
+### Risks / rollout notes
+
+- `make setup` intentionally converges the local virtual environment and Node workspace to the
+  committed lockfiles; optional dependency groups remain opt-in.
+- `make reset` remains destructive to local database volumes and is labeled accordingly.
+- Long-running `make run` and `make dev` were syntax/dry-run validated; the existing healthy Compose
+  stack was left running, and `make stop`/`make reset` were not executed to avoid disrupting local data.

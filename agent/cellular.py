@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import socket
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -42,6 +44,7 @@ class CellularConfig:
     watchdog_timeout_s: float
     usage_poll_interval_s: int
     interface_name: str | None
+    usage_state_path: Path | None = None
 
 
 class CellularMonitor:
@@ -80,10 +83,7 @@ class CellularMonitor:
         self._interface_name = config.interface_name
 
         self._last_link_ok_at: datetime | None = None
-        self._usage_day: date | None = None
-        self._usage_interface: str | None = None
-        self._usage_baseline_rx = 0
-        self._usage_baseline_tx = 0
+        self._usage_state = self._load_usage_state()
 
     def read_metrics(self) -> dict[str, Any]:
         if not self.config.enabled:
@@ -115,6 +115,12 @@ class CellularMonitor:
             return {}
 
         status_text = self._run_mmcli(["-m", self.config.modem_id, "--simple-status"])
+        if not status_text:
+            # ModemManager 1.24 removed --simple-status. A plain modem query
+            # still exposes the registration state and supports key/value
+            # output, so keep older releases working while supporting the
+            # current Raspberry Pi OS package.
+            status_text = self._run_mmcli(["-m", self.config.modem_id])
         signal_text = self._run_mmcli(["-m", self.config.modem_id, "--signal-get"])
         payload = "\n".join(part for part in (status_text, signal_text) if part)
         if not payload:
@@ -159,20 +165,107 @@ class CellularMonitor:
             return {}
 
         rx_bytes, tx_bytes = counters
-        today = now_dt.date()
-        if self._usage_day != today or self._usage_interface != interface_name:
-            self._usage_day = today
-            self._usage_interface = interface_name
-            self._usage_baseline_rx = rx_bytes
-            self._usage_baseline_tx = tx_bytes
+        today = now_dt.date().isoformat()
+        previous = self._usage_state
+        if previous is None or previous["utc_day"] != today:
+            received_today = 0
+            sent_today = 0
+        elif previous["interface"] != interface_name:
+            # A newly selected cellular interface may already have carried
+            # traffic before this poll. Count its current counters rather than
+            # silently dropping that usage.
+            received_today = int(previous["received_today"]) + max(0, int(rx_bytes))
+            sent_today = int(previous["sent_today"]) + max(0, int(tx_bytes))
+        else:
+            previous_rx = int(previous["last_rx"])
+            previous_tx = int(previous["last_tx"])
+            # Kernel interface counters reset on modem reconnect and reboot.
+            # When they move backwards, the current value is the post-reset
+            # delta and must be added to the durable daily total.
+            rx_delta = int(rx_bytes) - previous_rx if int(rx_bytes) >= previous_rx else int(rx_bytes)
+            tx_delta = int(tx_bytes) - previous_tx if int(tx_bytes) >= previous_tx else int(tx_bytes)
+            received_today = int(previous["received_today"]) + max(0, rx_delta)
+            sent_today = int(previous["sent_today"]) + max(0, tx_delta)
 
-        sent_today = max(0, int(tx_bytes) - int(self._usage_baseline_tx))
-        received_today = max(0, int(rx_bytes) - int(self._usage_baseline_rx))
+        self._usage_state = {
+            "utc_day": today,
+            "interface": interface_name,
+            "last_rx": max(0, int(rx_bytes)),
+            "last_tx": max(0, int(tx_bytes)),
+            "received_today": max(0, int(received_today)),
+            "sent_today": max(0, int(sent_today)),
+        }
+        self._save_usage_state()
 
         return {
             "cellular_bytes_sent_today": sent_today,
             "cellular_bytes_received_today": received_today,
         }
+
+    def _load_usage_state(self) -> dict[str, Any] | None:
+        path = self.config.usage_state_path
+        if path is None:
+            return None
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        try:
+            utc_day = date.fromisoformat(str(parsed["utc_day"])).isoformat()
+            interface = str(parsed["interface"]).strip()
+            state = {
+                "utc_day": utc_day,
+                "interface": interface,
+                "last_rx": max(0, int(parsed["last_rx"])),
+                "last_tx": max(0, int(parsed["last_tx"])),
+                "received_today": max(0, int(parsed["received_today"])),
+                "sent_today": max(0, int(parsed["sent_today"])),
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        return state if interface else None
+
+    def _save_usage_state(self) -> None:
+        path = self.config.usage_state_path
+        if path is None or self._usage_state is None:
+            return
+        tmp_path: Path | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                dir=path.parent,
+            )
+            tmp_path = Path(tmp_name)
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp_file:
+                os.fchmod(tmp_file.fileno(), 0o600)
+                tmp_file.write(json.dumps(self._usage_state, sort_keys=True) + "\n")
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+
+            os.replace(tmp_path, path)
+            tmp_path = None
+
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_fd = os.open(path.parent, directory_flags)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            # Usage telemetry must never take down the edge agent. If the state
+            # directory is temporarily unavailable, continue with the in-memory
+            # counters and retry on the next poll.
+            return
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _resolve_interface_name(self) -> str | None:
         if self._interface_name:
@@ -228,6 +321,8 @@ def load_cellular_config_from_env() -> CellularConfig:
 
     usage_poll_interval_s = _parse_positive_int_env("CELLULAR_USAGE_POLL_INTERVAL_S", default=60)
     interface_name = os.getenv("CELLULAR_INTERFACE", "").strip() or None
+    usage_state_raw = os.getenv("CELLULAR_USAGE_STATE_PATH", "").strip()
+    usage_state_path = Path(usage_state_raw).expanduser() if usage_state_raw else None
 
     return CellularConfig(
         enabled=enabled,
@@ -241,6 +336,7 @@ def load_cellular_config_from_env() -> CellularConfig:
         watchdog_timeout_s=watchdog_timeout_s,
         usage_poll_interval_s=usage_poll_interval_s,
         interface_name=interface_name,
+        usage_state_path=usage_state_path,
     )
 
 
@@ -291,10 +387,20 @@ def _parse_signal_metrics(payload: str) -> dict[str, float]:
         ("cellular_sinr_db", r"\b(?:sinr|snr)\b[^-\d]*(-?\d+(?:\.\d+)?)"),
     )
 
-    for key, pattern in patterns:
-        value = _extract_float_from_text(payload, pattern)
-        if value is not None:
-            metrics[key] = value
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        lower = line.lower()
+        if "threshold" in lower or "refresh.rate" in lower:
+            continue
+
+        for key, pattern in patterns:
+            value = _extract_float_from_text(line, pattern)
+            if value is not None:
+                metrics[key] = value
+                break
 
     return metrics
 

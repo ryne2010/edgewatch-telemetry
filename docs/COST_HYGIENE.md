@@ -21,13 +21,31 @@ If your goal is to keep the monthly bill near-zero for a small demo/staging depl
 Agent enforcement behavior:
 
 - persists UTC-day counters to `EDGEWATCH_COST_CAP_STATE_PATH` (durable across reboot)
-- switches telemetry to heartbeat-only when byte cap is reached
+- stops routine delta telemetry when `max_bytes_per_day` is reached
+- reserves a separately bounded 256 KiB/day by default for startup,
+  heartbeat, state/alert transition, and alert snapshot traffic; configure it
+  with `EDGEWATCH_COST_CAP_URGENT_RESERVE_BYTES` (`0` disables the reserve)
+- checks a conservative Telegram wire-size estimate before each request and
+  leaves rows queued when the applicable routine or urgent budget cannot fit
+  the request
+- charges every attempted Telegram request, including a failed attempt, at
+  least the conservative estimate so repeated failures cannot evade the cap
+- delivers the current urgent Telegram row without first draining routine
+  backlog; heartbeat backlog recovery is limited to one routine-budgeted request
 - skips scheduled media capture once snapshot/upload caps are reached
 - emits audit telemetry:
   - `cost_cap_active`
   - `bytes_sent_today`
   - `media_uploads_today`
   - `snapshots_today`
+  - `urgent_reserve_bytes`
+  - `urgent_bytes_remaining`
+
+The device cap is an application-level send budget, not a hard SIM/carrier
+quota. EdgeWatch reserves a conservative estimate before each request and
+reconciles persisted kernel interface usage on later cellular polling
+opportunities. Retransmissions and non-agent traffic can occur between polls;
+use a carrier-enforced quota when a physical data ceiling must not be exceeded.
 
 ### Cloud Run guardrails
 - min/max instances are configurable (`min_instances`, `max_instances`)

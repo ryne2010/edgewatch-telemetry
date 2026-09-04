@@ -1,0 +1,27 @@
+[Unit]
+Description=Recover interrupted EdgeWatch camera model activation
+After=local-fs.target
+Before=edgewatch-camera-satellite@check.service edgewatch-camera-satellite-wake@event.service edgewatch-camera-satellite-wake@daily.service
+ConditionPathExists=/etc/edgewatch/camera-satellite.env
+ConditionPathExists=/opt/edgewatch/models
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/edgewatch/current
+EnvironmentFile=/etc/edgewatch/camera-satellite.env
+ExecStart=/opt/edgewatch/app/.venv/bin/python /opt/edgewatch/current/scripts/apply_model_bundle.py --recover-only
+TimeoutStartSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/edgewatch/models
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

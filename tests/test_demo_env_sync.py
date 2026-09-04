@@ -70,3 +70,22 @@ def test_demo_env_sync_reports_drift_for_tracked_keys(tmp_path: Path) -> None:
     assert completed.returncode == 0
     assert "NOTE: preserving existing agent/.env" in completed.stdout
     assert "EDGEWATCH_DEVICE_ID=demo-well-001 (example: baxter-1)" in completed.stdout
+
+
+def test_demo_env_sync_redacts_secret_drift(tmp_path: Path) -> None:
+    example = tmp_path / "agent.env.example"
+    current = tmp_path / "agent.env"
+    example.write_text("EDGEWATCH_DEVICE_TOKEN=example-token\n", encoding="utf-8")
+    current.write_text("EDGEWATCH_DEVICE_TOKEN=private-token\n", encoding="utf-8")
+
+    completed = _run_script(
+        example=example,
+        current=current,
+        label="agent/.env",
+        keys=["EDGEWATCH_DEVICE_TOKEN"],
+    )
+
+    assert completed.returncode == 0
+    assert "EDGEWATCH_DEVICE_TOKEN=<redacted> (example: <redacted>)" in completed.stdout
+    assert "private-token" not in completed.stdout
+    assert "example-token" not in completed.stdout

@@ -1,0 +1,30 @@
+# Install as /etc/edgewatch-controller/lorawan-gateway.yaml with mode 0600.
+# The telemetry bot/channel remain separate from the private control bot/group.
+schema_version: 1
+registry_file: /etc/edgewatch-controller/lorawan-registry.yaml
+radio_ingress_file: /etc/edgewatch-controller/lorawan-radio-ingress.yaml
+gateway_store_path: /var/lib/edgewatch-controller/lorawan-gateway.sqlite
+
+mqtt:
+  host: 127.0.0.1
+  port: 1883
+  application_id: 00000000-0000-0000-0000-000000000001
+  client_id: edgewatch-lorawan-gateway
+  tls: false
+  keepalive_s: 60
+  qos: 1
+
+delivery:
+  type: telegram
+  chat_id: "-1001234567890"
+  token_file: /etc/edgewatch-controller/telemetry-bot-token
+  timeout_s: 10
+  disable_notification: false
+  protect_content: true
+
+outbox:
+  poll_interval_s: 1
+  lease_s: 60
+  batch_size: 10
+  retry_base_s: 30
+  retry_max_s: 3600

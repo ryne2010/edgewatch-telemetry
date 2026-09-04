@@ -1,0 +1,20 @@
+# Install as /etc/edgewatch-controller/lorawan-registry.yaml with mode 0600.
+# Replace every example identity and secret. AppKey and wake_key are unique per
+# satellite; never copy these non-secret example values onto a real device.
+devices:
+  camera-001:
+    application_id: 00000000-0000-0000-0000-000000000001
+    dev_eui: "0102030405060708"
+    join_eui: "1122334455667788"
+    app_key: "000102030405060708090a0b0c0d0e0f"
+    wake_key: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    uplink_f_port: 10
+    wake_f_port: 11
+  camera-002:
+    application_id: 00000000-0000-0000-0000-000000000001
+    dev_eui: "0102030405060709"
+    join_eui: "1122334455667788"
+    app_key: "101112131415161718191a1b1c1d1e1f"
+    wake_key: "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
+    uplink_f_port: 10
+    wake_f_port: 11

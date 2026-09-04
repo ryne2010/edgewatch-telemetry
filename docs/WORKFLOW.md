@@ -20,10 +20,10 @@ This document standardizes how humans and agents execute work in this repo.
 4) **Validate**
 
 ```bash
-python scripts/harness.py lint
-python scripts/harness.py typecheck
-python scripts/harness.py test
+make check
 ```
+
+`make check` is the canonical non-mutating quality gate and runs the repository's required validation.
 
 5) **Review**
    - self-review using `agents/checklists/PR_REVIEW.md`
@@ -75,3 +75,19 @@ pre-commit install
 ```
 
 Hooks are defined in `.pre-commit-config.yaml` and run the same gates as CI.
+
+## Local command surface
+
+Use these commands for routine local development:
+
+- `make run` — canonical Docker Compose lane (`make up` is a compatibility alias)
+- `make dev` — host API/UI hot-reload lane with Postgres in Docker
+- `make doctor` — check local prerequisites
+- `make setup` — prepare the local environment and locked dependencies
+- `make stop` — stop the local stack (`make down` is a compatibility alias)
+- `make check` — run the non-mutating quality gate
+- `make logs` — tail local Docker Compose logs
+- `make reset` — stop the stack and remove local data
+- `make help` — list supported and advanced targets
+- `make demo-device` — create the local demo device
+- `make simulate` — run the local simulator fleet

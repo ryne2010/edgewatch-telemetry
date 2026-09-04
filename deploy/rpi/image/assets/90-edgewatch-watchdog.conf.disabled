@@ -1,0 +1,8 @@
+# Opt-in hardware-watchdog policy for supported Raspberry Pi boards.
+# Activate only after confirming /dev/watchdog and the board's watchdog driver:
+#   install -m 0644 /usr/share/edgewatch/90-edgewatch-watchdog.conf.disabled \
+#     /etc/systemd/system.conf.d/90-edgewatch-watchdog.conf
+#   systemctl daemon-reexec
+[Manager]
+RuntimeWatchdogSec=30s
+RebootWatchdogSec=2min

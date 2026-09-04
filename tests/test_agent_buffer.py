@@ -150,3 +150,14 @@ def test_prune_deletes_oldest_when_over_max_messages(tmp_path: Path) -> None:
 
     assert deleted == 2
     assert [row.message_id for row in buf.dequeue_batch(limit=10)] == ["m-2", "m-3"]
+
+
+def test_contains_tracks_exact_outbox_membership(tmp_path: Path) -> None:
+    buf = SqliteBuffer(str(tmp_path / "buffer.sqlite"))
+    message_id, payload, ts = _entry(1)
+
+    assert buf.contains(message_id) is False
+    assert buf.enqueue(message_id, payload, ts) is True
+    assert buf.contains(message_id) is True
+    buf.delete(message_id)
+    assert buf.contains(message_id) is False

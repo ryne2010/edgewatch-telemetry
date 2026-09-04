@@ -1,0 +1,54 @@
+[Unit]
+Description=EdgeWatch camera satellite local %i cycle
+After=network-online.target edgewatch-camera-model-recovery.service
+Wants=network-online.target
+Requires=edgewatch-camera-model-recovery.service
+ConditionPathExists=/etc/edgewatch/camera-satellite.env
+ConditionPathExists=/opt/edgewatch/models/current
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+User=edgewatch-camera
+Group=edgewatch-camera
+WorkingDirectory=/opt/edgewatch/current
+EnvironmentFile=/etc/edgewatch/camera-satellite.env
+ExecCondition=/usr/bin/test %i = check
+ExecStart=/opt/edgewatch/app/.venv/bin/python -m agent.camera_satellite_runner --mode %i
+TimeoutStartSec=180
+RuntimeMaxSec=180
+UMask=0077
+
+# Persistent local evidence and machine handoff state. Provisioning creates the
+# static edgewatch-camera account before this unit is installed.
+StateDirectory=edgewatch-camera-satellite edgewatch-media
+StateDirectoryMode=0700
+RuntimeDirectory=edgewatch-camera-satellite
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+
+# The camera is local-network only. This service has no upload or public API
+# integration and receives no cloud credentials.
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProtectSystem=strict
+ProcSubset=pid
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+MemoryMax=384M
+TasksMax=64
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native

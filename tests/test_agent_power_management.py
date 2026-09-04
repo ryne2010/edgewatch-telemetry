@@ -75,6 +75,14 @@ def test_power_manager_stable_in_range_writes_state(tmp_path: Path) -> None:
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert len(state["power_w_samples"]) == 1
     assert len(state["battery_v_samples"]) == 1
+    assert state["last_evaluation"] == {
+        "ts": clock.now().timestamp(),
+        "power_input_out_of_range": False,
+        "power_unsustainable": False,
+        "power_saver_active": False,
+        "evidence": "input_voltage",
+    }
+    assert state_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_power_manager_flags_warn_and_critical_voltage(tmp_path: Path) -> None:
@@ -144,3 +152,45 @@ def test_power_manager_disabled_returns_flags_off(tmp_path: Path) -> None:
     assert result.power_input_out_of_range is False
     assert result.power_unsustainable is False
     assert result.power_saver_active is False
+    state = json.loads((tmp_path / "power_state.json").read_text(encoding="utf-8"))
+    assert state["last_evaluation"] == {
+        "ts": clock.now().timestamp(),
+        "power_input_out_of_range": False,
+        "power_unsustainable": False,
+        "power_saver_active": False,
+        "evidence": "input_voltage",
+    }
+
+
+def test_power_manager_records_missing_power_evidence(tmp_path: Path) -> None:
+    clock = _clock()
+    state_path = tmp_path / "power_state.json"
+    manager = PowerManager(path=state_path, now_fn=clock.now)
+
+    result = manager.evaluate(metrics={}, policy=_policy())
+
+    assert result.power_input_out_of_range is False
+    assert result.power_unsustainable is False
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_evaluation"]["evidence"] == "none"
+    assert state["last_evaluation"]["ts"] == clock.now().timestamp()
+
+
+def test_power_manager_reloads_latest_evaluation_fields(tmp_path: Path) -> None:
+    clock = _clock()
+    state_path = tmp_path / "power_state.json"
+    manager = PowerManager(path=state_path, now_fn=clock.now)
+    manager.evaluate(metrics={"power_input_v": 11.7}, policy=_policy())
+
+    clock.advance(60)
+    reloaded = PowerManager(path=state_path, now_fn=clock.now)
+    reloaded.evaluate(metrics={}, policy=_policy())
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_evaluation"] == {
+        "ts": clock.now().timestamp(),
+        "power_input_out_of_range": False,
+        "power_unsustainable": False,
+        "power_saver_active": False,
+        "evidence": "none",
+    }

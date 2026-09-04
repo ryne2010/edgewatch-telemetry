@@ -1,0 +1,166 @@
+name: Publish GitHub Release Bundle
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (usually vX.Y.Z)."
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-release-bundle
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Determine and verify release identity
+        id: meta
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG_EFFECTIVE="${REQUESTED_TAG}"
+          else
+            TAG_EFFECTIVE="${GITHUB_REF_NAME}"
+          fi
+          if ! [[ "${TAG_EFFECTIVE}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9][A-Za-z0-9.-]*)?$ ]]; then
+            echo "::error::Release tag must be a version such as v1.2.3"
+            exit 1
+          fi
+          tag_commit="$(git rev-parse --verify "refs/tags/${TAG_EFFECTIVE}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [ "${tag_commit}" != "${head_commit}" ]; then
+            echo "::error::Checked-out commit does not match ${TAG_EFFECTIVE}"
+            exit 1
+          fi
+          echo "tag=${TAG_EFFECTIVE}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${head_commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".node-version"
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Install Node dependencies (pnpm)
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync Python deps (uv.lock)
+        run: uv sync --all-groups --locked
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.14.5"
+          terraform_wrapper: false
+
+      - name: Run repo gates
+        run: python scripts/harness.py all --strict
+
+      - name: Build release bundle
+        run: make dist
+
+      - name: Compute release checksum
+        id: checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$(find dist -maxdepth 1 -name '*.zip' -print -quit)"
+          if [ -z "${bundle}" ]; then
+            echo "::error::No release bundle found under dist/"
+            exit 1
+          fi
+          sha256sum "${bundle}" | tee "${bundle}.sha256"
+          echo "bundle=${bundle}" >> "${GITHUB_OUTPUT}"
+          echo "checksum=${bundle}.sha256" >> "${GITHUB_OUTPUT}"
+
+      - name: Require OTA signing configuration
+        env:
+          OTA_SIGNING_PRIVATE_KEY: ${{ secrets.EDGEWATCH_OTA_SIGNING_PRIVATE_KEY }}
+          OTA_SIGNATURE_KEY_ID: ${{ vars.EDGEWATCH_OTA_SIGNATURE_KEY_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${OTA_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::error::Required secret EDGEWATCH_OTA_SIGNING_PRIVATE_KEY is not configured"
+            exit 1
+          fi
+          if [ -z "${OTA_SIGNATURE_KEY_ID}" ]; then
+            echo "::error::Required variable EDGEWATCH_OTA_SIGNATURE_KEY_ID is not configured"
+            exit 1
+          fi
+
+      - name: Build signed Telegram OTA release
+        id: ota
+        env:
+          OTA_SIGNING_PRIVATE_KEY: ${{ secrets.EDGEWATCH_OTA_SIGNING_PRIVATE_KEY }}
+          OTA_SIGNATURE_KEY_ID: ${{ vars.EDGEWATCH_OTA_SIGNATURE_KEY_ID }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_COMMIT: ${{ steps.meta.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          key_file="${RUNNER_TEMP}/edgewatch-ota-signing-key.pem"
+          trap 'rm -f "${key_file}"' EXIT
+          printf '%s' "${OTA_SIGNING_PRIVATE_KEY}" > "${key_file}"
+          chmod 0600 "${key_file}"
+          version="${RELEASE_TAG#v}"
+          artifact_name="edgewatch-ota_v${version}.tar.gz"
+          artifact_uri="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${artifact_name}"
+          output_json="$(uv run --locked python scripts/build_telegram_ota_release.py \
+            --private-key "${key_file}" \
+            --key-id "${OTA_SIGNATURE_KEY_ID}" \
+            --artifact-uri "${artifact_uri}" \
+            --version "${version}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${RELEASE_COMMIT}" \
+            --output-dir dist)"
+          python - "${output_json}" "${GITHUB_OUTPUT}" <<'PY'
+          import json
+          import sys
+
+          outputs = json.loads(sys.argv[1])
+          with open(sys.argv[2], "a", encoding="utf-8") as output:
+              for name in ("artifact", "signature", "catalog"):
+                  print(f"{name}={outputs[name]}", file=output)
+          PY
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.checksum.outputs.bundle }}
+            ${{ steps.checksum.outputs.checksum }}
+            ${{ steps.ota.outputs.artifact }}
+            ${{ steps.ota.outputs.signature }}
+            ${{ steps.ota.outputs.catalog }}

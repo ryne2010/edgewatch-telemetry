@@ -22,6 +22,7 @@ The SQLite buffer is configured for field resilience:
 
 - WAL mode + tuned pragmas (`journal_mode`, `synchronous`, `temp_store`)
 - optional DB quota (`BUFFER_MAX_DB_BYTES`) with oldest-first eviction
+- use `BUFFER_SQLITE_SYNCHRONOUS=FULL` on field Pis for stronger sudden-power-loss durability
 - best-effort corruption recovery (malformed DB files are moved aside and recreated)
 - audit metrics emitted in telemetry:
   - `buffer_db_bytes`
@@ -39,11 +40,80 @@ cp agent/.env.example agent/.env
 uv run python agent/edgewatch_agent.py
 ```
 
+## Telegram-exclusive telemetry
+
+Set `EDGEWATCH_TELEMETRY_TRANSPORT=telegram` to run without an EdgeWatch API. The
+agent batches ordered, complete telemetry envelopes into deterministic gzip
+JSONL documents. Its SQLite buffer is a durable outbox: the delivery path
+deletes included points only after Telegram returns HTTP success with `ok=true`.
+
+```bash
+EDGEWATCH_TELEMETRY_TRANSPORT=telegram
+EDGEWATCH_DEVICE_ID=rpi-home-001
+TELEGRAM_CHAT_ID=-1001234567890
+TELEGRAM_BOT_TOKEN_FILE=/var/lib/edgewatch/telegram_bot_token
+TELEGRAM_BATCH_ENABLED=true
+TELEGRAM_BATCH_MAX_POINTS=100
+TELEGRAM_BATCH_MAX_BYTES=1000000
+TELEGRAM_BATCH_MAX_AGE_S=3600
+SENSOR_BACKEND=none
+BUFFER_DB_PATH=/var/lib/edgewatch/telemetry_buffer.sqlite
+BUFFER_SQLITE_SYNCHRONOUS=FULL
+```
+
+Create the token file without placing the token in `.env`:
+
+```bash
+sudo install -d -m 0750 -o "$USER" -g "$USER" /var/lib/edgewatch
+umask 077
+read -rsp 'Telegram bot token: ' edgewatch_telegram_token
+printf '\n'
+printf '%s\n' "$edgewatch_telegram_token" > /var/lib/edgewatch/telegram_bot_token
+unset edgewatch_telegram_token
+chmod 600 /var/lib/edgewatch/telegram_bot_token
+```
+
+Telegram mode is exclusive and makes no EdgeWatch API requests. Configuration
+comes from the local fallback-policy environment variables. Cloud policy,
+dashboard storage, server-side alerts, remote commands/procedures, OTA reporting,
+and API media uploads are unavailable in this mode. Routine traffic waits until
+the point, byte, or age threshold is met. `TELEGRAM_BATCH_MAX_AGE_S` is checked
+at sampling/network-sync opportunities; it is not a background timer. The
+current startup, heartbeat, or alert point is sent immediately from the durable
+outbox. Each heartbeat opportunity also forces at most one partial routine
+backlog batch when routine budget remains, preventing an unbounded catch-up
+drain. Delivery is at least once, so a timeout after Telegram accepted a
+document can produce duplicate envelopes; stable `message_id` values identify
+repeats.
+
+API-free typed control and signed application-bundle OTA are available only
+through the separately deployed Telegram fleet controller. The telemetry bot
+does not receive commands. OTA application is disabled by default, accepts only
+signed manifests, requires fresh healthy power evidence, and rejects a release
+when its signed `agent/requirements.txt` fingerprint differs from the installed
+runtime.
+
+The outbox is intentionally bounded to protect the Pi. `BUFFER_MAX_POINTS`,
+`BUFFER_MAX_AGE_S`, and `BUFFER_MAX_DB_BYTES` may evict the oldest undelivered
+points independently of delivery confirmation; evictions are logged and exposed
+through queue-depth/database-size metrics, with quota evictions counted by
+`buffer_evictions_total`. Size these limits for the longest expected offline
+interval.
+
+Telegram currently limits bot documents to 50 MB. The configured batch byte cap
+must remain below that limit. The agent durably dead-letters a single
+oversized/non-serializable point before advancing the outbox.
+
 ## Raspberry Pi deployment
 
 For a production-ish Raspberry Pi setup (venv + systemd + logs), see:
 
 - `docs/DEPLOY_RPI.md`
+- `docs/TUTORIALS/RPI_ZERO_TOUCH_BOOTSTRAP.md` for the pinned secret-free fleet image
+
+The fleet image uses a locked `ryne` account with public-key-only SSH. Its
+per-device provisioning bundle must include one operator public key; the image
+never contains a private key or baked authorized key.
 
 ## Device policy (energy & data optimization)
 
@@ -78,6 +148,7 @@ Example config:
 
 Supported backend names in this stage:
 
+- `none` (no hardware and no synthetic metrics; intended for bring-up)
 - `mock`
 - `composite`
 - `rpi_microphone` (ALSA microphone level via `arecord`; requires `alsa-utils` on Pi)
@@ -140,6 +211,7 @@ Enable optional cellular observability on Raspberry Pi nodes with ModemManager:
 CELLULAR_METRICS_ENABLED=true \
 CELLULAR_WATCHDOG_ENABLED=true \
 CELLULAR_INTERFACE=wwan0 \
+CELLULAR_USAGE_STATE_PATH=/var/lib/edgewatch/cellular_usage_rpi-001.json \
 uv run python agent/edgewatch_agent.py
 ```
 
@@ -153,6 +225,8 @@ When enabled, the agent adds best-effort metrics such as:
 Notes:
 - On non-Pi hosts (or when `mmcli` is absent), the agent remains runnable.
 - Watchdog checks are observation-only (DNS + HTTP HEAD); they do not restart networking.
+- The watchdog is off by default. Enable it only when the extra probe traffic is justified.
+- Actual persisted interface TX totals are preferred for daily byte-cap enforcement when available.
 
 ## Cost-cap enforcement (Task 13c)
 
@@ -162,16 +236,38 @@ Devices enforce daily UTC caps from `GET /api/v1/device-policy` (`cost_caps`):
 - `max_media_uploads_per_day`
 
 Behavior:
-- telemetry switches to heartbeat-only once byte cap is reached
+- routine delta telemetry stops once the daily byte cap is reached
+- startup, heartbeat, state/alert transition, and alert snapshot telemetry may
+  use a separate bounded urgent reserve (256 KiB/day by default)
+- Telegram checks a conservative per-request wire estimate before sending;
+  rows that do not fit remain in the durable outbox
+- every attempted Telegram request, including a failed attempt, is charged at
+  least that conservative estimate so retries cannot bypass the daily bound
+- an urgent Telegram point is sent directly from the outbox, so it does not
+  need to drain older routine rows; heartbeat recovery is limited to one
+  routine-budgeted backlog request
 - scheduled media captures are skipped once snapshot/upload caps are reached
 - audit metrics are emitted in telemetry:
   - `cost_cap_active`
   - `bytes_sent_today`
   - `media_uploads_today`
   - `snapshots_today`
+  - `urgent_reserve_bytes`
+  - `urgent_bytes_remaining`
 
 Durable counters are stored in:
 - `EDGEWATCH_COST_CAP_STATE_PATH` (default: `./edgewatch_cost_caps_<device_id>.json`)
+
+Local urgent-reserve configuration:
+- `EDGEWATCH_COST_CAP_URGENT_RESERVE_BYTES` (default: `262144`; set `0` to
+  stop all telemetry at the routine byte cap)
+
+This is an application-level send budget, not a hard SIM/carrier quota. The
+agent reserves a conservative request estimate before sending and reconciles
+against persisted kernel interface totals at later cellular polling
+opportunities, but retransmissions and traffic outside the agent can occur
+between polls. Configure a carrier-side data limit (for example in the Hologram
+dashboard) when exceeding a physical SIM quota must be impossible.
 
 ## Camera snapshots + upload pipeline
 

@@ -1,0 +1,13 @@
+# METABEGIN
+# X-Env-Layer-Name: edgewatch-standalone-v1
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Category: application
+# X-Env-Layer-Desc: EdgeWatch standalone telemetry-device profile.
+# X-Env-Layer-Requires: edgewatch-fleet-v1
+# METAEND
+---
+mmdebstrap:
+  customize-hooks:
+    - |
+      set -eu
+      printf 'standalone\n' > "$1/etc/edgewatch-image-profile"

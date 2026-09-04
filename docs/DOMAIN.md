@@ -38,6 +38,33 @@ These are the rules that must always hold (and should be enforced mechanically).
 - Non-admin users can only read/control devices they are explicitly granted.
 - Admins bypass per-device grant checks for operations and recovery.
 
+7) **Telegram control has a separate trust boundary**
+- A dedicated control bot is held by one operator-controlled fleet controller;
+  its token is never installed on devices.
+- Numeric Telegram chat/user IDs and optional topic IDs, not usernames, define
+  authorization.
+- The ordinary operator SSH key and forced-command controller SSH key are
+  distinct.
+
+8) **OTA artifacts are immutable and signed**
+- Telegram may select only a release alias from the controller's local catalog.
+- Devices verify size, SHA-256, RSA/SHA-256 signature, key ID, compatibility,
+  and version identity before apply.
+- System-image application is not qualified until real-device reboot and
+  bad-release rollback validation is complete.
+
+9) **Camera sub-fleet media stays local**
+- Satellites send only compact events, health, and metrics over LoRaWAN.
+- Media, SSH, and OTA artifacts never cross the LoRaWAN application protocol.
+- Event clips and daily stills remain in the bounded local evidence ring unless
+  an operator explicitly retrieves them over the switched maintenance WLAN.
+
+10) **Hardware power transitions fail closed**
+- Gateway LTE electrical switching, SX1302/SX1303 ingress, and satellite MCU
+  rail cutoff are explicit qualified adapters, not inferred from software state.
+- A satellite result file or successful service exit is not permission for the
+  MCU to remove power; the MCU waits for a board-qualified final-halt signal.
+
 ## Core workflows
 
 1) **Register a device (admin)**
@@ -105,6 +132,31 @@ These are the rules that must always hold (and should be enforced mechanically).
 - Devices report update transitions (`downloading` to `healthy|rolled_back|failed`) and converge after reconnect.
 - Deployments auto-halt when stage failure-rate exceeds configured thresholds.
 
+8) **Telegram fleet control without the EdgeWatch API**
+- One supervised controller consumes the dedicated control bot's updates.
+- Viewer/operator/admin authorization is based on immutable numeric Telegram
+  IDs, fleet membership, and optional topic scope.
+- The controller persists commands, frozen fleet targets, confirmations,
+  replies, audit state, and OTA deployment state before dispatch.
+- Direct pinned SSH is used during home bring-up; Hologram Spacebridge carries
+  the same typed protocol in the field.
+- Devices accept only allowlisted typed operations through the forced helper and
+  return the original result when a command ID is replayed.
+- Signed application-bundle OTA follows explicit stage, canary, one-tranche
+  promote, and abort steps without depending on the EdgeWatch API.
+
+9) **Low-power camera sub-fleet**
+- One always-on gateway maps the closed DevEUI inventory to stable device IDs,
+  validates compact LoRaWAN v1 frames, and reconstructs canonical telemetry.
+- Event/fault uplinks open an immediate bounded LTE window; routine control,
+  heartbeat, and queued telemetry use the hourly window.
+- An authenticated, expiring LoRaWAN downlink may request only a maintenance
+  wake. Bulk work waits for the satellite's pinned-key maintenance WLAN.
+- Satellites capture and infer locally, commit a bounded machine-readable result,
+  then request a clean Linux shutdown before their MCU removes electrical power.
+- Signed model bundles use the same staged fleet rollout shape as application
+  OTA, with independent known-answer/readiness validation and rollback.
+
 ## Vocabulary
 
 - **Agent:** software running on the edge device (ex: Raspberry Pi) that buffers and sends telemetry.
@@ -120,9 +172,28 @@ These are the rules that must always hold (and should be enforced mechanically).
   but device-side execution remains opt-in.
 - **Alert:** an operational event derived from telemetry or offline checks.
 - **Control command:** a durable, per-device control snapshot delivered via policy and acknowledged by device.
+- **Telegram fleet controller:** the single operator-controlled consumer of a
+  dedicated control bot that authorizes, persists, and dispatches typed device
+  work without the EdgeWatch API.
+- **Frozen target set:** the exact eligible device IDs captured in a fleet
+  mutation preview; later inventory changes do not change that command.
+- **Typed device helper:** the forced SSH command that validates a bounded JSON
+  envelope and maps it to an allowlisted local operation; it is not a shell.
+- **Controller command:** an expiring, stably identified Telegram-requested
+  operation with per-target result and audit state.
 - **Release manifest:** immutable release metadata (`git_tag`, `commit_sha`, signature, key id, constraints).
 - **Deployment:** staged rollout of one release manifest with pause/resume/abort lifecycle.
 - **Deployment target:** per-device deployment state row tied to a deployment.
+- **Camera satellite:** an MCU-supervised Pi Zero 2 W plus local camera/audio
+  inference, LoRaWAN Class A radio, and switched maintenance WLAN.
+- **Field gateway:** the always-on Pi 4/5 that hosts Telegram control, the local
+  LoRaWAN services, durable uplink/outbox state, and electrically duty-cycled LTE.
+- **Radio ingress adapter:** separately reviewed and SHA-256-pinned executable
+  that proves SX1302/SX1303 detection and the local ChirpStack bridge; the repo
+  does not ship a vendor concentrator binary.
+- **Model bundle:** signed immutable vision/audio models, labels, preprocessing,
+  thresholds, compatibility, and known-answer vectors activated independently
+  from application code.
 
 ## Canonical metric keys (contracted)
 
@@ -166,6 +237,20 @@ Common operational metrics:
 - `bytes_sent_today`
 - `media_uploads_today`
 - `snapshots_today`
+- `lorawan_message_type`
+- `lorawan_sequence`
+- `lorawan_dev_eui`
+- `equipment_state`
+- `visual_confidence`
+- `audio_anomaly_score`
+- `low_battery`
+- `sentinel_triggered`
+- `camera_ok`
+- `audio_ok`
+- `maintenance_ready`
+- `degraded`
+- `model_version_digest`
+- `maintenance_command_token`
 
 ## Data model overview
 
@@ -186,10 +271,17 @@ Common operational metrics:
 - **Out-of-order telemetry:** `last_seen_at` should not move backwards.
 - **Clock skew:** naive timestamps assumed UTC; future improvements may include server-side receipt time.
 - **DB unavailability:** API should fail clearly; future improvements may include a queue.
+- **Controller unavailability:** device telemetry continues through the
+  telemetry bot, but Telegram control and OTA wait for the single controller to
+  return.
+- **Spacebridge unavailability:** field control delivery fails closed and may
+  retry transient transport errors; it never falls back to an unpinned host.
+- **Control reply loss:** accepted device work remains recorded even if the
+  Telegram reply must be retried separately.
 
 ## Acceptance criteria patterns
 
 - **Correctness:** no duplicate telemetry rows for the same `message_id`.
 - **Reliability:** offline/online transitions produce predictable alert behavior.
 - **Security:** secrets/tokens are never logged and never stored in plaintext.
-- **Operability:** local stack starts with `make up` and has clear runbooks.
+- **Operability:** the local stack starts with canonical `make run` (`make up` remains a compatibility alias) and has clear runbooks.

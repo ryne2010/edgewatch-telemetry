@@ -22,9 +22,15 @@ make tf-check
 
 ### Option A: GitHub Actions (recommended)
 
-1) Push your changes to `main`.
+1) Merge your changes to `main` and ensure CI is green.
 
-2) Run:
+2) Create a release tag when you are ready to ship:
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+3) Run:
 - **Deploy to GCP (Cloud Run)** (`.github/workflows/deploy-gcp.yml`)
   - choose `env` (e.g., `dev` or `prod`)
   - optionally choose a `.tfvars` profile
@@ -34,6 +40,11 @@ This runs `make deploy-gcp-safe`, which:
 2) applies Terraform
 3) runs migrations as a Cloud Run Job
 4) verifies the service is healthy
+
+4) For the shareable Pi bundle, run **Publish GitHub Release Bundle** (`.github/workflows/publish-release-bundle.yml`).
+   - On tag push, the workflow publishes the GitHub Release automatically.
+   - For a re-run or manual ship, use `workflow_dispatch` with the same `vX.Y.Z` tag.
+   - The workflow runs the repo gates, builds `dist/*.zip`, writes a SHA-256 checksum, and uploads both artifacts to the release.
 
 ### Option B: Local CLI (advanced)
 

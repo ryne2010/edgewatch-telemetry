@@ -50,7 +50,7 @@ make test
 Bring up the stack:
 
 ```bash
-make up
+make run
 make demo-device
 make simulate
 ```

@@ -37,9 +37,11 @@ issue?
 
 ## 6) Validate
 
-Run the harness: - `python scripts/harness.py lint` -
-`python scripts/harness.py test` - `python scripts/harness.py typecheck`
-(if configured)
+Run the canonical validation gate:
+
+```bash
+make check
+```
 
 ## 7) Document
 

@@ -1,0 +1,31 @@
+# METABEGIN
+# X-Env-Layer-Name: edgewatch-gateway-v1
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Category: application
+# X-Env-Layer-Desc: EdgeWatch Pi 4 field gateway with local LoRaWAN services.
+# X-Env-Layer-Requires: edgewatch-fleet-v1
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - mosquitto
+    - mosquitto-clients
+    - redis-server
+    - redis-tools
+    - sqlite3
+  customize-hooks:
+    - |
+      set -eu
+      install -m 0644 chirpstack-sqlite.deb "$1/tmp/chirpstack-sqlite.deb"
+      chroot "$1" dpkg -i /tmp/chirpstack-sqlite.deb
+      rm -f "$1/tmp/chirpstack-sqlite.deb"
+      install -m 0644 paho-mqtt.whl "$1/tmp/paho-mqtt.whl"
+      chroot "$1" /opt/edgewatch/app/.venv/bin/pip install \
+        --disable-pip-version-check --no-deps --no-index /tmp/paho-mqtt.whl
+      rm -f "$1/tmp/paho-mqtt.whl"
+      install -m 0644 edgewatch-lte-power-on.service \
+        "$1/etc/systemd/system/edgewatch-lte-power-on.service"
+      install -m 0644 edgewatch-lte-power-off.service \
+        "$1/etc/systemd/system/edgewatch-lte-power-off.service"
+      install -d -m 0700 "$1/var/lib/edgewatch-gateway"
+      printf 'gateway\n' > "$1/etc/edgewatch-image-profile"

@@ -26,7 +26,7 @@ It does **not** delete devices, alerts, ingestion batch metadata, drift events, 
 ### 1) Start the stack
 
 ```bash
-make up
+make run
 make db-migrate
 ```
 

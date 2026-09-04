@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Link, useSearch } from '@tanstack/react-router'
 import { useDebouncedValue } from '@tanstack/react-pacer/debouncer'
+import { Copy } from 'lucide-react'
 import {
   api,
   type AdminEventOut,
@@ -29,12 +30,123 @@ import {
   Input,
   Label,
   Page,
+  Textarea,
   useToast,
 } from '../ui-kit'
 import { fmtDateTime } from '../utils/format'
 import { adminAccessHint } from '../utils/adminAuth'
 
 type AdminTab = 'events' | 'ingestions' | 'drift' | 'notifications' | 'exports'
+
+type ProvisioningBundleMode = 'env_only' | 'shareable_image'
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
+function q(value: string): string {
+  if (!value) return '""'
+  if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) return value
+  return JSON.stringify(value)
+}
+
+function buildBootstrapEnv(params: {
+  apiUrl: string
+  deviceId: string
+  deviceToken: string
+  sensorConfigPath: string
+  runtimePowerMode: string
+  deepSleepBackend: string
+  allowRemoteShutdown: string
+  enableOtaApply: string
+  powerMgmtEnabled: string
+  powerMgmtMode: string
+  bundleUri: string
+  bundleSha256: string
+  bundleSignature: string
+  bundleSignatureScheme: string
+  bundleSignatureKeyId: string
+  bundleKeyringDir: string
+  bundleInstallDir: string
+  bundleStripComponents: string
+  lteApn: string
+  lteUsername: string
+  ltePassword: string
+  tailscaleAuthKey: string
+  tailscaleHostname: string
+  tailscaleEnableSsh: boolean
+}): string {
+  const lines: string[] = [
+    '# EdgeWatch bootstrap bundle',
+    '# Copy this file to /boot/firmware/edgewatch/bootstrap.env on the SD card.',
+    '',
+    `BOOTSTRAP_REPO_DIR=/home/ryne/edgewatch-telemetry`,
+    params.bundleUri ? `BOOTSTRAP_BUNDLE_URI=${q(params.bundleUri)}` : '',
+    params.bundleSha256 ? `BOOTSTRAP_BUNDLE_SHA256=${q(params.bundleSha256)}` : '',
+    params.bundleSignature ? `BOOTSTRAP_BUNDLE_SIGNATURE=${q(params.bundleSignature)}` : '',
+    params.bundleSignatureScheme ? `BOOTSTRAP_BUNDLE_SIGNATURE_SCHEME=${q(params.bundleSignatureScheme)}` : '',
+    params.bundleSignatureKeyId ? `BOOTSTRAP_BUNDLE_SIGNATURE_KEY_ID=${q(params.bundleSignatureKeyId)}` : '',
+    params.bundleKeyringDir ? `BOOTSTRAP_BUNDLE_KEYRING_DIR=${q(params.bundleKeyringDir)}` : '',
+    params.bundleInstallDir ? `BOOTSTRAP_BUNDLE_INSTALL_DIR=${q(params.bundleInstallDir)}` : '',
+    params.bundleStripComponents ? `BOOTSTRAP_BUNDLE_STRIP_COMPONENTS=${q(params.bundleStripComponents)}` : '',
+    '',
+    `EDGEWATCH_API_URL=${q(params.apiUrl)}`,
+    `EDGEWATCH_DEVICE_ID=${q(params.deviceId)}`,
+    `EDGEWATCH_DEVICE_TOKEN=${q(params.deviceToken)}`,
+    `SENSOR_CONFIG_PATH=${q(params.sensorConfigPath)}`,
+    `RUNTIME_POWER_MODE=${q(params.runtimePowerMode)}`,
+    `DEEP_SLEEP_BACKEND=${q(params.deepSleepBackend)}`,
+    `EDGEWATCH_ALLOW_REMOTE_SHUTDOWN=${q(params.allowRemoteShutdown)}`,
+    `EDGEWATCH_ENABLE_OTA_APPLY=${q(params.enableOtaApply)}`,
+    `POWER_MGMT_ENABLED=${q(params.powerMgmtEnabled)}`,
+    `POWER_MGMT_MODE=${q(params.powerMgmtMode)}`,
+    '',
+    params.lteApn ? `BOOTSTRAP_LTE_APN=${q(params.lteApn)}` : '',
+    params.lteUsername ? `BOOTSTRAP_LTE_USERNAME=${q(params.lteUsername)}` : '',
+    params.ltePassword ? `BOOTSTRAP_LTE_PASSWORD=${q(params.ltePassword)}` : '',
+    '',
+    params.tailscaleAuthKey ? `BOOTSTRAP_TAILSCALE_AUTH_KEY=${q(params.tailscaleAuthKey)}` : '',
+    params.tailscaleHostname ? `BOOTSTRAP_TAILSCALE_HOSTNAME=${q(params.tailscaleHostname)}` : '',
+    params.tailscaleEnableSsh ? `BOOTSTRAP_TAILSCALE_ENABLE_SSH=true` : '',
+    '',
+  ]
+  return normalizeLineEndings(lines.join('\n').replace(/\n{3,}/g, '\n\n')).replace(/\s+$/u, '') + '\n'
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.setAttribute('readonly', 'true')
+      ta.style.position = 'fixed'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 
 function Callout(props: { title: string; children: React.ReactNode; tone?: 'default' | 'warning' }) {
   const warning = props.tone === 'warning'
@@ -87,6 +199,25 @@ export function AdminPage() {
   const [provOwners, setProvOwners] = React.useState('')
   const [provEnabled, setProvEnabled] = React.useState(true)
   const [provStatus, setProvStatus] = React.useState<string | null>(null)
+  const [provBootstrapMode, setProvBootstrapMode] = React.useState<ProvisioningBundleMode>('env_only')
+  const [provBootstrapApiUrl, setProvBootstrapApiUrl] = React.useState(() =>
+    typeof window !== 'undefined' ? window.location.origin : '',
+  )
+  const [provBootstrapBundleUri, setProvBootstrapBundleUri] = React.useState('')
+  const [provBootstrapBundleSha256, setProvBootstrapBundleSha256] = React.useState('')
+  const [provBootstrapBundleSignature, setProvBootstrapBundleSignature] = React.useState('')
+  const [provBootstrapBundleSignatureScheme, setProvBootstrapBundleSignatureScheme] = React.useState('openssl_rsa_sha256')
+  const [provBootstrapBundleSignatureKeyId, setProvBootstrapBundleSignatureKeyId] = React.useState('')
+  const [provBootstrapBundleKeyringDir, setProvBootstrapBundleKeyringDir] = React.useState('/boot/firmware/edgewatch/keyring')
+  const [provBootstrapBundleInstallDir, setProvBootstrapBundleInstallDir] = React.useState('/home/ryne/edgewatch-telemetry')
+  const [provBootstrapBundleStripComponents, setProvBootstrapBundleStripComponents] = React.useState('1')
+  const [provBootstrapLteApn, setProvBootstrapLteApn] = React.useState('')
+  const [provBootstrapLteUsername, setProvBootstrapLteUsername] = React.useState('')
+  const [provBootstrapLtePassword, setProvBootstrapLtePassword] = React.useState('')
+  const [provBootstrapTailscaleAuthKey, setProvBootstrapTailscaleAuthKey] = React.useState('')
+  const [provBootstrapTailscaleHostname, setProvBootstrapTailscaleHostname] = React.useState('')
+  const [provBootstrapTailscaleEnableSsh, setProvBootstrapTailscaleEnableSsh] = React.useState(false)
+  const [bootstrapEnvDraft, setBootstrapEnvDraft] = React.useState('')
   const [accessDeviceId, setAccessDeviceId] = React.useState('')
   const [accessPrincipalEmail, setAccessPrincipalEmail] = React.useState('')
   const [accessRole, setAccessRole] = React.useState<'viewer' | 'operator' | 'owner'>('viewer')
@@ -159,6 +290,7 @@ export function AdminPage() {
     },
     onSuccess: (d) => {
       setProvStatus(`Device provisioned: ${d.device_id}`)
+      setBootstrapEnvDraft(bootstrapEnvGenerated)
       toast({
         title: 'Device provisioned',
         description: d.device_id,
@@ -177,6 +309,59 @@ export function AdminPage() {
       })
     },
   })
+
+  const bootstrapEnvGenerated = React.useMemo(
+    () =>
+      buildBootstrapEnv({
+        apiUrl: provBootstrapApiUrl.trim() || (typeof window !== 'undefined' ? window.location.origin : ''),
+        deviceId: provId.trim(),
+        deviceToken: provToken.trim(),
+        sensorConfigPath: './agent/config/rpi.microphone.sensors.yaml',
+        runtimePowerMode: 'continuous',
+        deepSleepBackend: 'auto',
+        allowRemoteShutdown: '0',
+        enableOtaApply: '0',
+        powerMgmtEnabled: 'true',
+        powerMgmtMode: 'dual',
+        bundleUri: provBootstrapMode === 'shareable_image' ? provBootstrapBundleUri.trim() : '',
+        bundleSha256: provBootstrapMode === 'shareable_image' ? provBootstrapBundleSha256.trim() : '',
+        bundleSignature: provBootstrapMode === 'shareable_image' ? provBootstrapBundleSignature.trim() : '',
+        bundleSignatureScheme:
+          provBootstrapMode === 'shareable_image' ? provBootstrapBundleSignatureScheme.trim() : 'none',
+        bundleSignatureKeyId: provBootstrapMode === 'shareable_image' ? provBootstrapBundleSignatureKeyId.trim() : '',
+        bundleKeyringDir: provBootstrapMode === 'shareable_image' ? provBootstrapBundleKeyringDir.trim() : '',
+        bundleInstallDir: provBootstrapMode === 'shareable_image' ? provBootstrapBundleInstallDir.trim() : '',
+        bundleStripComponents: provBootstrapMode === 'shareable_image' ? provBootstrapBundleStripComponents.trim() : '',
+        lteApn: provBootstrapLteApn.trim(),
+        lteUsername: provBootstrapLteUsername.trim(),
+        ltePassword: provBootstrapLtePassword.trim(),
+        tailscaleAuthKey: provBootstrapTailscaleAuthKey.trim(),
+        tailscaleHostname: provBootstrapTailscaleHostname.trim(),
+        tailscaleEnableSsh: provBootstrapTailscaleEnableSsh,
+      }),
+    [
+      provBootstrapApiUrl,
+      provBootstrapBundleInstallDir,
+      provBootstrapBundleKeyringDir,
+      provBootstrapBundleSha256,
+      provBootstrapBundleSignature,
+      provBootstrapBundleSignatureScheme,
+      provBootstrapBundleSignatureKeyId,
+      provBootstrapBundleStripComponents,
+      provBootstrapBundleUri,
+      provBootstrapLteApn,
+      provBootstrapLtePassword,
+      provBootstrapLteUsername,
+      provBootstrapMode,
+      provBootstrapTailscaleAuthKey,
+      provBootstrapTailscaleEnableSsh,
+      provBootstrapTailscaleHostname,
+      provId,
+      provToken,
+    ],
+  )
+
+  const bootstrapEnvText = bootstrapEnvDraft.trim() ? bootstrapEnvDraft : bootstrapEnvGenerated
 
   const [deviceRaw, setDeviceRaw] = React.useState('')
   const [deviceId] = useDebouncedValue(deviceRaw.trim(), { wait: 250 })
@@ -833,6 +1018,23 @@ export function AdminPage() {
                   >
                     Generate
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    aria-label="Copy token"
+                    title="Copy token"
+                    disabled={inputsDisabled || !provToken.trim()}
+                    onClick={async () => {
+                      const ok = await copyTextToClipboard(provToken.trim())
+                      toast({
+                        title: ok ? 'Token copied' : 'Copy failed',
+                        description: ok ? 'Paste it into the edge agent' : 'Clipboard access was blocked',
+                        variant: ok ? 'success' : 'error',
+                      })
+                    }}
+                  >
+                    <Copy className="h-4 w-4" aria-hidden="true" />
+                  </Button>
                 </div>
                 <div className="text-xs text-muted-foreground">Treat tokens like passwords (store them in a secret manager).</div>
               </div>
@@ -884,6 +1086,231 @@ export function AdminPage() {
                   {upsertMutation.isPending ? 'Saving…' : 'Create / Update device'}
                 </Button>
                 {provStatus ? <span className={provStatus.startsWith('Error') ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>{provStatus}</span> : null}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card id="device-bootstrap">
+            <CardHeader>
+              <CardTitle>Provision device bootstrap</CardTitle>
+              <CardDescription>
+                Generate the per-device <span className="font-mono">bootstrap.env</span> file for first boot and optional shareable-image installs.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>API URL</Label>
+                  <Input
+                    value={provBootstrapApiUrl}
+                    onChange={(e) => setProvBootstrapApiUrl(e.target.value)}
+                    placeholder={typeof window !== 'undefined' ? window.location.origin : 'https://api.example.com'}
+                    disabled={inputsDisabled}
+                  />
+                  <div className="text-xs text-muted-foreground">
+                    Defaults to the current site origin. Edit this if the Pi should post to a different ingest endpoint.
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Provisioning mode</Label>
+                  <select
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={provBootstrapMode}
+                    onChange={(e) => setProvBootstrapMode(e.target.value as ProvisioningBundleMode)}
+                    disabled={inputsDisabled}
+                  >
+                    <option value="env_only">bootstrap.env only</option>
+                    <option value="shareable_image">shareable image bundle</option>
+                  </select>
+                  <div className="text-xs text-muted-foreground">
+                    Shareable-image mode downloads a signed bundle on first boot; the bootstrap file is still the operator handoff artifact.
+                  </div>
+                </div>
+              </div>
+
+              {provBootstrapMode === 'shareable_image' ? (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Bundle URI</Label>
+                    <Input
+                      value={provBootstrapBundleUri}
+                      onChange={(e) => setProvBootstrapBundleUri(e.target.value)}
+                      placeholder="https://example.com/edgewatch-bundle.tar.gz"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Bundle SHA-256</Label>
+                    <Input
+                      value={provBootstrapBundleSha256}
+                      onChange={(e) => setProvBootstrapBundleSha256(e.target.value)}
+                      placeholder="64 hex chars"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2 lg:col-span-2">
+                    <Label>Bundle signature</Label>
+                    <Textarea
+                      className="min-h-24 font-mono"
+                      value={provBootstrapBundleSignature}
+                      onChange={(e) => setProvBootstrapBundleSignature(e.target.value)}
+                      placeholder="base64 signature"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Signature scheme</Label>
+                    <Input
+                      value={provBootstrapBundleSignatureScheme}
+                      onChange={(e) => setProvBootstrapBundleSignatureScheme(e.target.value)}
+                      placeholder="openssl_rsa_sha256"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Signature key ID</Label>
+                    <Input
+                      value={provBootstrapBundleSignatureKeyId}
+                      onChange={(e) => setProvBootstrapBundleSignatureKeyId(e.target.value)}
+                      placeholder="edgewatch-release"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Keyring dir</Label>
+                    <Input
+                      value={provBootstrapBundleKeyringDir}
+                      onChange={(e) => setProvBootstrapBundleKeyringDir(e.target.value)}
+                      placeholder="/boot/firmware/edgewatch/keyring"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Install dir</Label>
+                    <Input
+                      value={provBootstrapBundleInstallDir}
+                      onChange={(e) => setProvBootstrapBundleInstallDir(e.target.value)}
+                      placeholder="/home/ryne/edgewatch-telemetry"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Strip components</Label>
+                    <Input
+                      value={provBootstrapBundleStripComponents}
+                      onChange={(e) => setProvBootstrapBundleStripComponents(e.target.value)}
+                      placeholder="1"
+                      disabled={inputsDisabled}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2">
+                  <Label>LTE APN (optional)</Label>
+                  <Input
+                    value={provBootstrapLteApn}
+                    onChange={(e) => setProvBootstrapLteApn(e.target.value)}
+                    placeholder="nxtgenphone"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>LTE username (optional)</Label>
+                  <Input
+                    value={provBootstrapLteUsername}
+                    onChange={(e) => setProvBootstrapLteUsername(e.target.value)}
+                    placeholder="user"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>LTE password (optional)</Label>
+                  <Input
+                    value={provBootstrapLtePassword}
+                    onChange={(e) => setProvBootstrapLtePassword(e.target.value)}
+                    placeholder="pass"
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Tailscale auth key (optional)</Label>
+                  <Input
+                    value={provBootstrapTailscaleAuthKey}
+                    onChange={(e) => setProvBootstrapTailscaleAuthKey(e.target.value)}
+                    placeholder="tskey-auth-..."
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Tailscale hostname (optional)</Label>
+                  <Input
+                    value={provBootstrapTailscaleHostname}
+                    onChange={(e) => setProvBootstrapTailscaleHostname(e.target.value)}
+                    placeholder={provId.trim() || 'rpi-001'}
+                    disabled={inputsDisabled}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Tailscale SSH</Label>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={provBootstrapTailscaleEnableSsh}
+                      onChange={(e) => setProvBootstrapTailscaleEnableSsh(e.target.checked)}
+                      disabled={inputsDisabled}
+                    />
+                    <span className="text-sm text-muted-foreground">Enable Tailscale SSH on first boot</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Generated bootstrap.env</Label>
+                <Textarea
+                  className="min-h-[22rem] font-mono text-xs leading-5"
+                  value={bootstrapEnvText}
+                  onChange={(e) => setBootstrapEnvDraft(e.target.value)}
+                  disabled={inputsDisabled}
+                />
+                <div className="text-xs text-muted-foreground">
+                  Edit the file contents here before downloading. The default repo path is{' '}
+                  <span className="font-mono">/home/ryne/edgewatch-telemetry</span>.
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={async () => {
+                    const ok = await copyTextToClipboard(bootstrapEnvText)
+                    toast({
+                      title: ok ? 'bootstrap.env copied' : 'Copy failed',
+                      description: ok ? 'Paste it into the SD card boot partition' : 'Clipboard access was blocked',
+                      variant: ok ? 'success' : 'error',
+                    })
+                  }}
+                  disabled={inputsDisabled || !bootstrapEnvText.trim()}
+                >
+                  Copy bootstrap.env
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => downloadTextFile('bootstrap.env', bootstrapEnvText)}
+                  disabled={inputsDisabled || !bootstrapEnvText.trim()}
+                >
+                  Download bootstrap.env
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setBootstrapEnvDraft(bootstrapEnvGenerated)}
+                  disabled={inputsDisabled}
+                >
+                  Reset from form
+                </Button>
               </div>
             </CardContent>
           </Card>

@@ -1,0 +1,39 @@
+[Unit]
+Description=EdgeWatch LoRaWAN ingest and durable telemetry delivery
+After=network-online.target mosquitto.service redis-server.service chirpstack.service edgewatch-lorawan-radio-ingress.service
+Wants=network-online.target
+Requires=mosquitto.service edgewatch-lorawan-radio-ingress.service
+BindsTo=edgewatch-lorawan-radio-ingress.service
+ConditionPathExists=/etc/edgewatch-controller/lorawan-gateway.yaml
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=edgewatch-controller
+Group=edgewatch-controller
+WorkingDirectory=/opt/edgewatch/current
+ExecStart=/opt/edgewatch/app/.venv/bin/python -m agent.lorawan --config /etc/edgewatch-controller/lorawan-gateway.yaml
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/edgewatch-controller/gateway-power.env
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/edgewatch-controller /var/lib/edgewatch-gateway
+
+[Install]
+WantedBy=multi-user.target

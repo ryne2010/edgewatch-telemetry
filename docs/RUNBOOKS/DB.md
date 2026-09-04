@@ -9,7 +9,7 @@ This runbook covers **schema migrations** and common operational DB tasks.
 ### Bring up the stack
 
 ```bash
-make up
+make run
 ```
 
 `docker compose` will:

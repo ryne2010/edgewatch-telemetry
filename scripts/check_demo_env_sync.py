@@ -5,6 +5,15 @@ from pathlib import Path
 from typing import Sequence
 
 
+_SENSITIVE_KEY_PARTS = ("TOKEN", "SECRET", "PASSWORD", "API_KEY", "DATABASE_URL")
+
+
+def _display_value(key: str, value: str) -> str:
+    if any(part in key.upper() for part in _SENSITIVE_KEY_PARTS):
+        return "<redacted>"
+    return value
+
+
 def _parse_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -36,7 +45,7 @@ def describe_drift(*, example_path: Path, current_path: Path, keys: Sequence[str
         actual = current_values.get(key)
         if expected is None or actual is None or actual == expected:
             continue
-        drift_parts.append(f"{key}={actual} (example: {expected})")
+        drift_parts.append(f"{key}={_display_value(key, actual)} (example: {_display_value(key, expected)})")
 
     if not drift_parts:
         return None

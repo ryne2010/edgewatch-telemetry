@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 from buffer import SqliteBuffer
 from cellular import CellularConfigError, build_cellular_monitor_from_env
-from cost_caps import CostCapError, CostCapState
+from cost_caps import CostCapError, CostCapState, URGENT_TELEMETRY_REASONS
 from device_policy import (
     CachedPolicy,
     DevicePolicy,
@@ -31,15 +31,83 @@ from device_policy import (
     save_cached_policy,
 )
 from media import MediaConfigError, MediaUploadError, build_media_runtime_from_env
+from local_control import LocalControlState
 from power_management import PowerManagementError, PowerManager
 from sensors import SensorConfigError, build_sensor_backend, load_sensor_config_from_env
+from telegram_transport import (
+    TelegramTransport,
+    TelegramTransportConfigError,
+    load_telegram_transport_config,
+)
 
 
 PROCESS_SESSION_ID = uuid.uuid4().hex
+_TELEGRAM_WIRE_FIXED_OVERHEAD_BYTES = 8 * 1024
+_DEFLATE_STORED_BLOCK_BYTES = 16 * 1024
+_LOCAL_CONTROL_WAKE_CHECK: Callable[[], bool] | None = None
 
 
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_fd = os.open(path, flags)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def _write_agent_ready_receipt(*, device_id: str, transport: str) -> Path | None:
+    """Publish durable, agent-owned proof that startup initialization completed."""
+
+    raw_path = (os.getenv("EDGEWATCH_READY_PATH") or "").strip()
+    if not raw_path:
+        return None
+
+    path = Path(raw_path)
+    temp_path: Path | None = None
+    published = False
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "device_id": device_id,
+            "transport": transport,
+            "pid": os.getpid(),
+            "process_session_id": PROCESS_SESSION_ID,
+            "started_at": utcnow_iso(),
+        }
+        fd, temp_name = tempfile.mkstemp(
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        temp_path = Path(temp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        temp_path = None
+        published = True
+        _fsync_directory(path.parent)
+        return path
+    except Exception as exc:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        if published:
+            try:
+                path.unlink()
+                _fsync_directory(path.parent)
+            except Exception:
+                pass
+        raise RuntimeError(f"failed to publish agent readiness receipt at {path}") from exc
 
 
 def make_point(metrics: Dict[str, Any]) -> Dict[str, Any]:
@@ -774,6 +842,17 @@ def _parse_iso_utc(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _local_alert_delivery_muted(
+    muted_until: str | None,
+    *,
+    now_utc: datetime | None = None,
+) -> bool:
+    parsed = _parse_iso_utc(muted_until)
+    if parsed is None:
+        return False
+    return parsed > (now_utc or datetime.now(timezone.utc))
+
+
 def _estimate_ingest_payload_bytes(points: List[Dict[str, Any]]) -> int:
     payload = {"points": points}
     blob = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
@@ -867,7 +946,8 @@ def _changed_keys(
         prev_f = _as_float(prev)
         if cur_f is not None and prev_f is not None:
             thresh = float(thresholds.get(k, 0.0))
-            if abs(cur_f - prev_f) >= thresh:
+            delta = abs(cur_f - prev_f)
+            if (thresh <= 0.0 and delta > 0.0) or (thresh > 0.0 and delta >= thresh):
                 changed.append(k)
             continue
 
@@ -994,6 +1074,22 @@ def _compute_state(
     return ("WARN" if alerts else "OK"), alerts
 
 
+def _reportable_alert_state(
+    *,
+    current_alerts: set[str],
+    previous_alerts: set[str],
+    delivery_muted: bool,
+) -> tuple[bool, bool]:
+    """Return transition/critical flags after applying the local delivery mute."""
+
+    if delivery_muted:
+        return False, False
+    return (
+        current_alerts != previous_alerts,
+        "WATER_PRESSURE_LOW" in current_alerts,
+    )
+
+
 def _minimal_heartbeat_metrics(metrics: Mapping[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for k in (
@@ -1011,6 +1107,8 @@ def _minimal_heartbeat_metrics(metrics: Mapping[str, Any]) -> Dict[str, Any]:
         "power_sleep_backend",
         "wake_reason",
         "network_duty_cycled",
+        "alerts_muted",
+        "alerts_muted_until",
         "water_pressure_psi",
         "pump_on",
     ):
@@ -1059,11 +1157,95 @@ def _should_network_sync(*, runtime_power_mode: str, send_reason: str | None) ->
     return send_reason in {"startup", "state_change", "alert_change", "heartbeat"}
 
 
+def _telegram_force_immediate(*, send_reason: str) -> bool:
+    return send_reason in {
+        "startup",
+        "state_change",
+        "alert_change",
+        "alert_snapshot",
+        "heartbeat",
+        "local_request",
+    }
+
+
+def _local_command_message_id(*, device_id: str, command_id: str) -> str:
+    identity = "\0".join(("edgewatch-local-command-point-v1", device_id, command_id)).encode("utf-8")
+    return hashlib.sha256(identity).hexdigest()[:32]
+
+
+def _materialize_local_request_points(
+    *,
+    state: LocalControlState,
+    local_control: Any,
+    device_id: str,
+    metrics: Mapping[str, Any],
+) -> dict[str, Dict[str, Any]]:
+    """Durably bind each claimed command to exactly one immutable point."""
+
+    points: dict[str, Dict[str, Any]] = {}
+    command_ids = (*local_control.sample_request_ids, *local_control.sync_request_ids)
+    for command_id in command_ids:
+        candidate = make_point(dict(metrics))
+        candidate["message_id"] = _local_command_message_id(
+            device_id=device_id,
+            command_id=command_id,
+        )
+        points[command_id] = state.persist_request_point(command_id, candidate)
+    return points
+
+
+def _enqueue_local_request_points(
+    *,
+    buf: SqliteBuffer,
+    points: Mapping[str, Mapping[str, Any]],
+) -> None:
+    for point in points.values():
+        payload = dict(point)
+        if not buf.enqueue(str(payload["message_id"]), payload, str(payload["ts"])):
+            raise RuntimeError("durable local-request buffer enqueue failed")
+
+
 def _normalized_operation_mode(raw: str) -> str:
     mode = (raw or "active").strip().lower()
     if mode in {"active", "sleep", "disabled"}:
         return mode
     return "active"
+
+
+def _apply_local_control_overrides(
+    *,
+    local_control: Any,
+    operation_mode: str,
+    sleep_poll_interval_s: int,
+    runtime_power_mode: str,
+) -> tuple[str, int, str]:
+    if local_control.operation_mode is not None:
+        operation_mode = _normalized_operation_mode(local_control.operation_mode)
+    if local_control.sleep_poll_interval_s is not None:
+        sleep_poll_interval_s = max(60, int(local_control.sleep_poll_interval_s))
+    if local_control.runtime_power_mode is not None:
+        runtime_power_mode = _normalized_runtime_power_mode(local_control.runtime_power_mode)
+    return operation_mode, sleep_poll_interval_s, runtime_power_mode
+
+
+def _settle_local_control_requests(
+    *,
+    state: LocalControlState,
+    local_control: Any,
+    sample_durable: bool,
+    sync_succeeded: bool,
+    failure_reason: str,
+) -> None:
+    sample_ids = tuple(getattr(local_control, "sample_request_ids", ()))
+    sync_ids = tuple(getattr(local_control, "sync_request_ids", ()))
+    if sample_durable:
+        state.complete_requests(sample_ids, {"sample_captured": True})
+    else:
+        state.release_requests(sample_ids, failure_reason)
+    if sync_succeeded:
+        state.complete_requests(sync_ids, {"network_synced": True})
+    else:
+        state.release_requests(sync_ids, failure_reason)
 
 
 def _apply_pending_control_command_override(
@@ -1878,6 +2060,7 @@ def _flush_buffer(
     token: str,
     max_points_per_batch: int,
     on_batch_sent: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
+    max_payload_bytes: int | None = None,
 ) -> bool:
     """Flush queued points.
 
@@ -1911,8 +2094,22 @@ def _flush_buffer(
             # Best-effort; never crash the agent due to deadletter.
             return
 
+    remaining_payload_bytes = None if max_payload_bytes is None else max(0, int(max_payload_bytes))
+
     while True:
+        if remaining_payload_bytes is not None and remaining_payload_bytes <= 0:
+            return True
         queued = buf.dequeue_batch(limit=max_points_per_batch)
+        if not queued:
+            return True
+
+        request_payload_bytes = _estimate_ingest_payload_bytes([m.payload for m in queued])
+        while (
+            remaining_payload_bytes is not None and queued and request_payload_bytes > remaining_payload_bytes
+        ):
+            queued.pop()
+            if queued:
+                request_payload_bytes = _estimate_ingest_payload_bytes([m.payload for m in queued])
         if not queued:
             return True
 
@@ -1929,6 +2126,11 @@ def _flush_buffer(
                     pass
             for m in queued:
                 buf.delete(m.message_id)
+            if remaining_payload_bytes is not None:
+                remaining_payload_bytes = max(
+                    0,
+                    remaining_payload_bytes - request_payload_bytes,
+                )
             continue
 
         # Validation failure: bisect by sending individually.
@@ -1952,8 +2154,383 @@ def _flush_buffer(
                 else:
                     # Transient-ish failure; keep remaining messages for later.
                     return False
+            if remaining_payload_bytes is not None:
+                remaining_payload_bytes = max(
+                    0,
+                    remaining_payload_bytes - request_payload_bytes,
+                )
             continue
 
+        return False
+
+
+def _telegram_serialized_envelope_size(
+    transport: TelegramTransport,
+    *,
+    device_id: str,
+    point: Mapping[str, Any],
+) -> int:
+    serializer = getattr(transport, "serialized_envelope_size", None)
+    if callable(serializer):
+        raw_size = serializer(device_id, point)
+        if isinstance(raw_size, bool) or not isinstance(raw_size, int):
+            raise ValueError("serialized Telegram envelope size must be an integer")
+        size = raw_size
+    else:
+        size = (
+            len(
+                json.dumps(
+                    {"device_id": device_id, "point": point},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                    allow_nan=False,
+                ).encode("utf-8")
+            )
+            + 1
+        )
+    if size <= 0:
+        raise ValueError("serialized Telegram envelope size must be positive")
+    return size
+
+
+def _estimate_telegram_request_wire_bytes(
+    transport: TelegramTransport,
+    *,
+    device_id: str,
+    points: List[Dict[str, Any]],
+    batch: bool,
+) -> int:
+    """Conservatively estimate one Telegram request before spending its budget.
+
+    Batch documents are gzip-compressed in the transport. The estimate uses the
+    larger uncompressed JSONL size, adds a stored-deflate-block upper bound, and
+    then reserves fixed multipart/HTTP/TLS/headroom. Kernel interface counters
+    remain authoritative when available.
+    """
+
+    payload_bytes = sum(
+        _telegram_serialized_envelope_size(
+            transport,
+            device_id=device_id,
+            point=point,
+        )
+        for point in points
+    )
+    compression_headroom = 0
+    if batch:
+        block_count = max(1, (payload_bytes + _DEFLATE_STORED_BLOCK_BYTES - 1) // _DEFLATE_STORED_BLOCK_BYTES)
+        compression_headroom = 18 + (block_count * 5)
+    return payload_bytes + compression_headroom + _TELEGRAM_WIRE_FIXED_OVERHEAD_BYTES
+
+
+def _reserve_telegram_attempt(
+    callback: Optional[Callable[[List[Dict[str, Any]], int], None]],
+    points: List[Dict[str, Any]],
+    conservative_wire_bytes: int,
+) -> None:
+    if callback is None:
+        return
+    callback(points, conservative_wire_bytes)
+
+
+def _reconcile_telegram_attempt(
+    callback: Optional[Callable[[List[Dict[str, Any]], Any, int], None]],
+    points: List[Dict[str, Any]],
+    result: Any,
+    conservative_wire_bytes: int,
+) -> None:
+    if callback is None:
+        return
+    callback(points, result, conservative_wire_bytes)
+
+
+def _notify_telegram_delivery(
+    callback: Optional[Callable[[List[Dict[str, Any]], Any], None]],
+    points: List[Dict[str, Any]],
+    result: Any,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(points, result)
+    except Exception:
+        pass
+
+
+@dataclass(frozen=True)
+class TelegramPointDelivery:
+    attempted: bool
+    delivered: bool
+
+
+def _send_telegram_buffered_point(
+    *,
+    buf: SqliteBuffer,
+    transport: TelegramTransport,
+    device_id: str,
+    point: Dict[str, Any],
+    max_wire_bytes: int,
+    on_reserve: Optional[Callable[[List[Dict[str, Any]], int], None]] = None,
+    on_attempt: Optional[Callable[[List[Dict[str, Any]], Any, int], None]] = None,
+    on_delivery: Optional[Callable[[List[Dict[str, Any]], Any], None]] = None,
+) -> TelegramPointDelivery:
+    """Deliver one already-buffered urgent point without draining older rows."""
+
+    request_wire_bytes = _estimate_telegram_request_wire_bytes(
+        transport,
+        device_id=device_id,
+        points=[point],
+        batch=False,
+    )
+    if request_wire_bytes > max(0, int(max_wire_bytes)):
+        return TelegramPointDelivery(attempted=False, delivered=False)
+
+    _reserve_telegram_attempt(on_reserve, [point], request_wire_bytes)
+    result = transport.send(device_id, point)
+    _reconcile_telegram_attempt(on_attempt, [point], result, request_wire_bytes)
+    if result.delivered:
+        # This targeted path may use the callback to durably settle command
+        # ownership. Do not delete the point if that durable state update fails.
+        if on_delivery is not None:
+            on_delivery([point], result)
+        buf.delete(point["message_id"])
+        return TelegramPointDelivery(attempted=True, delivered=True)
+
+    if result.permanent:
+        if _write_telegram_deadletter(point, reason=result.reason):
+            buf.delete(point["message_id"])
+            print("[edgewatch-agent] dead-lettered one permanently undeliverable Telegram telemetry point")
+            return TelegramPointDelivery(attempted=True, delivered=False)
+        raise RuntimeError("could not persist permanently undeliverable Telegram point")
+    if result.retry_after_s is not None:
+        raise RateLimited(result.reason, retry_after_s=result.retry_after_s)
+    raise RuntimeError(result.reason)
+
+
+def _flush_telegram_buffer(
+    *,
+    buf: SqliteBuffer,
+    transport: TelegramTransport,
+    device_id: str,
+    on_point_sent: Optional[Callable[[Dict[str, Any], int], None]] = None,
+    on_reserve: Optional[Callable[[List[Dict[str, Any]], int], None]] = None,
+    on_attempt: Optional[Callable[[List[Dict[str, Any]], Any, int], None]] = None,
+    on_delivery: Optional[Callable[[List[Dict[str, Any]], Any], None]] = None,
+    force_immediate: bool = False,
+    max_wire_bytes: int | None = None,
+    max_requests: int | None = None,
+) -> bool:
+    """Drain a budget-bounded prefix of the durable Telegram outbox.
+
+    The delivery path removes a point only after Telegram confirms both an HTTP
+    success and an ``ok=true`` Bot API response. Failures leave it queued for a
+    later attempt. A byte or request bound stops cleanly with unsent rows still
+    queued; independent retention policy may still evict old rows to protect the
+    device.
+    """
+
+    config = getattr(transport, "config", None)
+    batch_enabled = bool(getattr(config, "batch_enabled", False))
+    batch_max_points = int(getattr(config, "batch_max_points", 1)) if batch_enabled else 1
+    batch_max_bytes = int(getattr(config, "batch_max_bytes", 1)) if batch_enabled else 1
+    batch_max_age_s = float(getattr(config, "batch_max_age_s", 0.0)) if batch_enabled else 0.0
+    remaining_wire_bytes = None if max_wire_bytes is None else max(0, int(max_wire_bytes))
+    request_limit = None if max_requests is None else max(0, int(max_requests))
+    requests_made = 0
+
+    while True:
+        if request_limit is not None and requests_made >= request_limit:
+            return True
+        if remaining_wire_bytes is not None and remaining_wire_bytes <= 0:
+            return True
+
+        queued = buf.dequeue_batch(limit=batch_max_points + (1 if batch_enabled else 0))
+        if not queued:
+            return True
+
+        if not batch_enabled:
+            selected = queued[:1]
+        else:
+            selected = []
+            selected_bytes = 0
+            for message in queued[:batch_max_points]:
+                try:
+                    point_bytes = _telegram_serialized_envelope_size(
+                        transport,
+                        device_id=device_id,
+                        point=message.payload,
+                    )
+                except (TypeError, ValueError):
+                    if _write_telegram_deadletter(
+                        message.payload, reason="telemetry envelope is not JSON serializable"
+                    ):
+                        buf.delete(message.message_id)
+                        print(
+                            "[edgewatch-agent] dead-lettered one permanently undeliverable Telegram telemetry point"
+                        )
+                        continue
+                    raise RuntimeError("could not persist permanently undeliverable Telegram point")
+                if selected and selected_bytes + point_bytes > batch_max_bytes:
+                    break
+                selected.append(message)
+                selected_bytes += point_bytes
+            if not selected:
+                continue
+
+        request_wire_bytes = _estimate_telegram_request_wire_bytes(
+            transport,
+            device_id=device_id,
+            points=[message.payload for message in selected],
+            batch=batch_enabled,
+        )
+        while remaining_wire_bytes is not None and selected and request_wire_bytes > remaining_wire_bytes:
+            selected.pop()
+            if selected:
+                request_wire_bytes = _estimate_telegram_request_wire_bytes(
+                    transport,
+                    device_id=device_id,
+                    points=[message.payload for message in selected],
+                    batch=batch_enabled,
+                )
+        if not selected:
+            return True
+
+        if batch_enabled:
+            selected_bytes = sum(
+                _telegram_serialized_envelope_size(
+                    transport,
+                    device_id=device_id,
+                    point=message.payload,
+                )
+                for message in selected
+            )
+            oldest_age_s = _queued_message_age_s(selected[0].created_at)
+            threshold_reached = (
+                len(selected) >= batch_max_points
+                or len(queued) > len(selected)
+                or selected_bytes >= batch_max_bytes
+                or oldest_age_s >= batch_max_age_s
+            )
+            if not force_immediate and not threshold_reached:
+                return True
+
+        points = [message.payload for message in selected]
+        _reserve_telegram_attempt(on_reserve, points, request_wire_bytes)
+        result = (
+            transport.send_batch(device_id, points) if batch_enabled else transport.send(device_id, points[0])
+        )
+        requests_made += 1
+        charged_wire_bytes = max(
+            request_wire_bytes,
+            int(getattr(result, "estimated_wire_bytes", 0)),
+            int(getattr(result, "document_bytes", result.bytes_sent)),
+        )
+        if remaining_wire_bytes is not None:
+            remaining_wire_bytes = max(0, remaining_wire_bytes - charged_wire_bytes)
+        _reconcile_telegram_attempt(on_attempt, points, result, request_wire_bytes)
+
+        if result.delivered:
+            _notify_telegram_delivery(on_delivery, points, result)
+            if on_delivery is None and on_point_sent is not None:
+                try:
+                    # Legacy hook semantics count document bytes once per request.
+                    on_point_sent(points[0], result.bytes_sent)
+                except Exception:
+                    pass
+            for message in selected:
+                buf.delete(message.message_id)
+            continue
+
+        if result.permanent:
+            if len(selected) > 1:
+                # Isolate a poison point or unexpectedly oversized compressed batch.
+                single_points = [selected[0].payload]
+                single_wire_bytes = _estimate_telegram_request_wire_bytes(
+                    transport,
+                    device_id=device_id,
+                    points=single_points,
+                    batch=False,
+                )
+                if request_limit is not None and requests_made >= request_limit:
+                    return True
+                if remaining_wire_bytes is not None and single_wire_bytes > remaining_wire_bytes:
+                    return True
+                _reserve_telegram_attempt(on_reserve, single_points, single_wire_bytes)
+                single_result = transport.send(device_id, selected[0].payload)
+                requests_made += 1
+                single_charged_wire_bytes = max(
+                    single_wire_bytes,
+                    int(getattr(single_result, "estimated_wire_bytes", 0)),
+                    int(getattr(single_result, "document_bytes", single_result.bytes_sent)),
+                )
+                if remaining_wire_bytes is not None:
+                    remaining_wire_bytes = max(
+                        0,
+                        remaining_wire_bytes - single_charged_wire_bytes,
+                    )
+                _reconcile_telegram_attempt(
+                    on_attempt,
+                    single_points,
+                    single_result,
+                    single_wire_bytes,
+                )
+                if single_result.delivered:
+                    _notify_telegram_delivery(on_delivery, single_points, single_result)
+                    buf.delete(selected[0].message_id)
+                    continue
+                result = single_result
+            if result.permanent and _write_telegram_deadletter(selected[0].payload, reason=result.reason):
+                buf.delete(selected[0].message_id)
+                print(
+                    "[edgewatch-agent] dead-lettered one permanently undeliverable Telegram telemetry point"
+                )
+                continue
+            if not result.permanent:
+                if result.retry_after_s is not None:
+                    raise RateLimited(result.reason, retry_after_s=result.retry_after_s)
+                raise RuntimeError(result.reason)
+            raise RuntimeError("could not persist permanently undeliverable Telegram point")
+
+        if result.retry_after_s is not None:
+            raise RateLimited(result.reason, retry_after_s=result.retry_after_s)
+        raise RuntimeError(result.reason)
+
+
+def _queued_message_age_s(created_at: str) -> float:
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return max(0.0, time.time() - created.timestamp())
+    except (TypeError, ValueError):
+        # Invalid queue metadata must not hold a durable point indefinitely.
+        return float("inf")
+
+
+def _write_telegram_deadletter(payload: Dict[str, Any], *, reason: str) -> bool:
+    raw_path = os.getenv("EDGEWATCH_DEADLETTER_PATH")
+    if not raw_path:
+        device_id = os.getenv("EDGEWATCH_DEVICE_ID", "device")
+        raw_path = f"./edgewatch_deadletter_{device_id}.jsonl"
+
+    try:
+        path = Path(raw_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": utcnow_iso(),
+            "transport": "telegram",
+            "reason": reason,
+            "payload": payload,
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        _fsync_directory(path.parent)
+        return True
+    except Exception:
+        # Never delete the active outbox row unless the durable handoff succeeded.
         return False
 
 
@@ -2053,6 +2630,13 @@ def _default_policy(device_id: str) -> DevicePolicy:
             "flow_rate_gpm": float(os.getenv("DELTA_FLOW_RATE_GPM", "0.5")),
             "battery_v": float(os.getenv("DELTA_BATTERY_V", "0.05")),
             "signal_rssi_dbm": float(os.getenv("DELTA_SIGNAL_RSSI_DBM", "2")),
+            "cellular_rsrp_dbm": float(os.getenv("DELTA_CELLULAR_RSRP_DBM", "2")),
+            "cellular_rsrq_db": float(os.getenv("DELTA_CELLULAR_RSRQ_DB", "1")),
+            "cellular_sinr_db": float(os.getenv("DELTA_CELLULAR_SINR_DB", "2")),
+            "cellular_bytes_sent_today": float(os.getenv("DELTA_CELLULAR_BYTES_SENT_TODAY", "262144")),
+            "cellular_bytes_received_today": float(
+                os.getenv("DELTA_CELLULAR_BYTES_RECEIVED_TODAY", "262144")
+            ),
         },
         alert_thresholds=alerts,
         cost_caps=cost_caps,
@@ -2076,7 +2660,14 @@ def _maybe_prune(buf: SqliteBuffer, policy: DevicePolicy) -> None:
 
 
 def _sleep(seconds: float) -> None:
-    time.sleep(max(1.0, float(seconds)))
+    remaining = max(1.0, float(seconds))
+    while remaining > 0.0:
+        started = time.monotonic()
+        time.sleep(min(2.0, remaining))
+        elapsed = max(0.0, time.monotonic() - started)
+        remaining -= elapsed
+        if _LOCAL_CONTROL_WAKE_CHECK is not None and _LOCAL_CONTROL_WAKE_CHECK():
+            return
 
 
 def _mark_point_recorded(state: AgentState, *, now: float, reason: str, alerts: set[str]) -> None:
@@ -2106,6 +2697,7 @@ def _mark_point_recorded(state: AgentState, *, now: float, reason: str, alerts: 
 
 
 def main() -> None:
+    global _LOCAL_CONTROL_WAKE_CHECK
     # Load repo-level .env (if present), then agent-local overrides.
     load_dotenv()
     load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -2113,6 +2705,12 @@ def main() -> None:
     api_url = os.getenv("EDGEWATCH_API_URL", "http://localhost:8082")
     device_id = os.getenv("EDGEWATCH_DEVICE_ID", "baxter-1")
     token = os.getenv("EDGEWATCH_DEVICE_TOKEN", "dev-device-token-001")
+
+    try:
+        transport_config = load_telegram_transport_config()
+    except TelegramTransportConfigError as exc:
+        raise SystemExit(f"[edgewatch-agent] invalid telemetry transport config: {exc}") from exc
+    is_api_transport = transport_config.transport == "api"
 
     buffer_path = os.getenv("BUFFER_DB_PATH", "./edgewatch_buffer.sqlite")
     buf = build_buffer_from_env(buffer_path)
@@ -2129,21 +2727,27 @@ def main() -> None:
         raise SystemExit(f"[edgewatch-agent] invalid cellular config: {exc}") from exc
 
     session = requests.Session()
+    telegram_transport = None if is_api_transport else TelegramTransport(transport_config, session=session)
 
-    cached: Optional[CachedPolicy] = load_cached_policy()
+    # Telegram-exclusive mode is locally managed. Do not load a stale cloud
+    # policy containing commands or settings that cannot be acknowledged.
+    cached: Optional[CachedPolicy] = load_cached_policy() if is_api_transport else None
     policy: DevicePolicy = cached.policy if cached else _default_policy(device_id)
 
-    next_policy_refresh_at = 0.0
+    next_policy_refresh_at = 0.0 if is_api_transport else float("inf")
     if cached:
         next_policy_refresh_at = cached.fetched_at + float(policy.cache_max_age_s)
 
     media_runtime = None
-    try:
-        media_runtime = build_media_runtime_from_env(device_id=device_id)
-    except MediaConfigError as exc:
-        print(f"[edgewatch-agent] media disabled: {exc}")
-    except Exception as exc:
-        print(f"[edgewatch-agent] media disabled due to setup error: {exc!r}")
+    if is_api_transport:
+        try:
+            media_runtime = build_media_runtime_from_env(device_id=device_id)
+        except MediaConfigError as exc:
+            print(f"[edgewatch-agent] media disabled: {exc}")
+        except Exception as exc:
+            print(f"[edgewatch-agent] media disabled due to setup error: {exc!r}")
+    elif _parse_bool_env("MEDIA_ENABLED", default=False):
+        print("[edgewatch-agent] media disabled: Telegram transport does not support media uploads")
 
     try:
         cost_cap_state = CostCapState.from_env(device_id=device_id)
@@ -2160,15 +2764,18 @@ def main() -> None:
     update_state_path = _update_state_path(device_id)
     procedure_state_path = _procedure_state_path(device_id)
     low_power_state_path = _low_power_state_path(device_id)
+    local_control_state = LocalControlState.from_env(device_id)
+    _LOCAL_CONTROL_WAKE_CHECK = local_control_state.has_pending_request
     last_applied_command_id, pending_ack_command_id = _load_command_state(command_state_path)
     wake_reason = _load_wake_reason(low_power_state_path)
 
     print(
-        "[edgewatch-agent] device_id=%s api=%s buffer=%s policy=%s sensors=%s media=%s cellular=%s "
+        "[edgewatch-agent] device_id=%s transport=%s api=%s buffer=%s policy=%s sensors=%s media=%s cellular=%s "
         "cost_caps=%s power_state=%s command_state=%s update_state=%s procedure_state=%s low_power_state=%s wake_reason=%s remote_shutdown=%s"
         % (
             device_id,
-            api_url,
+            transport_config.transport,
+            api_url if is_api_transport else "disabled",
             buffer_path,
             policy.policy_version,
             sensor_config.backend,
@@ -2184,11 +2791,22 @@ def main() -> None:
             "enabled" if allow_remote_shutdown else "disabled",
         )
     )
+    if not is_api_transport:
+        print(
+            "[edgewatch-agent] Telegram-exclusive mode: local policy active; "
+            "cloud commands, procedures, OTA reporting, and API media uploads are disabled"
+        )
 
     state = AgentState()
+    _write_agent_ready_receipt(
+        device_id=device_id,
+        transport=transport_config.transport,
+    )
 
     while True:
         now = time.time()
+        local_control = local_control_state.consume_for_agent(claim_owner=PROCESS_SESSION_ID)
+        local_request_failure = "request was not completed"
 
         (
             _preview_operation_mode,
@@ -2206,7 +2824,7 @@ def main() -> None:
 
         # Continuous devices refresh policy eagerly. Duty-cycled modes refresh on
         # the next network sync window later in the loop.
-        if preview_runtime_power_mode == "continuous" and now >= next_policy_refresh_at:
+        if is_api_transport and preview_runtime_power_mode == "continuous" and now >= next_policy_refresh_at:
             try:
                 pol, etag, max_age = fetch_device_policy(session, api_url=api_url, token=token, cached=cached)
                 if pol is not None:
@@ -2222,16 +2840,17 @@ def main() -> None:
                 print(f"[edgewatch-agent] policy fetch failed (using cached/default): {e!r}")
                 next_policy_refresh_at = time.time() + 60.0
 
-        pending_ack_command_id, state.last_command_ack_log_at = _maybe_ack_pending_command(
-            session=session,
-            api_url=api_url,
-            token=token,
-            pending_ack_command_id=pending_ack_command_id,
-            last_applied_command_id=last_applied_command_id,
-            command_state_path=command_state_path,
-            now_s=now,
-            last_log_at=state.last_command_ack_log_at,
-        )
+        if is_api_transport:
+            pending_ack_command_id, state.last_command_ack_log_at = _maybe_ack_pending_command(
+                session=session,
+                api_url=api_url,
+                token=token,
+                pending_ack_command_id=pending_ack_command_id,
+                last_applied_command_id=last_applied_command_id,
+                command_state_path=command_state_path,
+                now_s=now,
+                last_log_at=state.last_command_ack_log_at,
+            )
 
         (
             operation_mode,
@@ -2259,6 +2878,13 @@ def main() -> None:
                     requested_deep_sleep_backend,
                 )
             )
+
+        operation_mode, sleep_poll_interval_s, requested_runtime_power_mode = _apply_local_control_overrides(
+            local_control=local_control,
+            operation_mode=operation_mode,
+            sleep_poll_interval_s=sleep_poll_interval_s,
+            runtime_power_mode=requested_runtime_power_mode,
+        )
 
         runtime_power_mode, power_sleep_backend = _resolve_applied_runtime_mode(
             requested_mode=requested_runtime_power_mode,
@@ -2290,13 +2916,14 @@ def main() -> None:
             _sleep(5.0)
             continue
 
-        _maybe_run_pending_procedure_invocation(
-            session=session,
-            api_url=api_url,
-            token=token,
-            policy=policy,
-            procedure_state_path=procedure_state_path,
-        )
+        if is_api_transport:
+            _maybe_run_pending_procedure_invocation(
+                session=session,
+                api_url=api_url,
+                token=token,
+                policy=policy,
+                procedure_state_path=procedure_state_path,
+            )
 
         if state.disabled_latched:
             if now - state.last_disabled_log_at >= 300.0:
@@ -2327,6 +2954,14 @@ def main() -> None:
             cellular_metrics = cellular_monitor.read_metrics()
             if cellular_metrics:
                 metrics.update(cellular_metrics)
+                observed_sent = cellular_metrics.get("cellular_bytes_sent_today")
+                observe_sent = getattr(cost_cap_state, "observe_bytes_sent_today", None)
+                if (
+                    callable(observe_sent)
+                    and isinstance(observed_sent, (int, float))
+                    and not isinstance(observed_sent, bool)
+                ):
+                    observe_sent(int(observed_sent))
 
         power_eval = power_manager.evaluate(metrics=metrics, policy=policy.power_management)
         metrics.update(power_eval.telemetry_flags())
@@ -2335,23 +2970,258 @@ def main() -> None:
         metrics["wake_reason"] = wake_reason
         metrics["network_duty_cycled"] = runtime_power_mode in {"eco", "deep_sleep"}
 
-        _maybe_apply_pending_update_command(
-            session=session,
-            api_url=api_url,
-            token=token,
-            policy=policy,
-            update_state_path=update_state_path,
-            power_input_out_of_range=power_eval.power_input_out_of_range,
-            power_unsustainable=power_eval.power_unsustainable,
-            now_s=now,
-        )
+        if is_api_transport:
+            _maybe_apply_pending_update_command(
+                session=session,
+                api_url=api_url,
+                token=token,
+                policy=policy,
+                update_state_path=update_state_path,
+                power_input_out_of_range=power_eval.power_input_out_of_range,
+                power_unsustainable=power_eval.power_unsustainable,
+                now_s=now,
+            )
 
         current_state, current_alerts = _compute_state(metrics, state.last_alerts, policy)
         alert_transition = current_alerts != state.last_alerts
-        critical_active = "WATER_PRESSURE_LOW" in current_alerts
+        alert_delivery_muted = _local_alert_delivery_muted(
+            getattr(local_control, "alerts_muted_until", None),
+            now_utc=datetime.now(timezone.utc),
+        )
+        reportable_alert_transition, reportable_critical_active = _reportable_alert_state(
+            current_alerts=current_alerts,
+            previous_alerts=state.last_alerts,
+            delivery_muted=alert_delivery_muted,
+        )
+        metrics["alerts_muted"] = alert_delivery_muted
+        if alert_delivery_muted:
+            metrics["alerts_muted_until"] = local_control.alerts_muted_until
         heartbeat_only_mode = cost_cap_state.telemetry_heartbeat_only(policy.cost_caps)
         cost_cap_active = cost_cap_state.cost_cap_active(policy.cost_caps)
         power_saver_active = power_eval.power_saver_active
+
+        if local_control.sample_now or local_control.sync_now:
+            local_metrics = dict(metrics)
+            local_metrics.update(buf.metrics())
+            local_metrics["device_state"] = current_state
+            local_metrics.update(cost_cap_state.audit_metrics(policy.cost_caps))
+            local_points = _materialize_local_request_points(
+                state=local_control_state,
+                local_control=local_control,
+                device_id=device_id,
+                metrics=local_metrics,
+            )
+            _enqueue_local_request_points(buf=buf, points=local_points)
+            _maybe_prune(buf, policy)
+
+            # sample_now is applied as soon as its exact point is durable. sync_now
+            # remains pending until Telegram/API confirms that same message_id.
+            retained_request_ids = {
+                command_id
+                for command_id, point in local_points.items()
+                if buf.contains(str(point["message_id"]))
+            }
+            retained_sample_ids = tuple(
+                command_id
+                for command_id in local_control.sample_request_ids
+                if command_id in retained_request_ids
+            )
+            evicted_sample_ids = tuple(
+                command_id
+                for command_id in local_control.sample_request_ids
+                if command_id not in retained_request_ids
+            )
+            local_control_state.complete_requests(
+                retained_sample_ids,
+                {"sample_captured": True},
+            )
+            local_control_state.release_requests(
+                evicted_sample_ids,
+                "sample point was evicted by outbox retention before completion",
+            )
+            evicted_sync_ids = tuple(
+                command_id
+                for command_id in local_control.sync_request_ids
+                if command_id not in retained_request_ids
+            )
+            local_control_state.release_requests(
+                evicted_sync_ids,
+                "sync point was evicted by outbox retention before delivery",
+            )
+            pending_sync_ids = [
+                command_id
+                for command_id in local_control.sync_request_ids
+                if command_id in retained_request_ids
+            ]
+            if pending_sync_ids and (heartbeat_only_mode or now < state.next_network_attempt_at):
+                reason = (
+                    "network sync deferred by daily data cap"
+                    if heartbeat_only_mode
+                    else "network sync deferred by retry backoff"
+                )
+                local_control_state.release_requests(tuple(pending_sync_ids), reason)
+            elif pending_sync_ids:
+                completed_sync_ids: list[str] = []
+
+                def reserve_local_sync(
+                    _points: List[Dict[str, Any]],
+                    conservative_wire_bytes: int,
+                ) -> None:
+                    cost_cap_state.record_bytes_sent(conservative_wire_bytes)
+
+                def reconcile_local_sync(
+                    _points: List[Dict[str, Any]],
+                    result: Any,
+                    conservative_wire_bytes: int,
+                ) -> None:
+                    estimated_wire_bytes = int(getattr(result, "estimated_wire_bytes", 0))
+                    document_bytes = int(getattr(result, "document_bytes", result.bytes_sent))
+                    additional_bytes = (
+                        max(conservative_wire_bytes, estimated_wire_bytes, document_bytes)
+                        - conservative_wire_bytes
+                    )
+                    if additional_bytes > 0:
+                        cost_cap_state.record_bytes_sent(additional_bytes)
+
+                try:
+                    for command_id in pending_sync_ids:
+                        sync_point = local_points[command_id]
+                        if telegram_transport is not None:
+                            remaining_wire_bytes = cost_cap_state.remaining_telemetry_bytes(
+                                "local_request",
+                                policy.cost_caps,
+                            )
+
+                            def complete_local_sync(
+                                _points: List[Dict[str, Any]],
+                                _result: Any,
+                                *,
+                                request_id: str = command_id,
+                            ) -> None:
+                                local_control_state.complete_requests(
+                                    (request_id,),
+                                    {"network_synced": True},
+                                )
+
+                            delivery = _send_telegram_buffered_point(
+                                buf=buf,
+                                transport=telegram_transport,
+                                device_id=device_id,
+                                point=sync_point,
+                                max_wire_bytes=remaining_wire_bytes,
+                                on_reserve=reserve_local_sync,
+                                on_attempt=reconcile_local_sync,
+                                on_delivery=complete_local_sync,
+                            )
+                            if not delivery.delivered:
+                                break
+                        else:
+                            response = post_points(session, api_url, token, [sync_point])
+                            if not 200 <= response.status_code < 300:
+                                if response.status_code == 429:
+                                    retry_after = _parse_retry_after_seconds(response.headers)
+                                    raise RateLimited(
+                                        f"send failed: 429 {response.text[:200]}",
+                                        retry_after_s=retry_after,
+                                    )
+                                raise RuntimeError(
+                                    f"send failed: {response.status_code} {response.text[:200]}"
+                                )
+                            cost_cap_state.record_bytes_sent(_estimate_ingest_payload_bytes([sync_point]))
+                            local_control_state.complete_requests(
+                                (command_id,),
+                                {"network_synced": True},
+                            )
+                            buf.delete(sync_point["message_id"])
+                        completed_sync_ids.append(command_id)
+                        # Any exact delivery proves the link recovered. Reset the
+                        # prior failure history before attempting another owned
+                        # sync point so a later failure starts a fresh backoff.
+                        state.consecutive_failures = 0
+                        state.next_network_attempt_at = 0.0
+                        state.last_network_sync_at = now
+                except Exception as exc:
+                    local_request_failure = f"network delivery failed: {type(exc).__name__}"
+                    retry_after_s = exc.retry_after_s if isinstance(exc, RateLimited) else None
+                    state.consecutive_failures += 1
+                    base_backoff = min(
+                        policy.reporting.backoff_max_s,
+                        policy.reporting.backoff_initial_s * (2 ** min(state.consecutive_failures, 8)),
+                    )
+                    if retry_after_s is not None:
+                        base_backoff = max(base_backoff, float(retry_after_s))
+                    state.next_network_attempt_at = time.time() + min(
+                        policy.reporting.backoff_max_s,
+                        float(base_backoff) * random.uniform(0.8, 1.2),
+                    )
+                incomplete_sync_ids = tuple(
+                    command_id for command_id in pending_sync_ids if command_id not in completed_sync_ids
+                )
+                local_control_state.release_requests(
+                    incomplete_sync_ids,
+                    local_request_failure,
+                )
+                all_syncs_completed = bool(completed_sync_ids) and not incomplete_sync_ids
+                if telegram_transport is not None and all_syncs_completed:
+                    routine_remaining = cost_cap_state.routine_bytes_remaining(policy.cost_caps)
+                    if routine_remaining > 0 and buf.count() > 0:
+                        try:
+                            _flush_telegram_buffer(
+                                buf=buf,
+                                transport=telegram_transport,
+                                device_id=device_id,
+                                on_reserve=reserve_local_sync,
+                                on_attempt=reconcile_local_sync,
+                                force_immediate=True,
+                                max_wire_bytes=routine_remaining,
+                            )
+                        except Exception as exc:
+                            retry_after_s = exc.retry_after_s if isinstance(exc, RateLimited) else None
+                            state.consecutive_failures += 1
+                            base_backoff = min(
+                                policy.reporting.backoff_max_s,
+                                policy.reporting.backoff_initial_s
+                                * (2 ** min(state.consecutive_failures, 8)),
+                            )
+                            if retry_after_s is not None:
+                                base_backoff = max(base_backoff, float(retry_after_s))
+                            state.next_network_attempt_at = time.time() + min(
+                                policy.reporting.backoff_max_s,
+                                float(base_backoff) * random.uniform(0.8, 1.2),
+                            )
+                            print(f"[edgewatch-agent] post-sync backlog drain failed: {type(exc).__name__}")
+                elif is_api_transport and all_syncs_completed:
+                    routine_remaining = cost_cap_state.routine_bytes_remaining(policy.cost_caps)
+                    if routine_remaining > 0 and buf.count() > 0:
+                        try:
+                            drained = _flush_buffer(
+                                session=session,
+                                buf=buf,
+                                api_url=api_url,
+                                token=token,
+                                max_points_per_batch=policy.reporting.max_points_per_batch,
+                                on_batch_sent=lambda points: cost_cap_state.record_bytes_sent(
+                                    _estimate_ingest_payload_bytes(points)
+                                ),
+                                max_payload_bytes=routine_remaining,
+                            )
+                            if not drained:
+                                raise RuntimeError("API post-sync backlog drain failed")
+                        except Exception as exc:
+                            retry_after_s = exc.retry_after_s if isinstance(exc, RateLimited) else None
+                            state.consecutive_failures += 1
+                            base_backoff = min(
+                                policy.reporting.backoff_max_s,
+                                policy.reporting.backoff_initial_s
+                                * (2 ** min(state.consecutive_failures, 8)),
+                            )
+                            if retry_after_s is not None:
+                                base_backoff = max(base_backoff, float(retry_after_s))
+                            state.next_network_attempt_at = time.time() + min(
+                                policy.reporting.backoff_max_s,
+                                float(base_backoff) * random.uniform(0.8, 1.2),
+                            )
+                            print(f"[edgewatch-agent] post-sync backlog drain failed: {type(exc).__name__}")
 
         if power_saver_active != state.last_power_saver_active:
             print(
@@ -2384,7 +3254,7 @@ def main() -> None:
         # Determine sampling interval for the next loop.
         sample_s, heartbeat_interval_s = _resolve_runtime_cadence(
             policy=policy,
-            critical_active=critical_active,
+            critical_active=reportable_critical_active,
             power_saver_active=power_saver_active,
             operation_mode=operation_mode,
             sleep_poll_interval_s=sleep_poll_interval_s,
@@ -2398,14 +3268,25 @@ def main() -> None:
             if state.last_state == "UNKNOWN" and not state.last_metrics_snapshot:
                 send_reason = "startup"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
-            elif alert_transition:
+            elif reportable_alert_transition:
                 send_reason = "state_change" if current_state != state.last_state else "alert_change"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
             elif now - heartbeat_reference_at >= heartbeat_interval_s:
                 send_reason = "heartbeat"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
         elif heartbeat_only_mode:
-            if now - heartbeat_reference_at >= heartbeat_interval_s:
+            if state.last_state == "UNKNOWN" and not state.last_metrics_snapshot:
+                send_reason = "startup"
+                payload_metrics = _minimal_heartbeat_metrics(metrics)
+            elif reportable_alert_transition:
+                send_reason = "state_change" if current_state != state.last_state else "alert_change"
+                payload_metrics = _minimal_heartbeat_metrics(metrics)
+            elif reportable_critical_active and (
+                now - state.last_alert_snapshot_at >= policy.reporting.alert_report_interval_s
+            ):
+                send_reason = "alert_snapshot"
+                payload_metrics = _minimal_heartbeat_metrics(metrics)
+            elif now - heartbeat_reference_at >= heartbeat_interval_s:
                 send_reason = "heartbeat"
                 payload_metrics = _minimal_heartbeat_metrics(metrics)
         else:
@@ -2413,7 +3294,7 @@ def main() -> None:
                 if state.last_state == "UNKNOWN" and not state.last_metrics_snapshot:
                     send_reason = "startup"
                     payload_metrics = dict(metrics)
-                elif alert_transition:
+                elif reportable_alert_transition:
                     send_reason = "state_change" if current_state != state.last_state else "alert_change"
                     payload_metrics = dict(metrics)
                 elif now - heartbeat_reference_at >= heartbeat_interval_s:
@@ -2426,13 +3307,13 @@ def main() -> None:
                 payload_metrics = dict(metrics)
 
             # Immediate send on alert transitions (including transitions between different alert sets).
-            elif alert_transition:
+            elif reportable_alert_transition:
                 send_reason = "state_change" if current_state != state.last_state else "alert_change"
                 payload_metrics = dict(metrics)
 
             else:
                 # Periodic snapshot while in critical alert state
-                if critical_active and (
+                if reportable_critical_active and (
                     now - state.last_alert_snapshot_at >= policy.reporting.alert_report_interval_s
                 ):
                     send_reason = "alert_snapshot"
@@ -2470,26 +3351,36 @@ def main() -> None:
             payload_metrics.update(cost_cap_state.audit_metrics(policy.cost_caps))
 
             point = make_point(payload_metrics)
-
             # Mark schedules immediately (whether we send now or buffer).
             _mark_point_recorded(state, now=now, reason=send_reason, alerts=current_alerts)
 
             # Update local baseline immediately; even if offline we buffer the point.
             state.last_metrics_snapshot.update(baseline_update)
 
-            if low_power_active and not low_power_sync_requested:
-                buf.enqueue(point["message_id"], point, point["ts"])
+            local_request_cost_cap_deferred = send_reason == "local_request" and heartbeat_only_mode
+            if local_request_cost_cap_deferred:
+                if not buf.enqueue(point["message_id"], point, point["ts"]):
+                    raise RuntimeError("durable buffer enqueue failed")
+                local_request_failure = "network sync deferred by daily data cap"
+                _maybe_prune(buf, policy)
+                print(f"[edgewatch-agent] local request buffered due to cost cap queue={buf.count()}")
+            elif low_power_active and not low_power_sync_requested:
+                if not buf.enqueue(point["message_id"], point, point["ts"]):
+                    raise RuntimeError("durable buffer enqueue failed")
+                local_request_failure = "network sync deferred by duty cycle"
                 _maybe_prune(buf, policy)
                 print(
                     f"[edgewatch-agent] network duty cycle active -> buffered ({send_reason}) queue={buf.count()}"
                 )
             elif now < state.next_network_attempt_at:
-                buf.enqueue(point["message_id"], point, point["ts"])
+                if not buf.enqueue(point["message_id"], point, point["ts"]):
+                    raise RuntimeError("durable buffer enqueue failed")
+                local_request_failure = "network sync deferred by retry backoff"
                 _maybe_prune(buf, policy)
                 print(f"[edgewatch-agent] backoff active -> buffered ({send_reason}) queue={buf.count()}")
             else:
                 try:
-                    if low_power_sync_requested:
+                    if is_api_transport and low_power_sync_requested:
                         try:
                             pol, etag, max_age = fetch_device_policy(
                                 session,
@@ -2508,12 +3399,97 @@ def main() -> None:
                             print(f"[edgewatch-agent] low-power sync policy fetch failed: {exc!r}")
 
                     current_point_buffered = False
+                    telegram_delivery_occurred = False
 
                     def _record_sent(points: List[Dict[str, Any]]) -> None:
                         cost_cap_state.record_bytes_sent(_estimate_ingest_payload_bytes(points))
 
-                    if low_power_active:
-                        buf.enqueue(point["message_id"], point, point["ts"])
+                    def _reserve_telegram_bytes(
+                        _points: List[Dict[str, Any]],
+                        conservative_wire_bytes: int,
+                    ) -> None:
+                        # Persist before the network call. A failed/ambiguous request still
+                        # spent data and must not regain its budget after a restart.
+                        cost_cap_state.record_bytes_sent(conservative_wire_bytes)
+
+                    def _reconcile_telegram_bytes(
+                        _points: List[Dict[str, Any]],
+                        result: Any,
+                        conservative_wire_bytes: int,
+                    ) -> None:
+                        estimated_wire_bytes = int(getattr(result, "estimated_wire_bytes", 0))
+                        document_bytes = int(getattr(result, "document_bytes", result.bytes_sent))
+                        additional_bytes = (
+                            max(conservative_wire_bytes, estimated_wire_bytes, document_bytes)
+                            - conservative_wire_bytes
+                        )
+                        if additional_bytes > 0:
+                            cost_cap_state.record_bytes_sent(additional_bytes)
+
+                    def _record_telegram_delivery(_points: List[Dict[str, Any]], _result: Any) -> None:
+                        nonlocal telegram_delivery_occurred
+                        telegram_delivery_occurred = True
+
+                    if telegram_transport is not None:
+                        if not buf.enqueue(point["message_id"], point, point["ts"]):
+                            raise RuntimeError("durable buffer enqueue failed")
+                        current_point_buffered = True
+                        _maybe_prune(buf, policy)
+                        remaining_wire_bytes = cost_cap_state.remaining_telemetry_bytes(
+                            send_reason,
+                            policy.cost_caps,
+                        )
+                        if send_reason in URGENT_TELEMETRY_REASONS:
+                            urgent_result = _send_telegram_buffered_point(
+                                buf=buf,
+                                transport=telegram_transport,
+                                device_id=device_id,
+                                point=point,
+                                max_wire_bytes=remaining_wire_bytes,
+                                on_reserve=_reserve_telegram_bytes,
+                                on_attempt=_reconcile_telegram_bytes,
+                                on_delivery=_record_telegram_delivery,
+                            )
+                            if not urgent_result.attempted:
+                                print(
+                                    "[edgewatch-agent] urgent Telegram telemetry retained: "
+                                    "daily urgent byte reserve exhausted"
+                                )
+                            elif urgent_result.delivered:
+                                # Recover at most one independently bounded backlog request.
+                                # At the routine cap this is zero, so a heartbeat/alert never
+                                # drains older routine rows by consuming the urgent reserve.
+                                routine_remaining = cost_cap_state.routine_bytes_remaining(policy.cost_caps)
+                                if routine_remaining > 0 and buf.count() > 0:
+                                    _flush_telegram_buffer(
+                                        buf=buf,
+                                        transport=telegram_transport,
+                                        device_id=device_id,
+                                        on_reserve=_reserve_telegram_bytes,
+                                        on_attempt=_reconcile_telegram_bytes,
+                                        on_delivery=_record_telegram_delivery,
+                                        force_immediate=True,
+                                        max_wire_bytes=routine_remaining,
+                                        max_requests=1,
+                                    )
+                        else:
+                            ok = _flush_telegram_buffer(
+                                buf=buf,
+                                transport=telegram_transport,
+                                device_id=device_id,
+                                on_reserve=_reserve_telegram_bytes,
+                                on_attempt=_reconcile_telegram_bytes,
+                                on_delivery=_record_telegram_delivery,
+                                force_immediate=_telegram_force_immediate(
+                                    send_reason=send_reason,
+                                ),
+                                max_wire_bytes=remaining_wire_bytes,
+                            )
+                            if not ok:
+                                raise RuntimeError("Telegram buffer flush failed")
+                    elif low_power_active:
+                        if not buf.enqueue(point["message_id"], point, point["ts"]):
+                            raise RuntimeError("durable buffer enqueue failed")
                         current_point_buffered = True
                         _maybe_prune(buf, policy)
                         ok = _flush_buffer(
@@ -2539,7 +3515,7 @@ def main() -> None:
                         if not ok:
                             raise RuntimeError("buffer flush failed")
 
-                    if not low_power_active:
+                    if is_api_transport and not low_power_active:
                         resp = post_points(session, api_url, token, [point])
                         if 200 <= resp.status_code < 300:
                             _record_sent([point])
@@ -2549,8 +3525,13 @@ def main() -> None:
                                 raise RateLimited(f"send failed: 429 {resp.text[:200]}", retry_after_s=ra)
                             raise RuntimeError(f"send failed: {resp.status_code} {resp.text[:200]}")
 
-                    state.last_network_sync_at = now
-                    if low_power_active:
+                    if is_api_transport or telegram_delivery_occurred:
+                        state.last_network_sync_at = now
+                    if telegram_transport is not None and not telegram_delivery_occurred:
+                        print(
+                            f"[edgewatch-agent] batched locally ({send_reason}) state={current_state} alerts={sorted(current_alerts)} queue={buf.count()}"
+                        )
+                    elif low_power_active:
                         print(
                             f"[edgewatch-agent] synced ({send_reason}) state={current_state} alerts={sorted(current_alerts)} queue={buf.count()}"
                         )
@@ -2563,9 +3544,11 @@ def main() -> None:
                     state.next_network_attempt_at = 0.0
 
                 except Exception as e:
-                    if not low_power_active or not current_point_buffered:
-                        buf.enqueue(point["message_id"], point, point["ts"])
+                    if not current_point_buffered:
+                        if not buf.enqueue(point["message_id"], point, point["ts"]):
+                            raise RuntimeError("durable buffer enqueue failed") from e
                     _maybe_prune(buf, policy)
+                    local_request_failure = f"network delivery failed: {type(e).__name__}"
 
                     retry_after_s = e.retry_after_s if isinstance(e, RateLimited) else None
 
@@ -2654,7 +3637,7 @@ def main() -> None:
             try:
                 captured_asset = None
                 if cost_cap_state.allow_snapshot_capture(policy.cost_caps):
-                    if alert_transition:
+                    if reportable_alert_transition:
                         captured_asset = media_runtime.maybe_capture_alert_transition(now_s=time.time())
                     if captured_asset is None:
                         captured_asset = media_runtime.maybe_capture_scheduled(now_s=time.time())

@@ -13,16 +13,15 @@
 3) Use the harness before finalizing work:
 
 ```bash
-python scripts/harness.py lint
-python scripts/harness.py typecheck
-python scripts/harness.py test
+make check
 ```
 
 4) For local ops + demos, use the Makefile:
 
 ```bash
 make doctor
-make up
+make setup
+make run
 make demo-device
 make simulate
 ```

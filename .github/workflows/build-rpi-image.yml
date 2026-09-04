@@ -1,0 +1,87 @@
+name: Build Raspberry Pi fleet image
+
+on:
+  pull_request:
+    paths:
+      - "agent/**"
+      - "contracts/**"
+      - "scripts/rpi_bootstrap.py"
+      - "scripts/ota/**"
+      - "deploy/rpi/edgewatch-firstboot.service"
+      - "deploy/rpi/image/**"
+      - ".github/workflows/build-rpi-image.yml"
+      - "tests/test_rpi_image_contract.py"
+  workflow_dispatch:
+    inputs:
+      device:
+        description: Raspberry Pi device layer
+        required: true
+        default: rpizero2w
+        type: choice
+        options:
+          - rpizero2w
+          - rpi3
+          - rpi4
+          - rpi5
+      image_version:
+        description: Optional release version (defaults to source commit)
+        required: false
+        type: string
+      profile:
+        description: EdgeWatch runtime profile
+        required: true
+        default: standalone
+        type: choice
+        options:
+          - standalone
+          - gateway
+          - camera-satellite
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Validate image build contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv run --locked pytest -q tests/test_rpi_image_contract.py
+
+  build:
+    name: Build ARM64 fleet image
+    if: github.event_name == 'workflow_dispatch'
+    needs: contract
+    runs-on: [self-hosted, Linux, ARM64, edgewatch-image-builder]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build pinned image
+        env:
+          DEVICE_LAYER: ${{ inputs.device }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+          IMAGE_PROFILE: ${{ inputs.profile }}
+        run: |
+          args=(--install-deps --device "$DEVICE_LAYER" --profile "$IMAGE_PROFILE")
+          if [[ -n "$IMAGE_VERSION" ]]; then
+            args+=(--image-version "$IMAGE_VERSION")
+          fi
+          deploy/rpi/image/build.sh "${args[@]}"
+      - name: Upload image, checksum, and manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: edgewatch-${{ inputs.profile }}-${{ inputs.device }}-${{ github.sha }}
+          path: |
+            dist/rpi-image/*.img.xz
+            dist/rpi-image/*.img.xz.sha256
+            dist/rpi-image/*.manifest.json
+          if-no-files-found: error
+          retention-days: 30

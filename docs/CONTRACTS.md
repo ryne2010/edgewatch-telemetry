@@ -104,6 +104,163 @@ These are intentionally unversioned:
 
 - `POST /api/v1/internal/pubsub/push` — Pub/Sub push worker endpoint (enabled when `INGEST_PIPELINE_MODE=pubsub`)
 
+### Device agent delivery modes
+
+- `EDGEWATCH_TELEMETRY_TRANSPORT=api` is the default and preserves all canonical
+  EdgeWatch API behavior.
+- `EDGEWATCH_TELEMETRY_TRANSPORT=telegram` is exclusive: the agent must not call
+  EdgeWatch policy, ingest, command, procedure, update, or media endpoints.
+- Telegram mode uses local fallback-policy configuration and sends complete
+  telemetry envelopes, including stable `message_id` values, either as one JSON
+  document or as an ordered deterministic gzip JSONL batch.
+- SQLite is the durable outbox for both modes. The Telegram delivery path removes
+  included rows only after an HTTP success whose Bot API payload contains
+  `ok=true`.
+- Bounded-retention controls are independent safety limits. Maximum age, point
+  count, and SQLite disk quota may evict the oldest undelivered rows; those
+  evictions must remain observable through logs and queue-depth/database-size
+  metrics, with quota evictions counted by `buffer_evictions_total`.
+- Telegram delivery is at least once; consumers identify possible retry
+  duplicates by `device_id` plus `message_id`.
+- A locally detected permanently undeliverable point (including a document over
+  Telegram's 50 MB limit) must be durably written to `EDGEWATCH_DEADLETTER_PATH`
+  before it is removed from the active outbox; later valid rows must remain
+  deliverable.
+- This exclusive telemetry setting disables EdgeWatch API calls from the agent,
+  but does not prohibit the separate external Telegram fleet controller from
+  delivering the narrower typed SSH control and signed local-OTA protocol below.
+  The telemetry bot/transport itself never accepts control commands.
+
+### Telegram fleet-control protocol
+
+This is a local operator protocol, not a new HTTP API surface.
+
+- One supervised controller is the sole consumer of a dedicated control bot.
+  The control-bot token must never be installed on a device or reused as the
+  outbound telemetry credential.
+- Telegram authorization uses quoted numeric chat and user IDs, plus an optional
+  numeric topic ID. Usernames and display names are never authorization keys.
+- Roles are monotonic: `viewer < operator < admin`. Non-admin users require
+  explicit fleet scope; every request is checked against chat, actor, fleet, and
+  topic before acceptance and again before confirmed fleet dispatch.
+- The only recognized operation families are `/device`, `/fleet`, and `/ota`.
+  Allowed device operations are:
+  - viewer: status, health, network, power, queue, version, OTA status;
+  - operator: sample/sync now, active/sleep mode, continuous/eco power,
+    alert mute/unmute, agent restart;
+  - admin: reboot, bounded deep sleep with an explicit `60s..365d` duration,
+    OTA stage/canary/promote/abort;
+  - guarded: single-device shutdown only when controller and device guards are
+    both enabled.
+- Alert-mute expiry must be RFC3339 UTC ending in `Z`. Deep-sleep duration must
+  use seconds, minutes, hours, or days and resolve to `60s..365d`.
+- Fleet shutdown, arbitrary shell, raw modem commands, arbitrary file or
+  environment access, credential display, user-provided artifact URLs, and
+  destructive data operations are unsupported for every role.
+- Every fleet operation, including read-only work, must persist its ordered
+  targets and frozen concurrency, attempt, timeout, backoff, and maximum-duration
+  policy before dispatch. Mutating fleet operations also persist an immutable
+  review preview containing target IDs, exclusions, canaries, expiry, and hash.
+  Confirmation is one-use, actor/chat/topic-bound, re-authorized before it
+  queues dispatch, and expires after `120s` by default.
+- The complete preview must remain reviewable even when it exceeds one Telegram
+  message. Pages must stay within Telegram's message limit without truncating
+  target/exclusion detail. Preview pages form a durable ordered reply chain;
+  page `n+1`, including the confirmation page, is ineligible for delivery until
+  page `n` is durably marked sent. Dispatch uses the persisted preview policy
+  (worker bound, attempts, per-attempt timeout, backoff, and maximum duration),
+  not a policy recomputed after confirmation.
+- Controller updates, commands, per-target rows, confirmations, OTA deployment
+  snapshots, audit records, and outbound replies are persisted in SQLite.
+  Telegram update handling only persists/queues device work. A separate
+  supervised worker claims commands under exclusive expiring leases and
+  dispatches bounded waves, renewing its lease and checking expiry/abort state
+  between waves. Expired leases are reclaimable after restart. Terminal command
+  state and its deduplicated completion reply are committed atomically; Telegram
+  reply retry state remains independent of device work state.
+- Each device receives exactly one versioned typed envelope containing
+  `version`, `command_id`, `device_id`, `issued_at`, `expires_at`, `type`, and
+  `args`; unknown or missing fields fail closed.
+- Commands expire before dispatch. The device helper persists an applied-command
+  ledger and returns the original result for an identical replay. Reusing a
+  command ID with different input is rejected.
+- `sample_now` and `sync_now` are durably accepted local requests before they are
+  applied. `accepted` means pending/claimed device work; only a durable sample or
+  successful sync produces `applied`. Failed/stale claims return to pending,
+  and the controller persists accepted target state for restart recovery.
+- Direct and Spacebridge dispatch require pinned device host keys. Disabling
+  host-key checking, requesting a PTY, forwarding an agent, or invoking a
+  caller-selected remote program is not supported.
+- The frozen Spacebridge maximum-duration/expiry budget includes the tunnel
+  connection timeout, device command timeout, four-second tunnel cleanup
+  allowance, retry backoff, and the number of bounded dispatch waves.
+- The controller SSH key is distinct from the operator SSH key and is constrained
+  by an OpenSSH forced command to the root-owned typed helper.
+
+### Telegram OTA protocol
+
+- Telegram supplies only a release alias found in the controller's local
+  catalog. Generated catalogs use the exact Git tag as the release key and no
+  alias; aliases require a separately reviewed catalog change. The resolved
+  immutable manifest carries artifact type, absolute HTTPS URI, size, SHA-256,
+  RSA/SHA-256 artifact signature, signature key ID, version identity, the
+  mandatory canonical manifest signature, the mandatory top-level
+  `runtime_dependency_sha256`, and compatibility metadata.
+- OTA stage preview persists that complete signed manifest and its immutable
+  identity in the confirmed command, and renders the version, Git tag, commit,
+  artifact digest, dependency digest, and manifest identity for review. Later
+  catalog or alias changes must not alter a confirmed deployment.
+- Production artifact URIs are HTTPS-only. Local `file://` artifacts are
+  permitted solely by an explicit test-only construction path.
+- `manifest_signature` is mandatory and covers canonical ASCII JSON formed by
+  removing only `manifest_signature` and serializing the remaining manifest
+  with sorted keys and compact separators. The device verifies it before
+  compatibility, download, extraction, or apply.
+- `compatibility` is closed and contains exactly nine required fields:
+  `schema_version`, `hardware_models`, `release_channel`,
+  `minimum_python_version`, `minimum_runtime_schema`, `minimum_ota_schema`,
+  `requires_stable_power`, `requires_apply_enabled`, and `minimum_free_bytes`.
+  Missing or unknown fields fail closed.
+- Unsigned releases, `none` signature schemes, unknown aliases, malformed
+  manifests, missing trust anchors, incompatible releases, and digest/signature
+  failures fail closed.
+- The release builder must resolve the exact `refs/tags/<git_tag>^{commit}` and
+  require that commit, the supplied `commit_sha`, and source worktree `HEAD` to
+  match. This applies to annotated and lightweight tags and direct builder use.
+- For an application bundle, signed `runtime_dependency_sha256` is the SHA-256
+  of `agent/requirements.txt` and must match the installed runtime dependency
+  baseline. Application OTA is code-only; dependency changes require a new
+  base/system image. The current system-image OTA path remains unqualified.
+- `stage` verifies and prepares every frozen target without activation. All
+  frozen targets must stage successfully before `canary`.
+- Fleet OTA `status` reads the durable controller snapshot and does not fan out
+  a read to every target.
+- `canary` applies exactly the fleet's configured canary IDs. `promote` advances
+  exactly one configured rollout tranche after its health/failure/defer gates
+  pass. `abort` stops undispatched work but does not claim to roll back devices
+  that already applied a release.
+- Application-bundle activation atomically changes the stable current symlink,
+  restarts the agent, and requires a fresh stable agent-owned readiness receipt.
+  A durable apply journal records the original and intended targets plus the
+  activation phase before the symlink changes, so restart recovery preserves
+  the original rollback target until active state and command outcome are
+  committed. Failed readiness restores and restarts the previous release.
+  Before the staging rename, extracted files and directories are fsynced; the
+  parent directory is fsynced before and after the atomic rename.
+- A Pi release requiring stable power must have a fresh, healthy durable power
+  evaluation. When its evidence is `none`, a successful
+  `vcgencmd get_throttled` result of exactly `throttled=0x0` is also required.
+  Missing, stale, malformed, or unhealthy evidence fails closed.
+- Apply is disabled by default (`EDGEWATCH_ENABLE_OTA_APPLY=0`) for every
+  Telegram update type. Staging may succeed while activation remains rejected.
+- Explicit transient OTA failures are retried under the persisted bounded
+  dispatch policy with the same stable command ID and are not committed to the
+  device replay ledgers. Trust, validation, compatibility, digest, and signature
+  failures are terminal.
+- System-image application is unqualified for production and remains disabled
+  until real-device reboot, boot-health, and bad-release rollback validation is
+  complete. Application-bundle qualification does not qualify system-image OTA.
+
 ### Device agent payload contract
 
 A telemetry point includes:
@@ -127,6 +284,38 @@ Power-management telemetry (additive):
 - `metrics.power_sleep_backend` (`none|pi5_rtc|external_supervisor`)
 - `metrics.wake_reason` (`scheduled|manual|cold_boot|unknown`)
 - `metrics.network_duty_cycled` (boolean)
+
+`network_duty_cycled=true` means routine application transmissions are buffered
+between sync windows. It does not assert that the cellular modem or bearer was
+powered down or disconnected.
+
+Gateway-reconstructed camera-satellite telemetry is additive and includes:
+
+- `lorawan_message_type` (`telemetry|health|event`)
+- `lorawan_sequence` (unsigned v1 frame sequence)
+- `lorawan_dev_eui` (lowercase 16-hex closed-inventory identity)
+- `equipment_state` (`running|stopped|fault|unknown`)
+- `visual_confidence`, `audio_anomaly_score` (numbers within `0..1`)
+- `battery_v` and boolean power/health flags
+- `model_version_digest` (16 lowercase hex characters on ordinary frames)
+- `maintenance_command_token` (16 lowercase hex characters only on a
+  `maintenance_ready` receipt; it replaces the model digest in that frame)
+
+The LoRaWAN v1 frame is exact-size/versioned and rejects unknown enums/flag
+bits, invalid ranges, CRC mismatch, truncation, and extension. The gateway
+derives `message_id` from the exact `(DevEUI, frame bytes)` so ChirpStack replay
+and MQTT redelivery preserve idempotency.
+
+The v1 radio downlink defines only `maintenance` wake. It carries a stable
+command-token digest, expiry, nonce, bounded readiness timeout, and truncated
+HMAC-SHA256 under the per-device wake key. A readiness uplink echoes the exact
+command-token digest, so a stale/replayed readiness frame cannot unlock a newer
+maintenance request. Expired, overlong-future, wrong-key, wrong-port, and
+unknown-operation downlinks fail closed in the shipped decoder. The satellite
+MCU must durably reject a previously accepted `(command-token, nonce)` before
+energizing the maintenance rail; MCU/radio firmware is a pilot qualification
+input and is not shipped by this repository. LoRaWAN does not carry media, SSH,
+OTA artifacts, or arbitrary device-control payloads.
 
 A request includes:
 - `points: TelemetryPoint[]`
@@ -167,6 +356,28 @@ A request includes:
 4b) **Microphone offline lifecycle**
 - A `MICROPHONE_OFFLINE` alert is opened after `microphone_level_db` stays below threshold for
   `microphone_offline_open_consecutive_samples` (default `2`).
+
+4c) **Camera satellite alert promotion**
+- Shadow mode cannot emit a live inference alert.
+- Live promotion requires evidence at or above `0.95` held-out alert precision
+  and at or below one false alert per device-day.
+- `unknown` is preferred over an ambiguous, conflicting, or uncorroborated
+  equipment-state guess.
+- Event/daily evidence is local-only, bounded by 30 days and configured bytes;
+  readiness checks create no evidence and request no shutdown.
+
+4d) **Gateway power/radio qualification**
+- `observe` LTE scheduling is never reported as electrical energy savings.
+- Production LTE power mode requires fixed root-owned on/off units, a bound
+  cellular data-path probe, and 100 successful cycles with Pi throttle flags
+  exactly `0x0`.
+- A production radio gateway is healthy only when the configured adapter digest
+  matches and a fresh status for the current supervised instance proves both
+  concentrator detection and bridge connectivity.
+- Battery/solar sizing uses measured P95 daily energy. The no-camera P95 average
+  must be at most `5 W`; seven-day nameplate energy divides by `0.8` depth of
+  discharge, cold derating, and conversion efficiency, while minimum daily
+  solar generation is at least `1.5x` the P95 daily load.
 - When `microphone_level_db` recovers to or above threshold for
   `microphone_offline_resolve_consecutive_samples` (default `1`), the alert resolves and
   `MICROPHONE_ONLINE` is emitted.
@@ -186,10 +397,25 @@ A request includes:
   - `max_bytes_per_day`
   - `max_snapshots_per_day`
   - `max_media_uploads_per_day`
+- `max_bytes_per_day` is the routine telemetry budget. A device-local,
+  separately bounded urgent reserve may carry startup, heartbeat, state/alert
+  transition, and alert snapshot telemetry after routine traffic stops.
+- Telegram delivery must enforce the applicable remaining budget with a
+  conservative estimate before every request/batch. A request that does not fit
+  stays in the durable outbox. Every attempted request, including a failed
+  attempt, consumes at least its conservative estimate from the daily counter.
+- Current urgent Telegram telemetry must be deliverable without draining older
+  routine rows. Any heartbeat-triggered backlog recovery is independently
+  bounded and may not consume the urgent reserve.
 - Agents must persist UTC-day counters across restarts and emit audit metrics:
   - `cost_cap_active`
   - `bytes_sent_today`
   - `media_uploads_today`
+  - `urgent_reserve_bytes`
+  - `urgent_bytes_remaining`
+- This is an application-level send budget. Delayed kernel-counter
+  reconciliation cannot provide a hard physical SIM ceiling; deployments that
+  require one must also use a carrier-enforced quota.
 
 6c) **Device policy power management defaults**
 - Edge policy contract includes a `power_management` block for dual solar/12V operation.
@@ -304,8 +530,19 @@ A request includes:
   - stage timeout
 - `pause`, `resume`, and `abort` mutate deployment status and emit deployment events for audit.
 
+6j) **Telegram controller availability and separation**
+- Provisioning a device does not make Telegram control live. An
+  operator-controlled host must separately install the controller
+  configuration, dedicated control-bot token, controller SSH private key,
+  known-hosts file, inventory, catalog, SQLite state path, and supervisor.
+- When the controller is offline, outbound Telegram telemetry remains available;
+  control and OTA do not. A second controller must not concurrently consume the
+  same bot update stream.
+- Telegram telemetry does not independently alert on missing heartbeats.
+
 5) **No secret leakage**
-- Logs and error messages must not include device tokens, admin keys, or database URLs.
+- Logs and error messages must not include device tokens, bot tokens, admin
+  keys, SSH/Spacebridge private keys, OTA signing keys, or database URLs.
 
 7) **Media metadata idempotency**
 - Creating media metadata with a previously-seen `(device_id, message_id, camera_id)` must not create duplicates.
@@ -337,6 +574,10 @@ A request includes:
 
 - **Telemetry contract**: `contracts/telemetry/v1.yaml`
 - **Edge policy contract**: `contracts/edge_policy/v1.yaml`
+- **Camera-satellite telemetry profile**: `camera_satellite_lorawan_v1` in
+  `contracts/telemetry/v1.yaml`
+- **LoRaWAN binary protocol**: `agent/lorawan/protocol.py`
+- **Signed model-bundle contract**: `agent/inference/bundle.py`
 - **Ingestion batches**: persisted in Postgres (`ingestion_batches`) and queryable via:
   - `GET /api/v1/admin/ingestions` (admin surface; optional)
 - **Drift events**: persisted in Postgres (`drift_events`) and queryable via:

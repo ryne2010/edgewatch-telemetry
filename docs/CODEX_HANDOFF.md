@@ -9,23 +9,21 @@ This repo is intentionally set up to be **Codex-friendly**:
 ## Quick start (local)
 
 ```bash
-make doctor-dev
-make db-up
-make api-dev
-make web-install
-make web-dev
+make doctor
+make setup
+make dev
 ```
 
 ## Repo-quality gates (run before/after each task)
 
 ```bash
 # Full gate (preferred)
-make harness
+make check
 
 # Faster inner-loop variants
-python scripts/harness.py lint --only python
-python scripts/harness.py test --only python
-python scripts/harness.py lint --only node
+uv run --locked python scripts/harness.py lint --only python
+uv run --locked python scripts/harness.py test --only python
+uv run --locked python scripts/harness.py lint --only node
 ```
 
 ## Where the task specs live

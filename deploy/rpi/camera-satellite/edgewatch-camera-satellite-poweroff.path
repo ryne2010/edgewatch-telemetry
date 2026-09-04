@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for a completed EdgeWatch satellite wake cycle
+
+[Path]
+PathExists=/run/edgewatch-camera-satellite/poweroff.request
+Unit=edgewatch-camera-satellite-poweroff.service
+MakeDirectory=true
+
+[Install]
+WantedBy=multi-user.target

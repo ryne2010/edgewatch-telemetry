@@ -29,6 +29,7 @@ Run:
 
 ```bash
 make doctor
+make setup
 ```
 
 ### GCP
@@ -51,9 +52,11 @@ You have two supported development lanes:
 Runs **Postgres + API + web UI** in containers.
 
 ```bash
-make up
+make run
 open http://localhost:8082
 ```
+
+`make run` is the canonical local Docker Compose command. `make up` remains a compatibility alias.
 
 ### Lane B: Fast inner loop (recommended for day-to-day)
 
@@ -61,12 +64,11 @@ Runs **Postgres in Docker** and runs **API + web dev server on your host** for
 faster reloads.
 
 ```bash
-make db-up
-make db-migrate
-make api-dev
-make web-dev
+make dev
 open http://localhost:5173
 ```
+
+The lower-level `db-up`, `db-migrate`, `api-dev`, and `web-dev` targets remain available for advanced/manual workflows.
 
 Optional helpers:
 
@@ -76,6 +78,16 @@ make demo-device
 
 # Run a local simulator fleet that posts telemetry
 make simulate
+```
+
+Common lifecycle and verification commands:
+
+```bash
+make check    # non-mutating local quality gate
+make logs     # tail Docker Compose logs
+make stop     # stop the stack (`make down` remains an alias)
+make reset    # stop the stack and remove local data
+make help     # show all commands
 ```
 
 Docs:

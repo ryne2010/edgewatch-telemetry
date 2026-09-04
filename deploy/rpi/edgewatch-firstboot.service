@@ -1,0 +1,20 @@
+[Unit]
+Description=EdgeWatch Raspberry Pi first-boot bootstrap
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/boot/firmware/edgewatch/bootstrap.env
+ConditionPathExists=!/var/lib/edgewatch/bootstrap.complete
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/edgewatch-bootstrap --config /boot/firmware/edgewatch/bootstrap.env
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=600
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

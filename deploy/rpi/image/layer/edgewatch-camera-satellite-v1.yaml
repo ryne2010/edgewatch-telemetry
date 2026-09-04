@@ -1,0 +1,28 @@
+# METABEGIN
+# X-Env-Layer-Name: edgewatch-camera-satellite-v1
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Category: application
+# X-Env-Layer-Desc: EdgeWatch camera satellite with bounded FFmpeg and LiteRT runtime.
+# X-Env-Layer-Requires: edgewatch-fleet-v1
+# METAEND
+---
+mmdebstrap:
+  packages:
+    - ffmpeg
+    - python3-flatbuffers
+    - python3-numpy
+    - python3-protobuf
+    - python3-tqdm
+    - python3-typing-extensions
+    - v4l-utils
+  customize-hooks:
+    - |
+      set -eu
+      install -m 0644 backports-strenum.whl "$1/tmp/backports-strenum.whl"
+      install -m 0644 litert.whl "$1/tmp/litert.whl"
+      chroot "$1" /opt/edgewatch/app/.venv/bin/pip install \
+        --disable-pip-version-check --no-deps --no-index \
+        /tmp/backports-strenum.whl /tmp/litert.whl
+      rm -f "$1/tmp/backports-strenum.whl" "$1/tmp/litert.whl"
+      install -d -m 0700 "$1/var/lib/edgewatch-media"
+      printf 'camera-satellite\n' > "$1/etc/edgewatch-image-profile"

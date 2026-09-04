@@ -28,7 +28,7 @@ make web-dev
 Compose lane (API serves the built UI):
 
 ```bash
-make up
+make run
 ```
 
 - UI + API: `http://localhost:8082`
