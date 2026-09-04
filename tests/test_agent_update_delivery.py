@@ -5,6 +5,7 @@ import json
 import sys
 import tarfile
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -45,7 +46,7 @@ def test_pending_update_command_defers_when_power_guard_blocks(tmp_path: Path, m
             artifact_signature_scheme="none",
             compatibility={},
             issued_at="2026-02-27T00:00:00Z",
-            expires_at="2026-08-27T00:00:00Z",
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
             signature="sig",
             signature_key_id="key-1",
             rollback_to_tag="v1.2.2",
@@ -96,7 +97,7 @@ def test_pending_update_command_dry_run_reports_healthy_and_persists_state(
             artifact_signature_scheme="none",
             compatibility={},
             issued_at="2026-02-27T00:00:00Z",
-            expires_at="2026-08-27T00:00:00Z",
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
             signature="sig",
             signature_key_id="key-2",
             rollback_to_tag=None,

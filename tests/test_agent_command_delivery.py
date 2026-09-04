@@ -56,6 +56,7 @@ def test_apply_pending_command_is_once_and_persistent(tmp_path: Path) -> None:
             last_applied_command_id=None,
             pending_ack_command_id=None,
             command_state_path=state_path,
+            now_utc=datetime(2026, 2, 27, tzinfo=timezone.utc),
         )
     )
     assert mode1 == "sleep"
@@ -72,6 +73,7 @@ def test_apply_pending_command_is_once_and_persistent(tmp_path: Path) -> None:
             last_applied_command_id=last1,
             pending_ack_command_id=ack1,
             command_state_path=state_path,
+            now_utc=datetime(2026, 2, 27, tzinfo=timezone.utc),
         )
     )
     assert mode2 == "sleep"

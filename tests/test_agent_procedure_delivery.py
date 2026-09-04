@@ -4,6 +4,7 @@ import importlib
 import json
 import sys
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,7 +27,7 @@ def test_pending_procedure_invocation_executes_and_reports_success(tmp_path: Pat
             definition_name="capture_snapshot",
             request_payload={"camera_id": "cam1"},
             issued_at="2026-02-27T00:00:00Z",
-            expires_at="2026-08-27T00:00:00Z",
+            expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
             timeout_s=30,
         ),
     )
